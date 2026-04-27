@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "triage-agent"
+version = "0.1.0"
+description = "Classify why your agent failed. Recover intelligently."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["ai", "agents", "llm", "reliability", "recovery", "observability"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+    "anyio>=4.0",
+    "pydantic>=2.0",
+    "typing-extensions>=4.8; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+langfuse = ["langfuse>=2.0"]
+otel = ["opentelemetry-sdk>=1.20", "opentelemetry-api>=1.20"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.8",
+    "ruff>=0.3",
+    "openai>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/triage"
+Issues = "https://github.com/yourusername/triage/issues"
+
+[tool.hatch.version]
+path = "triage/__init__.py"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true

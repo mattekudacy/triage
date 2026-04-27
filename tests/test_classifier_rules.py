@@ -1,0 +1,184 @@
+"""Tests for triage.classifier.rules — RulesClassifier."""
+
+from triage.classifier.rules import RulesClassifier
+from triage.taxonomy import FailureType, Step
+from triage.trajectory import Trajectory
+
+
+def make_step(
+    index: int = 0,
+    tool_called: str | None = None,
+    tool_input: dict | None = None,
+    error: str | None = None,
+    llm_output: str | None = None,
+) -> Step:
+    return Step(
+        index=index,
+        action="test step",
+        tool_called=tool_called,
+        tool_input=tool_input,
+        error=error,
+        llm_output=llm_output,
+    )
+
+
+def traj(*steps: Step) -> Trajectory:
+    t = Trajectory()
+    for s in steps:
+        t.append(s)
+    return t
+
+
+# ── LOOP_DETECTED ──────────────────────────────────────────────────────────────
+
+def test_loop_detected():
+    step = make_step(tool_called="search", tool_input={"q": "hello"})
+    t = traj(step, make_step(1, tool_called="search", tool_input={"q": "hello"}),
+             make_step(2, tool_called="search", tool_input={"q": "hello"}))
+    assert RulesClassifier().classify(t, "task") == FailureType.LOOP_DETECTED
+
+
+def test_loop_not_detected_two_steps():
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "hello"}),
+        make_step(1, tool_called="search", tool_input={"q": "hello"}),
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_loop_not_detected_different_inputs():
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "hello"}),
+        make_step(1, tool_called="search", tool_input={"q": "world"}),
+        make_step(2, tool_called="search", tool_input={"q": "hello"}),
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_loop_not_detected_none_tool():
+    # Steps with tool_called=None should not match
+    t = traj(make_step(0), make_step(1), make_step(2))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+# ── WRONG_TOOL_CALLED ──────────────────────────────────────────────────────────
+
+def test_wrong_tool_called_no_tool_named():
+    t = traj(make_step(error="no tool named calculator"))
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_wrong_tool_called_tool_not_found():
+    t = traj(make_step(error="Tool 'bar' not found"))
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_wrong_tool_called_case_insensitive():
+    t = traj(make_step(error="NO TOOL NAMED foo"))
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_wrong_tool_not_triggered_by_unrelated_error():
+    t = traj(make_step(error="connection timeout after 30s"))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+# ── SCHEMA_MISMATCH ────────────────────────────────────────────────────────────
+
+def test_schema_mismatch_validation_error():
+    t = traj(make_step(error="validation error: field required"))
+    assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+def test_schema_mismatch_json_decode():
+    t = traj(make_step(error="JSONDecodeError: Expecting value at line 1"))
+    assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+def test_schema_mismatch_json_parse():
+    t = traj(make_step(error="json parse failed"))
+    assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+def test_schema_mismatch_not_triggered_by_unrelated_error():
+    t = traj(make_step(error="index out of range"))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+# ── EXTERNAL_FAULT ─────────────────────────────────────────────────────────────
+
+def test_external_fault_429():
+    t = traj(make_step(error="HTTP 429 Too Many Requests"))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+def test_external_fault_500():
+    t = traj(make_step(error="500 Internal Server Error"))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+def test_external_fault_502():
+    t = traj(make_step(error="502 Bad Gateway"))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+def test_external_fault_503():
+    t = traj(make_step(error="503 Service Unavailable"))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+def test_external_fault_not_triggered_by_unrelated_number():
+    t = traj(make_step(error="expected 200 items but got 42"))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+# ── CONSTRAINT_IGNORED ────────────────────────────────────────────────────────
+
+def test_constraint_ignored():
+    classifier = RulesClassifier(constraints=["do not use markdown"])
+    t = traj(make_step(llm_output="Here is the answer. Do not use markdown formatting."))
+    assert classifier.classify(t, "task") == FailureType.CONSTRAINT_IGNORED
+
+
+def test_constraint_ignored_case_insensitive():
+    classifier = RulesClassifier(constraints=["DO NOT USE MARKDOWN"])
+    t = traj(make_step(llm_output="do not use markdown in your reply"))
+    assert classifier.classify(t, "task") == FailureType.CONSTRAINT_IGNORED
+
+
+def test_constraint_ignored_no_constraints():
+    classifier = RulesClassifier(constraints=[])
+    t = traj(make_step(llm_output="some output"))
+    assert classifier.classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_constraint_not_violated():
+    classifier = RulesClassifier(constraints=["forbidden phrase"])
+    t = traj(make_step(llm_output="totally clean output"))
+    assert classifier.classify(t, "task") == FailureType.UNKNOWN
+
+
+# ── UNKNOWN fallback ──────────────────────────────────────────────────────────
+
+def test_unknown_fallback():
+    t = traj(make_step(error="something completely unrelated"))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_empty_trajectory():
+    t = Trajectory()
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+# ── Priority: LOOP_DETECTED wins over EXTERNAL_FAULT ─────────────────────────
+
+def test_priority_loop_over_external():
+    # Trajectory that triggers both LOOP_DETECTED and EXTERNAL_FAULT;
+    # LOOP_DETECTED has higher priority and must win.
+    step = make_step(tool_called="search", tool_input={"q": "q"}, error="503 error")
+    t = traj(
+        step,
+        make_step(1, tool_called="search", tool_input={"q": "q"}, error="503 error"),
+        make_step(2, tool_called="search", tool_input={"q": "q"}, error="503 error"),
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.LOOP_DETECTED
