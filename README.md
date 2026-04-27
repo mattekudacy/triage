@@ -28,12 +28,21 @@ It works with any async agent callable — OpenAI, LangGraph, CrewAI, raw LLM lo
 ## Installation
 
 ```bash
+# Core only
 pip install triage-agent
-```
 
-With OpenAI support:
-```bash
-pip install "triage-agent[openai]"
+# With framework adapters
+pip install "triage-agent[langgraph]"
+pip install "triage-agent[crewai]"
+pip install "triage-agent[openai-agents]"
+pip install "triage-agent[langchain]"
+
+# With LLM-based classifier
+pip install "triage-agent[anthropic]"
+
+# With durable checkpoint storage
+pip install "triage-agent[sqlite]"
+pip install "triage-agent[redis]"
 ```
 
 Python 3.10+ required. Core dependencies: `anyio>=4.0`, `pydantic>=2.0`.
@@ -80,6 +89,58 @@ async def my_agent(task: str, *, record_step, **kwargs):
 
 ---
 
+## Framework adapters
+
+Drop-in wrappers let you add triage to an existing agent without changing its internals.
+
+### LangGraph
+
+```python
+from triage.adapters.langgraph import wrap_langgraph
+
+agent = wrap_langgraph(compiled_graph, policy=policy)
+result = await agent.run("your task")
+```
+
+Streams events via `graph.astream_events(..., version="v2")` to capture tool calls and LLM turns.
+
+### CrewAI
+
+```python
+from triage.adapters.crewai import wrap_crewai
+
+agent = wrap_crewai(crew, policy=policy)
+result = await agent.run("your task")
+```
+
+Patches `crew.step_callback` for each run (original restored in `finally`).
+
+### OpenAI Agents SDK
+
+```python
+from triage.adapters.openai_agents import wrap_openai_agents
+
+agent = wrap_openai_agents(sdk_agent, policy=policy)
+result = await agent.run("your task")
+```
+
+Uses `Runner.run_streamed` and iterates `stream_events()`.
+
+### LangChain
+
+```python
+from triage.adapters.langchain import wrap_langchain
+
+agent = wrap_langchain(executor, policy=policy)
+result = await agent.run("your task")
+```
+
+Injects a fresh `BaseCallbackHandler` per call via `config={"callbacks": [...]}`.
+
+All adapters accept the same optional kwargs as `triage.Agent`: `classifier`, `checkpoint_store`, `max_recovery_attempts`, `auto_checkpoint`.
+
+---
+
 ## How it works
 
 ### 1. Record steps
@@ -88,7 +149,6 @@ Your agent calls `record_step(Step(...))` for each observable action. `triage` i
 
 ```python
 async def my_agent(task: str, *, record_step, **kwargs):
-    # Tool call
     result = call_tool("search", {"q": task})
     record_step(Step(
         index=0,
@@ -101,7 +161,7 @@ async def my_agent(task: str, *, record_step, **kwargs):
 
 ### 2. Classify the failure
 
-When your agent raises an exception, `triage` runs the `RulesClassifier` over the recorded trajectory and returns one of 10 `FailureType` values:
+When your agent raises an exception, `triage` runs the classifier over the recorded trajectory and returns one of 10 `FailureType` values:
 
 | FailureType | Trigger | Default recovery |
 |---|---|---|
@@ -115,6 +175,20 @@ When your agent raises an exception, `triage` runs the `RulesClassifier` over th
 | `GOAL_DRIFT` | Agent making progress toward the wrong goal | Replan with goal restatement |
 | `EXTERNAL_FAULT` | HTTP 429 / 500 / 502 / 503 in error | Exponential backoff + retry |
 | `UNKNOWN` | None of the above | Escalate to human |
+
+The default `RulesClassifier` is pattern-based and makes zero API calls. For semantic classification, use `LLMClassifier`:
+
+```python
+from triage.classifier.llm import LLMClassifier
+
+agent = triage.Agent(
+    my_agent,
+    policy=policy,
+    classifier=LLMClassifier(model="claude-haiku-4-5-20251001"),
+)
+```
+
+`LLMClassifier` uses the Anthropic sync client and falls back to `UNKNOWN` silently on any error. Requires `pip install "triage-agent[anthropic]"`.
 
 ### 3. Dispatch to a strategy
 
@@ -196,31 +270,54 @@ rollback_to_checkpoint(checkpoint_id="before-api-call")
 
 ## Checkpoints
 
-Save agent state at key points so triage can roll back to them on failure:
+Save agent state at key points so triage can roll back to them on failure.
+
+### In-memory (default)
 
 ```python
-from triage.checkpoint import InMemoryCheckpointStore, make_checkpoint
+from triage.checkpoint import InMemoryCheckpointStore
 
 store = InMemoryCheckpointStore()
 agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store)
-
-# In your agent: save a checkpoint manually
-async def my_agent(task: str, *, record_step, **kwargs):
-    # ... first phase ...
-    checkpoint = make_checkpoint(
-        state={"phase": "data-fetched", "data": fetched_data},
-        trajectory_steps=current_trajectory,
-        id="after-fetch",
-    )
-    await store.save(checkpoint)
-    # ... second phase, which might fail ...
 ```
+
+### SQLite (persistent, single-process)
+
+```bash
+pip install "triage-agent[sqlite]"
+```
+
+```python
+from triage.checkpoint.sqlite import SQLiteCheckpointStore
+
+store = SQLiteCheckpointStore("runs/checkpoints.db")
+agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store)
+```
+
+### Redis (distributed)
+
+```bash
+pip install "triage-agent[redis]"
+```
+
+```python
+import redis.asyncio as aioredis
+from triage.checkpoint.redis import RedisCheckpointStore
+
+client = aioredis.Redis.from_url("redis://localhost:6379")
+store = RedisCheckpointStore(client)
+agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store)
+```
+
+### Auto-checkpoint
 
 Enable automatic checkpointing after every successful step:
 
 ```python
 agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store, auto_checkpoint=True)
 ```
+
+Checkpoints are always awaited before `run()` returns or any recovery action executes, so a `ROLLBACK` always has a checkpoint available.
 
 ---
 
@@ -231,10 +328,8 @@ When triage retries your agent after a failure, it injects context into `**kwarg
 ```python
 async def my_agent(task: str, *, record_step, _triage_hint=None, _triage_subgoal=None, **kwargs):
     if _triage_hint:
-        # Modify behaviour based on what went wrong last time
         print(f"Recovery hint: {_triage_hint}")
     if _triage_subgoal:
-        # Skip to the incomplete subgoal instead of restarting from scratch
         task = _triage_subgoal
 ```
 
@@ -263,22 +358,19 @@ except triage.TriageAbortError as exc:
 
 ## Custom classifier
 
-The default `RulesClassifier` is pattern-based and makes zero API calls. You can swap in your own:
+Any class implementing `classify(trajectory, task) -> FailureType` satisfies the protocol:
 
 ```python
 from triage.classifier.base import Classifier
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
 
-class MyLLMClassifier:
+class MyClassifier:
     def classify(self, trajectory: Trajectory, task: str) -> FailureType:
-        # Call your LLM, inspect the trajectory, return a FailureType
         ...
 
-agent = triage.Agent(my_agent, policy=policy, classifier=MyLLMClassifier())
+agent = triage.Agent(my_agent, policy=policy, classifier=MyClassifier())
 ```
-
-Any class implementing `classify(trajectory, task) -> FailureType` satisfies the protocol.
 
 ---
 
@@ -310,26 +402,27 @@ Result: 714
 triage/
   taxonomy.py        FailureType enum, Step, FailureContext
   trajectory.py      Trajectory (append / replay_from / last_n_steps)
-  checkpoint.py      Checkpoint, CheckpointStore protocol, InMemoryCheckpointStore
+  checkpoint/
+    base.py          Checkpoint, CheckpointStore protocol, serialization helpers
+    memory.py        InMemoryCheckpointStore
+    sqlite.py        SQLiteCheckpointStore (requires aiosqlite)
+    redis.py         RedisCheckpointStore (requires redis[asyncio])
   policy.py          RecoveryAction (6 constructors), FailurePolicy
   agent.py           Agent class, TriageEscalationError, TriageAbortError, @agent decorator
   classifier/
     base.py          Classifier protocol
     rules.py         RulesClassifier — 6 rules, sync, zero API calls
+    llm.py           LLMClassifier — semantic via Anthropic (requires anthropic)
   strategies/
     retry.py         retry_with_tool_manifest(), backoff_and_retry()
     replan.py        replan(), resume_from_subgoal()
     rollback.py      rollback_to_checkpoint()
+  adapters/
+    langgraph.py     wrap_langgraph() (requires langgraph)
+    crewai.py        wrap_crewai() (requires crewai)
+    openai_agents.py wrap_openai_agents() (requires openai-agents)
+    langchain.py     wrap_langchain() (requires langchain)
 ```
-
----
-
-## Roadmap (v0.2)
-
-- **Adapters** — drop-in wrappers for LangGraph, CrewAI, OpenAI Agents SDK
-- **LLM classifier** — semantic classification behind the same `Classifier` protocol
-- **Async-safe checkpoints** — clean anyio task-group implementation
-- **Storage backends** — Redis and SQLite `CheckpointStore` implementations
 
 ---
 
