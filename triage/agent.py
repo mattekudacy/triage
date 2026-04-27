@@ -8,7 +8,7 @@ failures, dispatches recovery actions, and executes them.
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Coroutine
 
 import anyio
 
@@ -71,6 +71,7 @@ class Agent:
         # mutable run-state (reset on each run() call)
         self._trajectory: Trajectory = Trajectory()
         self._last_checkpoint_id: str | None = None
+        self._pending_checkpoints: list[Coroutine[Any, Any, None]] = []
 
     async def run(self, task: str, **kwargs: Any) -> Any:
         """Run the wrapped agent, recovering from failures per the policy."""
@@ -78,16 +79,19 @@ class Agent:
 
         while True:
             self._trajectory = Trajectory()
+            self._pending_checkpoints = []
 
             try:
                 result = await self._fn(task, record_step=self._record_step, **kwargs)
+                await self._drain_checkpoints()
                 return result
 
             except (TriageEscalationError, TriageAbortError):
-                # Let our own control-flow exceptions propagate immediately
+                await self._drain_checkpoints()
                 raise
 
             except Exception as exc:
+                await self._drain_checkpoints()
                 steps = self._trajectory.steps
                 failure_type = self._classifier.classify(self._trajectory, task)
 
@@ -172,13 +176,15 @@ class Agent:
     def _record_step(self, step: Step) -> None:
         self._trajectory.append(step)
         if self._auto_checkpoint:
-            # Best-effort synchronous checkpoint for MVP.
-            # A clean async version (anyio task group) is deferred to v0.2.
-            import asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Schedule it without blocking — fire and forget
-                loop.create_task(self._save_auto_checkpoint())
+            self._pending_checkpoints.append(self._save_auto_checkpoint())
+
+    async def _drain_checkpoints(self) -> None:
+        for coro in self._pending_checkpoints:
+            try:
+                await coro
+            except Exception as exc:
+                logger.warning("[triage] auto_checkpoint failed: %s", exc)
+        self._pending_checkpoints = []
 
     async def _save_auto_checkpoint(self) -> None:
         checkpoint = make_checkpoint(

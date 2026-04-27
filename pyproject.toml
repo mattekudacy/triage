@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "triage-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Classify why your agent failed. Recover intelligently."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,12 +30,22 @@ dependencies = [
 openai = ["openai>=1.0"]
 langfuse = ["langfuse>=2.0"]
 otel = ["opentelemetry-sdk>=1.20", "opentelemetry-api>=1.20"]
+anthropic = ["anthropic>=0.25"]
+langgraph = ["langgraph>=0.2"]
+crewai = ["crewai>=0.1"]
+openai-agents = ["openai-agents>=0.0.3"]
+langchain = ["langchain-core>=0.1", "langchain>=0.1"]
+sqlite = ["aiosqlite>=0.19"]
+redis = ["redis[asyncio]>=5.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "mypy>=1.8",
     "ruff>=0.3",
     "openai>=1.0",
+    "anthropic>=0.25",
+    "aiosqlite>=0.19",
+    "fakeredis>=2.20",
 ]
 
 [project.urls]
