@@ -1,8 +1,8 @@
 """
 tests/test_classifier_llm.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Tests for LLMClassifier. Uses unittest.mock to patch the Anthropic client —
-no real API calls are made.
+Tests for LLMClassifier — Anthropic backend and OpenAI-compatible backend.
+No real API calls are made; both clients are patched.
 """
 
 from __future__ import annotations
@@ -42,44 +42,56 @@ def traj(*steps: Step) -> Trajectory:
     return t
 
 
-def _mock_response(text: str) -> MagicMock:
+# ── Anthropic mock helpers ────────────────────────────────────────────────────
+
+def _anthropic_response(text: str) -> MagicMock:
     msg = MagicMock()
     msg.content = [MagicMock(text=text)]
     return msg
 
 
-def _make_client_mock(response_text: str) -> MagicMock:
+def _anthropic_client(response_text: str) -> MagicMock:
     client = MagicMock()
-    client.messages.create.return_value = _mock_response(response_text)
+    client.messages.create.return_value = _anthropic_response(response_text)
     return client
 
 
-# ---------------------------------------------------------------------------
-# Correct classification for each FailureType
-# ---------------------------------------------------------------------------
+# ── OpenAI-compatible mock helpers ───────────────────────────────────────────
+
+def _openai_response(text: str) -> MagicMock:
+    choice = MagicMock()
+    choice.message.content = text
+    resp = MagicMock()
+    resp.choices = [choice]
+    return resp
+
+
+def _openai_client(response_text: str) -> MagicMock:
+    client = MagicMock()
+    client.chat.completions.create.return_value = _openai_response(response_text)
+    return client
+
+
+# ── Anthropic backend ─────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("ft", list(FailureType))
-def test_classifies_each_failure_type(ft):
+def test_anthropic_classifies_each_failure_type(ft):
     clf = LLMClassifier()
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
-        MockAnthropic.return_value = _make_client_mock(ft.value)
+        MockAnthropic.return_value = _anthropic_client(ft.value)
         result = clf.classify(traj(make_step(0)), "task")
     assert result == ft
 
 
-# ---------------------------------------------------------------------------
-# Fallback to UNKNOWN
-# ---------------------------------------------------------------------------
-
-def test_returns_unknown_on_unrecognized_response():
+def test_anthropic_returns_unknown_on_unrecognized_response():
     clf = LLMClassifier()
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
-        MockAnthropic.return_value = _make_client_mock("not_a_valid_type")
+        MockAnthropic.return_value = _anthropic_client("not_a_valid_type")
         result = clf.classify(traj(make_step(0)), "task")
     assert result == FailureType.UNKNOWN
 
 
-def test_returns_unknown_on_api_exception():
+def test_anthropic_returns_unknown_on_api_exception():
     clf = LLMClassifier()
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         client = MagicMock()
@@ -89,7 +101,7 @@ def test_returns_unknown_on_api_exception():
     assert result == FailureType.UNKNOWN
 
 
-def test_returns_unknown_on_empty_content():
+def test_anthropic_returns_unknown_on_empty_content():
     clf = LLMClassifier()
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         msg = MagicMock()
@@ -101,32 +113,129 @@ def test_returns_unknown_on_empty_content():
     assert result == FailureType.UNKNOWN
 
 
-# ---------------------------------------------------------------------------
-# Client reuse
-# ---------------------------------------------------------------------------
-
-def test_client_created_once_and_reused():
+def test_anthropic_client_created_once_and_reused():
     clf = LLMClassifier()
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
-        MockAnthropic.return_value = _make_client_mock("unknown")
+        MockAnthropic.return_value = _anthropic_client("unknown")
         clf.classify(traj(make_step(0)), "task")
         clf.classify(traj(make_step(0)), "task")
     MockAnthropic.assert_called_once()
 
 
-# ---------------------------------------------------------------------------
-# Prompt construction
-# ---------------------------------------------------------------------------
+def test_anthropic_custom_model_passed_to_client():
+    clf = LLMClassifier(model="claude-opus-4-7")
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = _anthropic_client("unknown")
+        MockAnthropic.return_value = client
+        clf.classify(traj(make_step(0)), "task")
+    assert client.messages.create.call_args[1]["model"] == "claude-opus-4-7"
+
+
+def test_anthropic_classify_is_case_insensitive():
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        MockAnthropic.return_value = _anthropic_client("  LOOP_DETECTED  ")
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.LOOP_DETECTED
+
+
+# ── OpenAI-compatible backend ─────────────────────────────────────────────────
+
+_openai_mod = pytest.importorskip("openai", reason="openai not installed")
+
+# Patch target: "openai.OpenAI" — works regardless of when triage.classifier.llm
+# was first imported, because we patch the canonical source, not the module alias.
+_OPENAI_PATCH = "openai.OpenAI"
+
+
+@pytest.mark.parametrize("ft", list(FailureType))
+def test_openai_compat_classifies_each_failure_type(ft):
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client(ft.value)
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == ft
+
+
+def test_openai_compat_returns_unknown_on_unrecognized_response():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client("not_a_valid_type")
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+
+
+def test_openai_compat_returns_unknown_on_exception():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        client = MagicMock()
+        client.chat.completions.create.side_effect = Exception("connection refused")
+        MockOpenAI.return_value = client
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+
+
+def test_openai_compat_client_created_once_and_reused():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client("unknown")
+        clf.classify(traj(make_step(0)), "task")
+        clf.classify(traj(make_step(0)), "task")
+    MockOpenAI.assert_called_once()
+
+
+def test_openai_compat_base_url_and_api_key_passed_to_client():
+    clf = LLMClassifier(
+        base_url="https://api.groq.com/openai/v1",
+        api_key="gsk_test",
+        model="llama-3.1-8b-instant",
+    )
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client("unknown")
+        clf.classify(traj(make_step(0)), "task")
+    call_kwargs = MockOpenAI.call_args[1]
+    assert call_kwargs["base_url"] == "https://api.groq.com/openai/v1"
+    assert call_kwargs["api_key"] == "gsk_test"
+
+
+def test_openai_compat_custom_model_passed_to_completions():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="mistral")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        client = _openai_client("unknown")
+        MockOpenAI.return_value = client
+        clf.classify(traj(make_step(0)), "task")
+    assert client.chat.completions.create.call_args[1]["model"] == "mistral"
+
+
+def test_openai_compat_system_prompt_in_messages():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        client = _openai_client("unknown")
+        MockOpenAI.return_value = client
+        clf.classify(traj(make_step(0)), "task")
+    messages = client.chat.completions.create.call_args[1]["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+
+
+def test_openai_compat_no_api_key_defaults_to_placeholder():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client("unknown")
+        clf.classify(traj(make_step(0)), "task")
+    assert MockOpenAI.call_args[1]["api_key"] == "no-key"
+
+
+# ── Shared: prompt construction ───────────────────────────────────────────────
 
 def test_prompt_includes_task_and_step_info():
     clf = LLMClassifier()
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
-        client = _make_client_mock("unknown")
+        client = _anthropic_client("unknown")
         MockAnthropic.return_value = client
         step = make_step(0, tool_called="search", error="404")
         clf.classify(traj(step), "find the answer")
-    call_kwargs = client.messages.create.call_args
-    user_content = call_kwargs[1]["messages"][0]["content"]
+    user_content = client.messages.create.call_args[1]["messages"][0]["content"]
     assert "find the answer" in user_content
     assert "search" in user_content
     assert "404" in user_content
@@ -135,38 +244,10 @@ def test_prompt_includes_task_and_step_info():
 def test_max_trajectory_steps_limits_prompt():
     clf = LLMClassifier(max_trajectory_steps=3)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
-        client = _make_client_mock("unknown")
+        client = _anthropic_client("unknown")
         MockAnthropic.return_value = client
         t = traj(*[make_step(i) for i in range(10)])
         clf.classify(t, "task")
-    call_kwargs = client.messages.create.call_args
-    user_content = call_kwargs[1]["messages"][0]["content"]
-    # Only last 3 steps — step indices 7, 8, 9
+    user_content = client.messages.create.call_args[1]["messages"][0]["content"]
     assert "[9]" in user_content
     assert "[0]" not in user_content
-
-
-# ---------------------------------------------------------------------------
-# Model parameter
-# ---------------------------------------------------------------------------
-
-def test_custom_model_passed_to_client():
-    clf = LLMClassifier(model="claude-opus-4-7")
-    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
-        client = _make_client_mock("unknown")
-        MockAnthropic.return_value = client
-        clf.classify(traj(make_step(0)), "task")
-    call_kwargs = client.messages.create.call_args
-    assert call_kwargs[1]["model"] == "claude-opus-4-7"
-
-
-# ---------------------------------------------------------------------------
-# Case-insensitive response parsing
-# ---------------------------------------------------------------------------
-
-def test_classify_is_case_insensitive():
-    clf = LLMClassifier()
-    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
-        MockAnthropic.return_value = _make_client_mock("  LOOP_DETECTED  ")
-        result = clf.classify(traj(make_step(0)), "task")
-    assert result == FailureType.LOOP_DETECTED
