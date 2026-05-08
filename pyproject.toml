@@ -49,11 +49,17 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/triage"
-Issues = "https://github.com/yourusername/triage/issues"
+Homepage = "https://github.com/mattekudacy/triage"
+Issues = "https://github.com/mattekudacy/triage/issues"
 
 [tool.hatch.version]
 path = "triage/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["triage"]
+
+[tool.hatch.build.targets.sdist]
+include = ["triage/", "tests/", "examples/", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

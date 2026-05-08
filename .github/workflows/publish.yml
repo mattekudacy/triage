@@ -1,0 +1,58 @@
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.3.0) — must match triage/__init__.py"
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install anyio pydantic pytest pytest-asyncio anthropic aiosqlite fakeredis openai
+
+      - name: Run tests
+        run: |
+          PYTHONPATH=. pytest tests/ -x --tb=short
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # required for PyPI Trusted Publishing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Verify version matches input
+        run: |
+          PKG_VERSION=$(python -c "import triage; print(triage.__version__)")
+          if [ "$PKG_VERSION" != "${{ inputs.version }}" ]; then
+            echo "Version mismatch: triage.__version__ is $PKG_VERSION but input was ${{ inputs.version }}"
+            exit 1
+          fi
+
+      - name: Build
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
