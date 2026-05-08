@@ -41,15 +41,20 @@ class TriageAbortError(Exception):
 class Agent:
     """Wraps any async callable and adds failure classification + recovery.
 
-    The wrapped function must accept a ``record_step`` keyword argument::
+    The wrapped function must accept ``record_step`` and optionally
+    ``update_state`` keyword arguments::
 
-        async def my_agent(task: str, *, record_step, **kwargs) -> Any:
-            record_step(Step(index=0, action="...", ...))
+        async def my_agent(task: str, *, record_step, update_state, **kwargs) -> Any:
+            data = fetch_something()
+            record_step(Step(index=0, action="fetch", tool_output=data))
+            update_state({"data": data})   # persisted into checkpoints
             return result
 
-    The agent injects its own ``_record_step`` bound method so it can
-    observe every step in real time. If ``auto_checkpoint=True``, a
-    checkpoint is saved to the store after each successful step.
+    ``update_state`` is optional — agents that don't call it get ``state={}``
+    in their checkpoints, and rollback will not inject ``_triage_state``.
+
+    If ``auto_checkpoint=True``, a checkpoint (including current state) is
+    saved after each ``record_step`` call.
     """
 
     def __init__(
@@ -70,6 +75,7 @@ class Agent:
 
         # mutable run-state (reset on each run() call)
         self._trajectory: Trajectory = Trajectory()
+        self._current_state: dict[str, Any] = {}
         self._last_checkpoint_id: str | None = None
         self._pending_checkpoints: list[Coroutine[Any, Any, None]] = []
 
@@ -79,10 +85,16 @@ class Agent:
 
         while True:
             self._trajectory = Trajectory()
+            self._current_state = {}
             self._pending_checkpoints = []
 
             try:
-                result = await self._fn(task, record_step=self._record_step, **kwargs)
+                result = await self._fn(
+                    task,
+                    record_step=self._record_step,
+                    update_state=self._update_state,
+                    **kwargs,
+                )
                 await self._drain_checkpoints()
                 return result
 
@@ -93,7 +105,13 @@ class Agent:
             except Exception as exc:
                 await self._drain_checkpoints()
                 steps = self._trajectory.steps
-                failure_type = self._classifier.classify(self._trajectory, task)
+
+                # Run classify() in a thread — LLMClassifier blocks ~100-400ms.
+                # RulesClassifier is fast but the thread overhead is negligible on
+                # the failure path. Keeps the event loop unblocked for both.
+                failure_type = await anyio.to_thread.run_sync(
+                    self._classifier.classify, self._trajectory, task
+                )
 
                 ctx = FailureContext(
                     failure_type=failure_type,
@@ -153,7 +171,10 @@ class Agent:
                 )
             self._trajectory = Trajectory.from_steps(checkpoint.trajectory_snapshot)
             self._last_checkpoint_id = checkpoint.id
+            self._current_state = dict(checkpoint.state)
             new_kwargs["_triage_hint"] = f"Rolled back to checkpoint {checkpoint.id!r}."
+            if checkpoint.state:
+                new_kwargs["_triage_state"] = checkpoint.state
 
         elif action.kind == "resume":
             subgoal = action.params.get("from_subgoal")
@@ -178,6 +199,9 @@ class Agent:
         if self._auto_checkpoint:
             self._pending_checkpoints.append(self._save_auto_checkpoint())
 
+    def _update_state(self, state: dict[str, Any]) -> None:
+        self._current_state = dict(state)
+
     async def _drain_checkpoints(self) -> None:
         for coro in self._pending_checkpoints:
             try:
@@ -188,7 +212,7 @@ class Agent:
 
     async def _save_auto_checkpoint(self) -> None:
         checkpoint = make_checkpoint(
-            state={},
+            state=self._current_state,
             trajectory_steps=self._trajectory.steps,
         )
         await self._checkpoint_store.save(checkpoint)
@@ -198,13 +222,13 @@ class Agent:
         return await self.run(task, **kwargs)
 
 
-def agent(policy: FailurePolicy, **kwargs: Any) -> Callable[[Callable[..., Awaitable[Any]]], Agent]:
+def agent(policy: FailurePolicy, **kwargs: Any) -> Callable[[Callable[..., Awaitable[Any]], Agent]]:
     """Decorator factory. Wraps an async function with triage recovery.
 
     Usage::
 
         @triage.agent(policy=my_policy)
-        async def my_agent(task: str, *, record_step, **kwargs) -> str:
+        async def my_agent(task: str, *, record_step, update_state, **kwargs) -> str:
             ...
     """
     def decorator(fn: Callable[..., Awaitable[Any]]) -> Agent:

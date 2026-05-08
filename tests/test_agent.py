@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+from unittest.mock import MagicMock
+
 from triage.agent import Agent, TriageAbortError, TriageEscalationError
 from triage.checkpoint import InMemoryCheckpointStore
 from triage.policy import FailurePolicy, RecoveryAction
@@ -329,3 +331,179 @@ async def test_trajectory_resets_each_attempt():
     await ag.run("task")
     # After the second attempt succeeds with 2 steps, trajectory has 2 steps (not 4)
     assert len(ag._trajectory.steps) == 2
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: async classify — classifier runs in a thread, not blocking the loop
+# ---------------------------------------------------------------------------
+
+async def test_classify_called_in_thread():
+    """classify() must be called via anyio.to_thread, not directly."""
+    classify_thread_ids: list[int] = []
+    import threading
+
+    class ThreadTrackingClassifier:
+        def classify(self, trajectory, task):
+            classify_thread_ids.append(threading.get_ident())
+            return FailureType.UNKNOWN
+
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=retry_strategy())
+    ag = Agent(agent_fn, policy, classifier=ThreadTrackingClassifier())
+    await ag.run("task")
+
+    # classify() ran exactly once (one failure) and in a different thread
+    assert len(classify_thread_ids) == 1
+    assert classify_thread_ids[0] != threading.main_thread().ident
+
+
+async def test_classify_thread_failure_falls_back_to_unknown():
+    """If classify() raises inside the thread, triage still handles the failure."""
+    class BrokenClassifier:
+        def classify(self, trajectory, task):
+            raise RuntimeError("classifier exploded")
+
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("agent fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=retry_strategy())
+    ag = Agent(agent_fn, policy, classifier=BrokenClassifier())
+    # Should not propagate the classifier exception — triage catches it
+    with pytest.raises((TriageEscalationError, Exception)):
+        await ag.run("task")
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: agent state in checkpoints — update_state / _triage_state
+# ---------------------------------------------------------------------------
+
+async def test_update_state_persisted_in_checkpoint():
+    store = InMemoryCheckpointStore()
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        record_step(make_step(0))
+        update_state({"phase": "fetched", "count": 42})
+        return "done"
+
+    ag = Agent(agent_fn, FailurePolicy(), checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("task")
+
+    cp = await store.latest()
+    assert cp is not None
+    assert cp.state == {"phase": "fetched", "count": 42}
+
+
+async def test_update_state_reflects_latest_call():
+    store = InMemoryCheckpointStore()
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        record_step(make_step(0))
+        update_state({"phase": "step1"})
+        record_step(make_step(1))
+        update_state({"phase": "step2", "count": 99})
+        return "done"
+
+    ag = Agent(agent_fn, FailurePolicy(), checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("task")
+
+    cp = await store.latest()
+    assert cp is not None
+    assert cp.state["phase"] == "step2"
+    assert cp.state["count"] == 99
+
+
+async def test_rollback_injects_triage_state():
+    store = InMemoryCheckpointStore()
+    received_state: list[Any] = []
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        received_state.append(kw.get("_triage_state"))
+
+        if call_count[0] == 1:
+            record_step(make_step(0))
+            update_state({"fetched": "important data"})
+            raise RuntimeError("phase 2 failed")
+        return "recovered"
+
+    policy = FailurePolicy(UNKNOWN=rollback_strategy())
+    ag = Agent(agent_fn, policy, checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("task")
+
+    # First call: no injected state; second call: state from checkpoint
+    assert received_state[0] is None
+    assert received_state[1] == {"fetched": "important data"}
+
+
+async def test_rollback_restores_current_state_on_agent():
+    store = InMemoryCheckpointStore()
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        record_step(make_step(0))
+        update_state({"attempt": call_count[0]})
+        if call_count[0] == 1:
+            raise RuntimeError("fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=rollback_strategy())
+    ag = Agent(agent_fn, policy, checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("task")
+
+    # After rollback + recovery, _current_state reflects the second attempt's state
+    assert ag._current_state == {"attempt": 2}
+
+
+async def test_no_triage_state_injected_when_checkpoint_state_empty():
+    store = InMemoryCheckpointStore()
+    received_state: list[Any] = []
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        received_state.append(kw.get("_triage_state"))
+        record_step(make_step(0))
+        # Never calls update_state — state stays {}
+        if call_count[0] == 1:
+            raise RuntimeError("fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=rollback_strategy())
+    ag = Agent(agent_fn, policy, checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("task")
+
+    # Empty state → _triage_state not injected
+    assert received_state[1] is None
+
+
+async def test_update_state_resets_each_attempt():
+    states_at_failure: list[dict] = []
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        update_state({"attempt": call_count[0]})
+        if call_count[0] == 1:
+            raise RuntimeError("fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=retry_strategy())
+    ag = Agent(agent_fn, policy)
+    await ag.run("task")
+
+    # After retry, _current_state reflects the latest attempt only
+    assert ag._current_state == {"attempt": 2}

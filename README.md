@@ -58,11 +58,13 @@ from triage.strategies.replan import replan
 from triage.strategies.rollback import rollback_to_checkpoint
 from triage.taxonomy import Step
 
-# 1. Define your agent — it receives a record_step callback
-async def my_agent(task: str, *, record_step, _triage_hint=None, **kwargs):
+# 1. Define your agent — it receives record_step and update_state callbacks
+async def my_agent(task: str, *, record_step, update_state, _triage_hint=None, **kwargs):
     # ... your agent logic ...
+    data = fetch_data(task)
     record_step(Step(index=0, action="called search", tool_called="search",
-                     tool_input={"q": task}, tool_output="some result"))
+                     tool_input={"q": task}, tool_output=data))
+    update_state({"data": data})   # persisted into checkpoints; restored on rollback
     return "done"
 
 # 2. Declare a recovery policy
@@ -323,10 +325,28 @@ Checkpoints are always awaited before `run()` returns or any recovery action exe
 
 ## Recovery context in your agent
 
-When triage retries your agent after a failure, it injects context into `**kwargs`:
+Two callbacks are always injected, plus recovery context on retry:
 
 ```python
-async def my_agent(task: str, *, record_step, _triage_hint=None, _triage_subgoal=None, **kwargs):
+async def my_agent(
+    task: str,
+    *,
+    record_step,
+    update_state,
+    _triage_hint=None,
+    _triage_subgoal=None,
+    _triage_state=None,
+    **kwargs,
+):
+    # On rollback, _triage_state contains the state saved at the checkpoint
+    if _triage_state:
+        data = _triage_state["data"]   # skip re-fetching, use restored state
+    else:
+        data = fetch_data(task)
+
+    record_step(Step(index=0, action="fetch", tool_output=data))
+    update_state({"data": data})       # saved into every auto_checkpoint
+
     if _triage_hint:
         print(f"Recovery hint: {_triage_hint}")
     if _triage_subgoal:
@@ -335,8 +355,11 @@ async def my_agent(task: str, *, record_step, _triage_hint=None, _triage_subgoal
 
 | Key | Set when |
 |---|---|
+| `record_step` | Always — injected on every call |
+| `update_state` | Always — injected on every call |
 | `_triage_hint` | `RETRY`, `REPLAN`, or `ROLLBACK` action |
 | `_triage_subgoal` | `RESUME` action |
+| `_triage_state` | `ROLLBACK` action, when checkpoint has non-empty state |
 
 ---
 
