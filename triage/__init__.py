@@ -24,19 +24,23 @@ __all__ = [
     "TriageAbortError",
     "TriageEscalationError",
     "agent",
-    # v0.2 extras (require optional dependencies)
+    # v0.2+ extras (require optional dependencies)
     "LLMClassifier",
+    "HybridClassifier",
     "SQLiteCheckpointStore",
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def __getattr__(name: str) -> object:
     if name == "LLMClassifier":
         from triage.classifier.llm import LLMClassifier
         return LLMClassifier
+    if name == "HybridClassifier":
+        from triage.classifier.hybrid import HybridClassifier
+        return HybridClassifier
     if name == "SQLiteCheckpointStore":
         from triage.checkpoint.sqlite import SQLiteCheckpointStore
         return SQLiteCheckpointStore

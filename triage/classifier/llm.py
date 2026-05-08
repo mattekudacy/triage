@@ -27,6 +27,8 @@ Install:
 
 from __future__ import annotations
 
+import os
+
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
 
@@ -72,14 +74,19 @@ class LLMClassifier:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "claude-haiku-4-5-20251001",
+        model: str | None = None,
         max_trajectory_steps: int = 10,
         base_url: str | None = None,
     ) -> None:
-        self._api_key = api_key
-        self._model = model
+        # Explicit args take precedence; env vars are the fallback.
+        self._base_url = base_url or os.environ.get("TRIAGE_LLM_BASE_URL") or None
+        self._api_key = api_key or os.environ.get("TRIAGE_LLM_API_KEY") or None
+        self._model = (
+            model
+            or os.environ.get("TRIAGE_LLM_MODEL")
+            or ("claude-haiku-4-5-20251001" if self._base_url is None else "llama3.2")
+        )
         self._max_trajectory_steps = max_trajectory_steps
-        self._base_url = base_url
         self._client: object | None = None
 
     def _get_client(self) -> object:

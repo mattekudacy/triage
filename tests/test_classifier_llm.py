@@ -251,3 +251,53 @@ def test_max_trajectory_steps_limits_prompt():
     user_content = client.messages.create.call_args[1]["messages"][0]["content"]
     assert "[9]" in user_content
     assert "[0]" not in user_content
+
+
+# ── BYOK env vars ─────────────────────────────────────────────────────────────
+
+def test_env_var_base_url_used_when_no_arg(monkeypatch):
+    monkeypatch.setenv("TRIAGE_LLM_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("TRIAGE_LLM_MODEL", "llama3.2")
+    clf = LLMClassifier()
+    assert clf._base_url == "http://localhost:11434/v1"
+    assert clf._model == "llama3.2"
+
+
+def test_env_var_api_key_used_when_no_arg(monkeypatch):
+    monkeypatch.setenv("TRIAGE_LLM_API_KEY", "test-key")
+    monkeypatch.delenv("TRIAGE_LLM_BASE_URL", raising=False)
+    clf = LLMClassifier()
+    assert clf._api_key == "test-key"
+
+
+def test_explicit_arg_overrides_env_var(monkeypatch):
+    monkeypatch.setenv("TRIAGE_LLM_BASE_URL", "http://env-url/v1")
+    monkeypatch.setenv("TRIAGE_LLM_MODEL", "env-model")
+    clf = LLMClassifier(base_url="http://explicit/v1", model="explicit-model")
+    assert clf._base_url == "http://explicit/v1"
+    assert clf._model == "explicit-model"
+
+
+def test_default_model_anthropic_when_no_base_url(monkeypatch):
+    monkeypatch.delenv("TRIAGE_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("TRIAGE_LLM_MODEL", raising=False)
+    clf = LLMClassifier()
+    assert clf._model == "claude-haiku-4-5-20251001"
+
+
+def test_default_model_llama_when_base_url_set_via_env(monkeypatch):
+    monkeypatch.setenv("TRIAGE_LLM_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.delenv("TRIAGE_LLM_MODEL", raising=False)
+    clf = LLMClassifier()
+    assert clf._model == "llama3.2"
+
+
+def test_env_base_url_routes_to_openai_backend(monkeypatch):
+    monkeypatch.setenv("TRIAGE_LLM_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("TRIAGE_LLM_MODEL", "llama3.2")
+    clf = LLMClassifier()
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client("unknown")
+        clf.classify(traj(make_step(0)), "task")
+    MockOpenAI.assert_called_once()
+    assert MockOpenAI.call_args[1]["base_url"] == "http://localhost:11434/v1"

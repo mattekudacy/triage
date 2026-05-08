@@ -82,6 +82,7 @@ class Agent:
     async def run(self, task: str, **kwargs: Any) -> Any:
         """Run the wrapped agent, recovering from failures per the policy."""
         attempt = 0
+        attempt_history: list[tuple[Any, str]] = []
 
         while True:
             self._trajectory = Trajectory()
@@ -121,6 +122,7 @@ class Agent:
                     last_checkpoint_id=self._last_checkpoint_id,
                     raw_error=exc,
                     metadata={"attempt_number": attempt},
+                    attempt_history=list(attempt_history),
                 )
 
                 logger.info("[triage] %s detected at step %d", failure_type.value, ctx.critical_step_index)
@@ -134,6 +136,7 @@ class Agent:
 
                 action = await self._policy.dispatch(ctx)
                 logger.info("[triage] Dispatching: %r", action)
+                attempt_history.append((failure_type, action.kind))
                 attempt += 1
 
                 kwargs = await self._execute_action(action, ctx, task, kwargs)

@@ -507,3 +507,101 @@ async def test_update_state_resets_each_attempt():
 
     # After retry, _current_state reflects the latest attempt only
     assert ag._current_state == {"attempt": 2}
+
+
+# ---------------------------------------------------------------------------
+# attempt_history on FailureContext
+# ---------------------------------------------------------------------------
+
+async def test_attempt_history_empty_on_first_failure():
+    received_history: list = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        raise RuntimeError("fail")
+
+    async def capturing_strategy(ctx):
+        received_history.append(list(ctx.attempt_history))
+        return RecoveryAction.ABORT(reason="stop")
+
+    policy = FailurePolicy(UNKNOWN=capturing_strategy)
+    ag = Agent(agent_fn, policy)
+    with pytest.raises(TriageAbortError):
+        await ag.run("task")
+
+    assert received_history[0] == []
+
+
+async def test_attempt_history_accumulates_across_retries():
+    received_history: list = []
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        raise RuntimeError("always fails")
+
+    async def capturing_strategy(ctx):
+        received_history.append(list(ctx.attempt_history))
+        if len(ctx.attempt_history) >= 2:
+            return RecoveryAction.ABORT(reason="stop")
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(UNKNOWN=capturing_strategy)
+    ag = Agent(agent_fn, policy, max_recovery_attempts=5)
+    with pytest.raises(TriageAbortError):
+        await ag.run("task")
+
+    # First call: empty; second call: one entry; third call: two entries
+    assert received_history[0] == []
+    assert received_history[1] == [(FailureType.UNKNOWN, "retry")]
+    assert received_history[2] == [
+        (FailureType.UNKNOWN, "retry"),
+        (FailureType.UNKNOWN, "retry"),
+    ]
+
+
+async def test_attempt_history_records_action_kind():
+    received_history: list = []
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        raise RuntimeError("fail")
+
+    async def strategy(ctx):
+        received_history.append(list(ctx.attempt_history))
+        if not ctx.attempt_history:
+            return RecoveryAction.REPLAN(hint="try again")
+        return RecoveryAction.ABORT(reason="stop")
+
+    policy = FailurePolicy(UNKNOWN=strategy)
+    ag = Agent(agent_fn, policy, max_recovery_attempts=5)
+    with pytest.raises(TriageAbortError):
+        await ag.run("task")
+
+    assert received_history[1][0][1] == "replan"
+
+
+async def test_attempt_history_is_snapshot_not_reference():
+    """History passed to each strategy call must not be mutated by later appends."""
+    snapshots: list = []
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        raise RuntimeError("fail")
+
+    async def strategy(ctx):
+        snapshots.append(list(ctx.attempt_history))
+        if len(ctx.attempt_history) >= 2:
+            return RecoveryAction.ABORT(reason="stop")
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(UNKNOWN=strategy)
+    ag = Agent(agent_fn, policy, max_recovery_attempts=5)
+    with pytest.raises(TriageAbortError):
+        await ag.run("task")
+
+    # Each snapshot must be frozen at the length it had when captured
+    assert len(snapshots[0]) == 0
+    assert len(snapshots[1]) == 1
+    assert len(snapshots[2]) == 2

@@ -85,6 +85,7 @@ class FailureContext:
     expected_schema: dict[str, Any] | None = None
     raw_error: Exception | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    attempt_history: list[tuple[FailureType, str]] = field(default_factory=list)
 
     @property
     def failed_step(self) -> Step | None:

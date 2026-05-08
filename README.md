@@ -178,19 +178,47 @@ When your agent raises an exception, `triage` runs the classifier over the recor
 | `EXTERNAL_FAULT` | HTTP 429 / 500 / 502 / 503 in error | Exponential backoff + retry |
 | `UNKNOWN` | None of the above | Escalate to human |
 
-The default `RulesClassifier` is pattern-based and makes zero API calls. For semantic classification, use `LLMClassifier`:
+The default `RulesClassifier` is pattern-based and makes zero API calls. For semantic classification use `LLMClassifier`, or use `HybridClassifier` to get the best of both:
 
 ```python
 from triage.classifier.llm import LLMClassifier
+from triage.classifier.hybrid import HybridClassifier
 
+# LLM only — every failure classified by Claude
 agent = triage.Agent(
     my_agent,
     policy=policy,
     classifier=LLMClassifier(model="claude-haiku-4-5-20251001"),
 )
+
+# Hybrid — rules first, LLM only when rules return UNKNOWN (~20% of failures)
+agent = triage.Agent(
+    my_agent,
+    policy=policy,
+    classifier=HybridClassifier(llm=LLMClassifier()),
+)
 ```
 
-`LLMClassifier` uses the Anthropic sync client and falls back to `UNKNOWN` silently on any error. Requires `pip install "triage-agent[anthropic]"`.
+`LLMClassifier` supports Anthropic and any OpenAI-compatible provider. Configure via constructor args or env vars:
+
+```bash
+# Anthropic (default)
+ANTHROPIC_API_KEY=sk-ant-... python my_agent.py
+
+# Ollama (local, no key)
+TRIAGE_LLM_BASE_URL=http://localhost:11434/v1 TRIAGE_LLM_MODEL=llama3.2 python my_agent.py
+
+# Groq
+TRIAGE_LLM_BASE_URL=https://api.groq.com/openai/v1 TRIAGE_LLM_API_KEY=gsk_... TRIAGE_LLM_MODEL=llama-3.1-8b-instant python my_agent.py
+```
+
+Or pass explicitly:
+
+```python
+LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+```
+
+`LLMClassifier` falls back to `UNKNOWN` silently on any error. Requires `pip install "triage-agent[anthropic]"` for Anthropic, or `pip install openai` for any OpenAI-compatible provider.
 
 ### 3. Dispatch to a strategy
 
@@ -363,6 +391,26 @@ async def my_agent(
 
 ---
 
+## Attempt history
+
+Strategies can inspect everything that was tried before they were called:
+
+```python
+async def smart_strategy(ctx: triage.FailureContext) -> triage.RecoveryAction:
+    # ctx.attempt_history is a list of (FailureType, action_kind) tuples
+    replan_count = sum(1 for _, kind in ctx.attempt_history if kind == "replan")
+
+    if replan_count >= 2:
+        return triage.RecoveryAction.ESCALATE(message="Replanned twice, still failing.")
+    return triage.RecoveryAction.REPLAN(hint="Try a different approach.")
+
+policy = triage.FailurePolicy(GOAL_DRIFT=smart_strategy)
+```
+
+`attempt_history` is empty on the first failure and grows by one entry per recovery attempt. Each entry is `(failure_type, action_kind)` where `action_kind` is one of `"retry"`, `"replan"`, `"rollback"`, `"resume"`, `"escalate"`, `"abort"`.
+
+---
+
 ## Handling escalation and abort
 
 ```python
@@ -435,7 +483,8 @@ triage/
   classifier/
     base.py          Classifier protocol
     rules.py         RulesClassifier — 6 rules, sync, zero API calls
-    llm.py           LLMClassifier — semantic via Anthropic (requires anthropic)
+    llm.py           LLMClassifier — Anthropic or OpenAI-compatible backend
+    hybrid.py        HybridClassifier — rules first, LLM fallback on UNKNOWN
   strategies/
     retry.py         retry_with_tool_manifest(), backoff_and_retry()
     replan.py        replan(), resume_from_subgoal()
