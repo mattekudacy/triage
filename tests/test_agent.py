@@ -312,6 +312,52 @@ async def test_escalation_error_carries_context():
 
 
 # ---------------------------------------------------------------------------
+# Zero-trajectory fallback
+# ---------------------------------------------------------------------------
+
+async def test_zero_trajectory_fallback_synthesizes_step():
+    """Agent raises before any record_step call — trajectory must not be empty."""
+    captured_trajectories: list = []
+
+    class CapturingClassifier:
+        def classify(self, trajectory, task):
+            captured_trajectories.append(list(trajectory.steps))
+            return FailureType.UNKNOWN
+
+    async def agent_fn(task: str, *, record_step, **kw) -> str:
+        raise RuntimeError("503 service unavailable")  # fails before record_step
+
+    policy = FailurePolicy(UNKNOWN=retry_strategy())
+    ag = Agent(agent_fn, policy, classifier=CapturingClassifier(), max_recovery_attempts=1)
+    with pytest.raises((TriageEscalationError, Exception)):
+        await ag.run("task")
+
+    assert len(captured_trajectories) > 0
+    assert len(captured_trajectories[0]) == 1  # sentinel step was injected
+    assert captured_trajectories[0][0].action == "<no steps recorded>"
+    assert "503" in captured_trajectories[0][0].error
+
+
+async def test_zero_trajectory_external_fault_detected():
+    """Sentinel step's error text feeds RulesClassifier — EXTERNAL_FAULT detected."""
+    async def agent_fn(task: str, *, record_step, **kw) -> str:
+        raise RuntimeError("HTTP 503 Service Unavailable")
+
+    results: list = []
+
+    async def capturing_strategy(ctx):
+        results.append(ctx.failure_type)
+        return RecoveryAction.ABORT(reason="stop")
+
+    policy = FailurePolicy(EXTERNAL_FAULT=capturing_strategy, UNKNOWN=capturing_strategy)
+    ag = Agent(agent_fn, policy)
+    with pytest.raises(TriageAbortError):
+        await ag.run("task")
+
+    assert results[0] == FailureType.EXTERNAL_FAULT
+
+
+# ---------------------------------------------------------------------------
 # Trajectory reset between attempts
 # ---------------------------------------------------------------------------
 

@@ -17,6 +17,24 @@
 | `EXTERNAL_FAULT` | `external_fault` | Tool/API returned a transient error (429, 500, 502, 503) | Backoff and retry |
 | `UNKNOWN` | `unknown` | Classifier could not determine the failure type | Escalate |
 
+## Classifier coverage
+
+Not all failure types are detectable by the pattern-based `RulesClassifier`. The table below shows which classifier is required for each type:
+
+| Type | RulesClassifier | LLMClassifier / HybridClassifier |
+|---|---|---|
+| `WRONG_TOOL_CALLED` | ✓ | ✓ |
+| `SCHEMA_MISMATCH` | ✓ | ✓ |
+| `EXTERNAL_FAULT` | ✓ | ✓ |
+| `LOOP_DETECTED` | ✓ (window configurable) | ✓ |
+| `CONSTRAINT_IGNORED` | ✓ (requires `constraints=` arg) | ✓ |
+| `HALLUCINATED_STATE` | ✗ → `UNKNOWN` | ✓ |
+| `PLAN_INCOMPLETE` | ✗ → `UNKNOWN` | ✓ |
+| `CONTEXT_OVERFLOW` | ✗ → `UNKNOWN` | ✓ |
+| `GOAL_DRIFT` | ✗ → `UNKNOWN` | ✓ |
+
+`HALLUCINATED_STATE`, `GOAL_DRIFT`, `PLAN_INCOMPLETE`, and `CONTEXT_OVERFLOW` require semantic understanding of the trajectory — pattern-matching cannot detect them. If you use `RulesClassifier` alone, these failures arrive at your `UNKNOWN` strategy. Use `HybridClassifier` (rules first, LLM on `UNKNOWN`) to get full coverage without paying for an LLM call on every failure.
+
 ## Design rules
 
 - **Order is stable** — do not reorder members. String values are used in logs, serialized state, and external systems.

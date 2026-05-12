@@ -105,6 +105,18 @@ class Agent:
 
             except Exception as exc:
                 await self._drain_checkpoints()
+
+                # If the agent raised before calling record_step(), the trajectory
+                # is empty and the classifier has nothing to work with. Synthesize a
+                # sentinel step from the raw exception so rules can still match
+                # (e.g. EXTERNAL_FAULT from a network error raised at call-site).
+                if not self._trajectory.steps:
+                    self._trajectory.append(Step(
+                        index=0,
+                        action="<no steps recorded>",
+                        error=str(exc),
+                    ))
+
                 steps = self._trajectory.steps
 
                 # Run classify() in a thread — LLMClassifier blocks ~100-400ms.

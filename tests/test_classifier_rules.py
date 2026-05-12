@@ -46,6 +46,28 @@ def test_loop_not_detected_two_steps():
     assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
 
 
+def test_loop_window_configurable_detects_at_4():
+    clf = RulesClassifier(loop_window=4)
+    step = make_step(tool_called="search", tool_input={"q": "x"})
+    # 3 identical steps — below the window, must NOT trigger
+    t3 = traj(step,
+              make_step(1, tool_called="search", tool_input={"q": "x"}),
+              make_step(2, tool_called="search", tool_input={"q": "x"}))
+    assert clf.classify(t3, "task") == FailureType.UNKNOWN
+    # 4 identical steps — at window, must trigger
+    t4 = traj(step,
+              make_step(1, tool_called="search", tool_input={"q": "x"}),
+              make_step(2, tool_called="search", tool_input={"q": "x"}),
+              make_step(3, tool_called="search", tool_input={"q": "x"}))
+    assert clf.classify(t4, "task") == FailureType.LOOP_DETECTED
+
+
+def test_loop_window_below_2_raises():
+    import pytest
+    with pytest.raises(ValueError, match="loop_window"):
+        RulesClassifier(loop_window=1)
+
+
 def test_loop_not_detected_different_inputs():
     t = traj(
         make_step(0, tool_called="search", tool_input={"q": "hello"}),
@@ -75,6 +97,17 @@ def test_wrong_tool_called_tool_not_found():
 
 def test_wrong_tool_called_case_insensitive():
     t = traj(make_step(error="NO TOOL NAMED foo"))
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_wrong_tool_called_openai_structured_code():
+    t = traj(make_step(error="tool_not_found: the requested tool does not exist"))
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_wrong_tool_called_function_does_not_exist():
+    # Anthropic-style message
+    t = traj(make_step(error="function 'send_email' does not exist"))
     assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
 
 
@@ -130,6 +163,18 @@ def test_external_fault_503():
 def test_external_fault_not_triggered_by_unrelated_number():
     t = traj(make_step(error="expected 200 items but got 42"))
     assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_external_fault_word_boundary_no_false_positive_200():
+    # "200" is a success code, must not trigger EXTERNAL_FAULT
+    t = traj(make_step(error="expected 200 records"))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_external_fault_word_boundary_429_standalone():
+    # "429" as a bare number inside a sentence must still trigger
+    t = traj(make_step(error="rate limited, status 429"))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
 
 
 # ── CONSTRAINT_IGNORED ────────────────────────────────────────────────────────

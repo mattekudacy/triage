@@ -46,9 +46,31 @@ clf = RulesClassifier(constraints=[
 ])
 ```
 
+### Configuring the loop window
+
+The default loop window is 3 steps. If your agent legitimately repeats the same tool call twice in a row (e.g. polling), raise the threshold:
+
+```python
+clf = RulesClassifier(loop_window=5)
+```
+
+A loop is only declared when `loop_window` consecutive steps share **both** the same `tool_called` **and** the same canonical `tool_input`. Steps with `tool_called=None` are never matched.
+
 ### What RulesClassifier cannot detect
 
-`HALLUCINATED_STATE`, `PLAN_INCOMPLETE`, `CONTEXT_OVERFLOW`, and `GOAL_DRIFT` require semantic understanding of the trajectory. For these, use `LLMClassifier` or `HybridClassifier`.
+`HALLUCINATED_STATE`, `PLAN_INCOMPLETE`, `CONTEXT_OVERFLOW`, and `GOAL_DRIFT` require semantic understanding of the trajectory. Pattern-matching physically cannot detect these. For these failure types, use `LLMClassifier` or `HybridClassifier`. If you use `RulesClassifier` alone and these failure types occur, they will be classified as `UNKNOWN` and routed to your `UNKNOWN` strategy (or escalated if none is set).
+
+| Failure type | RulesClassifier | LLMClassifier / HybridClassifier |
+|---|---|---|
+| `WRONG_TOOL_CALLED` | ✓ | ✓ |
+| `SCHEMA_MISMATCH` | ✓ | ✓ |
+| `EXTERNAL_FAULT` | ✓ | ✓ |
+| `LOOP_DETECTED` | ✓ | ✓ |
+| `CONSTRAINT_IGNORED` | ✓ (with `constraints=`) | ✓ |
+| `HALLUCINATED_STATE` | ✗ → `UNKNOWN` | ✓ |
+| `PLAN_INCOMPLETE` | ✗ → `UNKNOWN` | ✓ |
+| `CONTEXT_OVERFLOW` | ✗ → `UNKNOWN` | ✓ |
+| `GOAL_DRIFT` | ✗ → `UNKNOWN` | ✓ |
 
 ---
 
