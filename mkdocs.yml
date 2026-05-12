@@ -79,6 +79,7 @@ nav:
     - HuggingFace: examples/huggingface.md
     - Durable Checkpoints: examples/durable-checkpoints.md
     - LLM Classifier: examples/llm-classifier.md
+  - Known Limitations: known-limitations.md
   - API Reference:
     - Agent: api/agent.md
     - FailurePolicy: api/policy.md
