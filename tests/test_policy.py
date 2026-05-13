@@ -152,3 +152,63 @@ async def test_abort_by_default_factory():
     action = await strategy(ctx)
     assert action.kind == "abort"
     assert action.params.get("reason") == "plan_incomplete"
+
+
+# ── FailurePolicy.chain ───────────────────────────────────────────────────────
+
+async def test_chain_uses_primary_when_not_escalating():
+    async def primary(ctx):
+        return RecoveryAction.RETRY(hint="retry")
+
+    async def fallback(ctx):
+        return RecoveryAction.ABORT(reason="fallback hit")
+
+    chained = FailurePolicy.chain(primary, fallback)
+    ctx = make_ctx(FailureType.EXTERNAL_FAULT)
+    action = await chained(ctx)
+    assert action.kind == "retry"
+
+
+async def test_chain_falls_through_to_fallback_on_escalate():
+    async def primary(ctx):
+        return RecoveryAction.ESCALATE(message="giving up")
+
+    async def fallback(ctx):
+        return RecoveryAction.REPLAN(hint="fallback replan")
+
+    chained = FailurePolicy.chain(primary, fallback)
+    ctx = make_ctx(FailureType.LOOP_DETECTED)
+    action = await chained(ctx)
+    assert action.kind == "replan"
+    assert action.params["hint"] == "fallback replan"
+
+
+async def test_chain_custom_after_kinds():
+    async def primary(ctx):
+        return RecoveryAction.RETRY()
+
+    async def fallback(ctx):
+        return RecoveryAction.ABORT(reason="custom fallback")
+
+    # Fall through on "retry" (non-standard usage for test)
+    chained = FailurePolicy.chain(primary, fallback, after_kinds=("retry",))
+    ctx = make_ctx(FailureType.UNKNOWN)
+    action = await chained(ctx)
+    assert action.kind == "abort"
+
+
+async def test_chain_does_not_call_fallback_on_replan():
+    calls = []
+
+    async def primary(ctx):
+        return RecoveryAction.REPLAN()
+
+    async def fallback(ctx):
+        calls.append("fallback")
+        return RecoveryAction.ABORT(reason="should not reach")
+
+    chained = FailurePolicy.chain(primary, fallback)
+    ctx = make_ctx(FailureType.GOAL_DRIFT)
+    action = await chained(ctx)
+    assert action.kind == "replan"
+    assert calls == []

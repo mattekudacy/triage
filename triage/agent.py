@@ -7,6 +7,7 @@ failures, dispatches recovery actions, and executes them.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from typing import Any, Awaitable, Callable, Coroutine
 
@@ -16,11 +17,60 @@ from triage.checkpoint import CheckpointStore, InMemoryCheckpointStore, make_che
 from triage.classifier.base import Classifier
 from triage.classifier.rules import RulesClassifier
 from triage.policy import FailurePolicy, RecoveryAction
-from triage.taxonomy import FailureContext, Step
+from triage.taxonomy import FailureContext, Step, TriageContext
 from triage.trajectory import Trajectory
 
 logger = logging.getLogger("triage")
 
+# ── contextvars for zero-signature-change injection ───────────────────────────
+
+_record_step_var: contextvars.ContextVar[Callable[[Step], None] | None] = \
+    contextvars.ContextVar("triage_record_step", default=None)
+
+_update_state_var: contextvars.ContextVar[Callable[[dict[str, Any]], None] | None] = \
+    contextvars.ContextVar("triage_update_state", default=None)
+
+
+def get_recorder() -> Callable[[Step], None]:
+    """Return the ``record_step`` callback for the current triage run.
+
+    For use by agents that cannot or do not want to accept ``record_step``
+    as a keyword argument::
+
+        from triage.agent import get_recorder
+        from triage.taxonomy import Step
+
+        async def my_agent(task: str, **kwargs) -> str:
+            record = get_recorder()
+            record(Step(index=0, action="fetch", tool_output=data))
+            return result
+
+    Raises ``RuntimeError`` if called outside a triage ``Agent.run()`` context.
+    """
+    fn = _record_step_var.get()
+    if fn is None:
+        raise RuntimeError(
+            "get_recorder() called outside a triage Agent.run() context. "
+            "Either call it from within a wrapped agent, or accept record_step "
+            "as a keyword argument instead."
+        )
+    return fn
+
+
+def get_state_updater() -> Callable[[dict[str, Any]], None]:
+    """Return the ``update_state`` callback for the current triage run.
+
+    Raises ``RuntimeError`` if called outside a triage ``Agent.run()`` context.
+    """
+    fn = _update_state_var.get()
+    if fn is None:
+        raise RuntimeError(
+            "get_state_updater() called outside a triage Agent.run() context."
+        )
+    return fn
+
+
+# ── Exceptions ────────────────────────────────────────────────────────────────
 
 class TriageEscalationError(Exception):
     """Raised when a strategy returns RecoveryAction.ESCALATE or max attempts exceeded."""
@@ -38,6 +88,8 @@ class TriageAbortError(Exception):
         self.context = context
 
 
+# ── Agent ─────────────────────────────────────────────────────────────────────
+
 class Agent:
     """Wraps any async callable and adds failure classification + recovery.
 
@@ -50,11 +102,30 @@ class Agent:
             update_state({"data": data})   # persisted into checkpoints
             return result
 
-    ``update_state`` is optional — agents that don't call it get ``state={}``
-    in their checkpoints, and rollback will not inject ``_triage_state``.
+    Alternatively, use ``triage.agent.get_recorder()`` inside the agent body
+    to avoid changing the function signature.
 
-    If ``auto_checkpoint=True``, a checkpoint (including current state) is
-    saved after each ``record_step`` call.
+    Parameters
+    ----------
+    fn:
+        The async agent callable to wrap.
+    policy:
+        Maps each ``FailureType`` to a recovery strategy.
+    classifier:
+        Classifies failures from the trajectory. Defaults to ``RulesClassifier``.
+    checkpoint_store:
+        Stores and loads checkpoints. Defaults to ``InMemoryCheckpointStore``.
+    max_recovery_attempts:
+        Maximum number of recovery loop iterations per ``run()`` call (default 3).
+        Each failed attempt + dispatch counts as one iteration.
+    max_total_attempts:
+        Hard cap on ``len(attempt_history)`` across all failure types. When
+        reached, triage escalates regardless of the active strategy. ``None``
+        (default) disables this cap and defers entirely to ``max_recovery_attempts``.
+        Use this to bound total retries when your policy has multiple failure types
+        that could alternate and extend the loop beyond intent.
+    auto_checkpoint:
+        If ``True``, saves a checkpoint after every ``record_step()`` call.
     """
 
     def __init__(
@@ -64,6 +135,7 @@ class Agent:
         classifier: Classifier | None = None,
         checkpoint_store: CheckpointStore | None = None,
         max_recovery_attempts: int = 3,
+        max_total_attempts: int | None = None,
         auto_checkpoint: bool = False,
     ) -> None:
         self._fn = fn
@@ -71,6 +143,7 @@ class Agent:
         self._classifier: Classifier = classifier or RulesClassifier()
         self._checkpoint_store: CheckpointStore = checkpoint_store or InMemoryCheckpointStore()
         self._max_recovery_attempts = max_recovery_attempts
+        self._max_total_attempts = max_total_attempts
         self._auto_checkpoint = auto_checkpoint
 
         # mutable run-state (reset on each run() call)
@@ -79,11 +152,47 @@ class Agent:
         self._last_checkpoint_id: str | None = None
         self._pending_checkpoints: list[Coroutine[Any, Any, None]] = []
 
+    def clone(self) -> "Agent":
+        """Return a new Agent sharing the same policy, classifier, and checkpoint
+        store but with fresh per-run state.
+
+        Use this to run multiple tasks concurrently — a single Agent instance is
+        not safe for concurrent ``run()`` calls::
+
+            agents = [agent.clone() for _ in tasks]
+            results = await asyncio.gather(*[ag.run(t) for ag, t in zip(agents, tasks)])
+        """
+        return Agent(
+            fn=self._fn,
+            policy=self._policy,
+            classifier=self._classifier,
+            checkpoint_store=self._checkpoint_store,
+            max_recovery_attempts=self._max_recovery_attempts,
+            max_total_attempts=self._max_total_attempts,
+            auto_checkpoint=self._auto_checkpoint,
+        )
+
     async def run(self, task: str, **kwargs: Any) -> Any:
         """Run the wrapped agent, recovering from failures per the policy."""
         attempt = 0
         attempt_history: list[tuple[Any, str]] = []
 
+        # Set contextvars so get_recorder() / get_state_updater() work inside fn
+        rec_token = _record_step_var.set(self._record_step)
+        upd_token = _update_state_var.set(self._update_state)
+        try:
+            return await self._run_loop(task, attempt, attempt_history, kwargs)
+        finally:
+            _record_step_var.reset(rec_token)
+            _update_state_var.reset(upd_token)
+
+    async def _run_loop(
+        self,
+        task: str,
+        attempt: int,
+        attempt_history: list[tuple[Any, str]],
+        kwargs: dict[str, Any],
+    ) -> Any:
         while True:
             self._trajectory = Trajectory()
             self._current_state = {}
@@ -106,10 +215,8 @@ class Agent:
             except Exception as exc:
                 await self._drain_checkpoints()
 
-                # If the agent raised before calling record_step(), the trajectory
-                # is empty and the classifier has nothing to work with. Synthesize a
-                # sentinel step from the raw exception so rules can still match
-                # (e.g. EXTERNAL_FAULT from a network error raised at call-site).
+                # If the agent raised before calling record_step(), synthesize a
+                # sentinel step from the exception so the classifier has context.
                 if not self._trajectory.steps:
                     self._trajectory.append(Step(
                         index=0,
@@ -120,8 +227,6 @@ class Agent:
                 steps = self._trajectory.steps
 
                 # Run classify() in a thread — LLMClassifier blocks ~100-400ms.
-                # RulesClassifier is fast but the thread overhead is negligible on
-                # the failure path. Keeps the event loop unblocked for both.
                 failure_type = await anyio.to_thread.run_sync(
                     self._classifier.classify, self._trajectory, task
                 )
@@ -139,10 +244,19 @@ class Agent:
 
                 logger.info("[triage] %s detected at step %d", failure_type.value, ctx.critical_step_index)
 
-                if attempt >= self._max_recovery_attempts:
+                # Check both per-loop cap and cross-type global cap
+                total_exceeded = (
+                    self._max_total_attempts is not None
+                    and len(attempt_history) >= self._max_total_attempts
+                )
+                if attempt >= self._max_recovery_attempts or total_exceeded:
+                    cap = (
+                        f"max_total_attempts ({self._max_total_attempts})"
+                        if total_exceeded
+                        else f"max_recovery_attempts ({self._max_recovery_attempts})"
+                    )
                     raise TriageEscalationError(
-                        f"Max recovery attempts ({self._max_recovery_attempts}) exceeded "
-                        f"after {failure_type.value}.",
+                        f"{cap} exceeded after {failure_type.value}.",
                         ctx,
                     ) from exc
 
@@ -205,6 +319,16 @@ class Agent:
             raise TriageAbortError(
                 action.params.get("reason", "Aborted by policy."), ctx
             )
+
+        # Inject structured TriageContext alongside the legacy scalar kwargs.
+        # Agents can use either form; both are always present after a failure.
+        new_kwargs["_triage_context"] = TriageContext(
+            failure_type=ctx.failure_type,
+            attempt_number=ctx.metadata["attempt_number"],
+            hint=new_kwargs.get("_triage_hint"),
+            subgoal=new_kwargs.get("_triage_subgoal"),
+            state=dict(new_kwargs.get("_triage_state", {})),
+        )
 
         logger.info("[triage] Attempt %d...", ctx.metadata["attempt_number"] + 1)
         return new_kwargs

@@ -1,6 +1,6 @@
-"""Tests for triage.taxonomy — FailureType, Step, FailureContext."""
+"""Tests for triage.taxonomy — FailureType, Step, FailureContext, TriageContext."""
 
-from triage.taxonomy import FailureContext, FailureType, Step
+from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 
 
 def make_step(index: int = 0, error: str | None = None) -> Step:
@@ -109,3 +109,27 @@ def test_steps_after_failure_middle():
         original_task="test",
     )
     assert ctx.steps_after_failure == [steps[3], steps[4]]
+
+
+# ── TriageContext ─────────────────────────────────────────────────────────────
+
+def test_triage_context_defaults():
+    tc = TriageContext(failure_type=FailureType.EXTERNAL_FAULT, attempt_number=1)
+    assert tc.hint is None
+    assert tc.subgoal is None
+    assert tc.state == {}
+
+
+def test_triage_context_fields():
+    tc = TriageContext(
+        failure_type=FailureType.LOOP_DETECTED,
+        attempt_number=2,
+        hint="try something else",
+        subgoal="step 3",
+        state={"data": 42},
+    )
+    assert tc.failure_type == FailureType.LOOP_DETECTED
+    assert tc.attempt_number == 2
+    assert tc.hint == "try something else"
+    assert tc.subgoal == "step 3"
+    assert tc.state == {"data": 42}

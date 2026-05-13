@@ -13,10 +13,10 @@ import pytest
 
 from unittest.mock import MagicMock
 
-from triage.agent import Agent, TriageAbortError, TriageEscalationError
+from triage.agent import Agent, TriageAbortError, TriageEscalationError, get_recorder, get_state_updater
 from triage.checkpoint import InMemoryCheckpointStore
 from triage.policy import FailurePolicy, RecoveryAction
-from triage.taxonomy import FailureType, Step
+from triage.taxonomy import FailureType, Step, TriageContext
 
 
 def make_step(
@@ -296,7 +296,7 @@ async def test_escalates_after_max_recovery_attempts():
 
     policy = FailurePolicy(UNKNOWN=retry_strategy())
     ag = Agent(agent_fn, policy, max_recovery_attempts=2)
-    with pytest.raises(TriageEscalationError, match="Max recovery attempts"):
+    with pytest.raises(TriageEscalationError, match="max_recovery_attempts"):
         await ag.run("task")
 
 
@@ -625,6 +625,199 @@ async def test_attempt_history_records_action_kind():
         await ag.run("task")
 
     assert received_history[1][0][1] == "replan"
+
+
+# ---------------------------------------------------------------------------
+# max_total_attempts — cross-type global cap
+# ---------------------------------------------------------------------------
+
+async def test_max_total_attempts_escalates_before_loop_cap():
+    """max_total_attempts=1 should escalate on the second failure, regardless of type."""
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        raise RuntimeError("always fails")
+
+    policy = FailurePolicy(UNKNOWN=retry_strategy())
+    ag = Agent(agent_fn, policy, max_recovery_attempts=5, max_total_attempts=1)
+    with pytest.raises(TriageEscalationError, match="max_total_attempts"):
+        await ag.run("task")
+
+    assert call_count[0] == 2  # initial + 1 retry before cap
+
+
+async def test_max_total_attempts_none_disables_global_cap():
+    """max_total_attempts=None should defer to max_recovery_attempts only."""
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        if call_count[0] < 3:
+            raise RuntimeError("fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=retry_strategy())
+    ag = Agent(agent_fn, policy, max_recovery_attempts=3, max_total_attempts=None)
+    result = await ag.run("task")
+    assert result == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Agent.clone()
+# ---------------------------------------------------------------------------
+
+async def test_clone_shares_policy_and_classifier():
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=retry_strategy())
+    ag = Agent(agent_fn, policy)
+    clone = ag.clone()
+
+    assert clone._policy is ag._policy
+    assert clone._classifier is ag._classifier
+    assert clone._fn is ag._fn
+
+
+async def test_clone_has_independent_run_state():
+    """Clones must not share mutable run-state."""
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        record_step(make_step(0))
+        return f"ok:{task}"
+
+    ag = Agent(agent_fn, FailurePolicy())
+    clone = ag.clone()
+
+    await ag.run("task-a")
+    await clone.run("task-b")
+
+    # Each instance tracked its own trajectory independently
+    assert len(ag._trajectory.steps) == 1
+    assert len(clone._trajectory.steps) == 1
+
+
+async def test_clone_inherits_max_total_attempts():
+    ag = Agent(lambda task, **kw: None, FailurePolicy(), max_total_attempts=7)
+    clone = ag.clone()
+    assert clone._max_total_attempts == 7
+
+
+# ---------------------------------------------------------------------------
+# _triage_context injection
+# ---------------------------------------------------------------------------
+
+async def test_triage_context_injected_on_retry():
+    received: list[Any] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        received.append(kw.get("_triage_context"))
+        if len(received) == 1:
+            raise RuntimeError("fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=retry_with_hint("use tool X"))
+    ag = Agent(agent_fn, policy)
+    await ag.run("task")
+
+    assert received[0] is None  # first call: no context yet
+    ctx: TriageContext = received[1]
+    assert isinstance(ctx, TriageContext)
+    assert ctx.failure_type == FailureType.UNKNOWN
+    assert ctx.hint == "use tool X"
+    assert ctx.attempt_number == 0
+
+
+async def test_triage_context_injected_on_replan():
+    received: list[Any] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        received.append(kw.get("_triage_context"))
+        if len(received) == 1:
+            raise RuntimeError("fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=replan_strategy("new plan"))
+    ag = Agent(agent_fn, policy)
+    await ag.run("task")
+
+    ctx: TriageContext = received[1]
+    assert ctx.hint == "new plan"
+    assert ctx.subgoal is None
+
+
+async def test_triage_context_state_on_rollback():
+    store = InMemoryCheckpointStore()
+    received_ctx: list[Any] = []
+    call_count = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        call_count[0] += 1
+        received_ctx.append(kw.get("_triage_context"))
+        if call_count[0] == 1:
+            record_step(make_step(0))
+            update_state({"key": "value"})
+            raise RuntimeError("fail")
+        return "ok"
+
+    policy = FailurePolicy(UNKNOWN=rollback_strategy())
+    ag = Agent(agent_fn, policy, checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("task")
+
+    ctx: TriageContext = received_ctx[1]
+    assert ctx.state == {"key": "value"}
+
+
+# ---------------------------------------------------------------------------
+# get_recorder() / get_state_updater() — contextvars injection
+# ---------------------------------------------------------------------------
+
+async def test_get_recorder_works_inside_run():
+    recorded: list[Step] = []
+
+    async def agent_fn(task: str, **kw: Any) -> str:
+        # Does NOT accept record_step — uses contextvars instead
+        record = get_recorder()
+        s = make_step(0)
+        record(s)
+        recorded.append(s)
+        return "ok"
+
+    ag = Agent(agent_fn, FailurePolicy())
+    await ag.run("task")
+    assert len(recorded) == 1
+
+
+async def test_get_state_updater_works_inside_run():
+    store = InMemoryCheckpointStore()
+
+    async def agent_fn(task: str, **kw: Any) -> str:
+        upd = get_state_updater()
+        rec = get_recorder()
+        rec(make_step(0))
+        upd({"from_contextvar": True})
+        return "ok"
+
+    ag = Agent(agent_fn, FailurePolicy(), checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("task")
+
+    cp = await store.latest()
+    assert cp is not None
+    assert cp.state == {"from_contextvar": True}
+
+
+async def test_get_recorder_raises_outside_run():
+    """get_recorder() must raise when called outside Agent.run()."""
+    with pytest.raises(RuntimeError, match="outside a triage"):
+        get_recorder()
+
+
+async def test_get_state_updater_raises_outside_run():
+    with pytest.raises(RuntimeError, match="outside a triage"):
+        get_state_updater()
 
 
 async def test_attempt_history_is_snapshot_not_reference():

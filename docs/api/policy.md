@@ -60,6 +60,39 @@ async def dispatch(self, ctx: FailureContext) -> RecoveryAction
 
 Calls `resolve(ctx.failure_type)` and awaits the strategy. If no strategy is found, returns `RecoveryAction.ESCALATE(...)`.
 
+### chain(primary, fallback, after_kinds=("escalate",))
+
+```python
+@staticmethod
+def chain(primary: StrategyFn, fallback: StrategyFn, after_kinds: tuple[str, ...] = ("escalate",)) -> StrategyFn
+```
+
+Returns a strategy that tries `primary` and falls through to `fallback` when `primary` returns an action whose `kind` is in `after_kinds`. Default is to fall through when primary escalates.
+
+```python
+from triage.strategies.replan import replan
+from triage.strategies.rollback import rollback_to_checkpoint
+
+# Replan first; if replan escalates (e.g. max_replans reached), rollback instead
+policy = triage.FailurePolicy(
+    LOOP_DETECTED=FailurePolicy.chain(
+        replan(hint="Try a different approach."),
+        rollback_to_checkpoint(),
+    ),
+)
+```
+
+```python
+# Retry up to 2 times, then replan
+policy = triage.FailurePolicy(
+    EXTERNAL_FAULT=FailurePolicy.chain(
+        backoff_and_retry(max_attempts=2),
+        replan(hint="External service is down. Try a different approach."),
+        after_kinds=("escalate",),
+    ),
+)
+```
+
 ### escalate_by_default()
 
 ```python

@@ -135,6 +135,44 @@ class FailurePolicy:
         return await strategy(ctx)
 
     @staticmethod
+    def chain(primary: StrategyFn, fallback: StrategyFn, after_kinds: tuple[str, ...] = ("escalate",)) -> StrategyFn:
+        """Return a strategy that tries ``primary`` and falls through to ``fallback``
+        when ``primary`` returns an action whose kind is in ``after_kinds``.
+
+        The default ``after_kinds=("escalate",)`` means: use primary normally, but
+        if primary decides to escalate, try fallback first instead.
+
+        Example — replan first, rollback if replan has already been tried::
+
+            from triage.strategies.replan import replan
+            from triage.strategies.rollback import rollback_to_checkpoint
+
+            policy = FailurePolicy(
+                LOOP_DETECTED=FailurePolicy.chain(
+                    replan(hint="Try a different approach."),
+                    rollback_to_checkpoint(),
+                    after_kinds=("escalate",),
+                ),
+            )
+
+        Example — retry up to 2 times, then replan::
+
+            policy = FailurePolicy(
+                EXTERNAL_FAULT=FailurePolicy.chain(
+                    backoff_and_retry(max_attempts=2),
+                    replan(hint="External service is down, try a different approach."),
+                    after_kinds=("escalate",),
+                ),
+            )
+        """
+        async def _chained(ctx: FailureContext) -> RecoveryAction:
+            action = await primary(ctx)
+            if action.kind in after_kinds:
+                return await fallback(ctx)
+            return action
+        return _chained
+
+    @staticmethod
     def escalate_by_default() -> StrategyFn:
         """Default strategy: always escalate to human."""
         async def _escalate(ctx: FailureContext) -> RecoveryAction:

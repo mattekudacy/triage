@@ -98,3 +98,26 @@ class FailureContext:
     def steps_after_failure(self) -> list[Step]:
         """All steps that executed after the critical failure."""
         return self.trajectory[self.critical_step_index + 1:]
+
+
+@dataclass
+class TriageContext:
+    """Structured recovery context injected into agents as ``_triage_context``.
+
+    Replaces the scattered ``_triage_hint``, ``_triage_subgoal``, and
+    ``_triage_state`` kwargs with a single typed object. The individual kwargs
+    are still injected for backward compatibility.
+
+    Usage inside a wrapped agent::
+
+        async def my_agent(task: str, *, record_step, update_state, **kwargs) -> Any:
+            ctx: TriageContext | None = kwargs.get("_triage_context")
+            if ctx:
+                print(ctx.failure_type, ctx.hint, ctx.attempt_number)
+    """
+
+    failure_type: FailureType
+    attempt_number: int
+    hint: str | None = None
+    subgoal: str | None = None
+    state: dict[str, Any] = field(default_factory=dict)

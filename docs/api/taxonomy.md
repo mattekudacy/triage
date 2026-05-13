@@ -102,3 +102,48 @@ prior_retries = sum(1 for _, kind in ctx.attempt_history if kind == "retry")
 if prior_retries >= 2:
     return RecoveryAction.ESCALATE("Too many retries.")
 ```
+
+---
+
+## TriageContext
+
+```python
+from triage.taxonomy import TriageContext
+```
+
+Structured recovery context injected into agents as `_triage_context`. Replaces the scattered `_triage_hint`, `_triage_subgoal`, and `_triage_state` kwargs with a single typed object. The individual kwargs are still injected for backward compatibility.
+
+```python
+@dataclass
+class TriageContext:
+    failure_type: FailureType   # what was classified
+    attempt_number: int         # 0-based attempt index from this run()
+    hint: str | None            # mirrors _triage_hint
+    subgoal: str | None         # mirrors _triage_subgoal
+    state: dict[str, Any]       # mirrors _triage_state (empty dict if no state)
+```
+
+Usage inside a wrapped agent:
+
+```python
+async def my_agent(task: str, *, record_step, update_state, **kwargs) -> Any:
+    tc: TriageContext | None = kwargs.get("_triage_context")
+    if tc:
+        print(f"Recovering from {tc.failure_type.value}, attempt {tc.attempt_number}")
+        if tc.hint:
+            # pass hint into the LLM prompt
+            ...
+        if tc.state:
+            # skip re-fetching — state was restored from checkpoint
+            data = tc.state.get("data")
+```
+
+### 
+
+A list of `(FailureType, action_kind)` tuples from all prior recovery attempts in the current `run()` call. Use it to detect repeated failures and escalate intelligently:
+
+```python
+prior_retries = sum(1 for _, kind in ctx.attempt_history if kind == "retry")
+if prior_retries >= 2:
+    return RecoveryAction.ESCALATE("Too many retries.")
+```
