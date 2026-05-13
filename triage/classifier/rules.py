@@ -37,9 +37,13 @@ _SCHEMA_RE = re.compile(
     r"validation\s+error|json.*?parse|jsondecodeerror|invalid\s+json|unexpected\s+token",
     re.IGNORECASE,
 )
-# HTTP status codes matched as whole tokens to avoid "expected 200 items" false positives.
+# HTTP status codes matched as whole tokens. Negative lookahead excludes common
+# quantity contexts ("expected 500 items", "processed 503 records") that would
+# otherwise false-positive on data-volume log lines.
 _EXTERNAL_CODE_RE = re.compile(
     r"\b(429|500|502|503)\b"
+    r"(?!\s*(?:item|record|result|element|byte|char|step|file|line|row|doc)s?\b)",
+    re.IGNORECASE,
 )
 _TIMEOUT_RE = re.compile(
     r"\btimeout\b|\btimed[\s_]?out\b|\bdeadline[\s_]?exceeded\b|\btime[\s_]?limit\b",
@@ -60,8 +64,21 @@ class RulesClassifier:
     Parameters
     ----------
     constraints:
-        Strings that must NOT appear in any step's ``llm_output``. If one does,
-        the failure is classified as CONSTRAINT_IGNORED.
+        Forbidden strings to detect in step ``llm_output``. If any of these
+        strings appear verbatim in a step's LLM output, the failure is
+        classified as ``CONSTRAINT_IGNORED``.
+
+        Pass the **forbidden content itself**, not the rule description::
+
+            # Correct: flag if the word "markdown" appears in output
+            RulesClassifier(constraints=["markdown"])
+
+            # Correct: flag if a specific phrase leaks into output
+            RulesClassifier(constraints=["<script>", "DROP TABLE"])
+
+            # Wrong: this passes the rule text, not the forbidden content
+            RulesClassifier(constraints=["no markdown allowed"])
+
     loop_window:
         Number of consecutive identical steps required to declare a loop.
         Default 3. Set higher (e.g. 4–5) if your agent legitimately repeats

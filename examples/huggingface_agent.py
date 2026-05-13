@@ -25,9 +25,11 @@ What happens:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
+import operator
 import os
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -48,10 +50,35 @@ MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 
 # ── Tool ─────────────────────────────────────────────────────────────────────
 
+_SAFE_OPS: dict = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod,
+    ast.FloorDiv: operator.floordiv,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _safe_eval(expr: str) -> float:
+    """Evaluate a pure arithmetic expression without eval()."""
+    def _visit(node: ast.expr) -> float:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
+            return _SAFE_OPS[type(node.op)](_visit(node.left), _visit(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
+            return _SAFE_OPS[type(node.op)](_visit(node.operand))
+        raise ValueError(f"Unsupported expression: {ast.dump(node)}")
+    return _visit(ast.parse(expr, mode="eval").body)
+
+
 def calculator(expression: str) -> str:
     try:
-        result = eval(expression, {"__builtins__": {}})  # noqa: S307
-        return str(result)
+        return str(_safe_eval(expression))
     except Exception as exc:
         return f"Error: {exc}"
 

@@ -28,6 +28,7 @@ Install:
 from __future__ import annotations
 
 import os
+import threading
 
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
@@ -88,29 +89,35 @@ class LLMClassifier:
         )
         self._max_trajectory_steps = max_trajectory_steps
         self._client: object | None = None
+        self._lock = threading.Lock()
 
     def _get_client(self) -> object:
-        if self._client is None:
-            if self._base_url is not None:
-                try:
-                    import openai as _oi
-                except ImportError as exc:
-                    raise ImportError(
-                        "LLMClassifier with base_url requires 'openai'. "
-                        "Install it with: pip install openai"
-                    ) from exc
-                self._client = _oi.OpenAI(
-                    api_key=self._api_key or "no-key",
-                    base_url=self._base_url,
-                )
-            else:
-                if _anthropic is None:
-                    raise ImportError(
-                        "LLMClassifier requires 'anthropic'. "
-                        "Install it with: pip install triage-agent[anthropic]"
-                    )
-                self._client = _anthropic.Anthropic(api_key=self._api_key)
+        if self._client is not None:
+            return self._client
+        with self._lock:
+            if self._client is None:
+                self._client = self._build_client()
         return self._client
+
+    def _build_client(self) -> object:
+        if self._base_url is not None:
+            try:
+                import openai as _oi
+            except ImportError as exc:
+                raise ImportError(
+                    "LLMClassifier with base_url requires 'openai'. "
+                    "Install it with: pip install openai"
+                ) from exc
+            return _oi.OpenAI(
+                api_key=self._api_key or "no-key",
+                base_url=self._base_url,
+            )
+        if _anthropic is None:
+            raise ImportError(
+                "LLMClassifier requires 'anthropic'. "
+                "Install it with: pip install triage-agent[anthropic]"
+            )
+        return _anthropic.Anthropic(api_key=self._api_key)
 
     def _build_prompt(self, trajectory: Trajectory, task: str) -> str:
         steps = trajectory.last_n_steps(self._max_trajectory_steps)

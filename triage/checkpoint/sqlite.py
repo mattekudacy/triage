@@ -48,10 +48,13 @@ class SQLiteCheckpointStore:
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
+        self._table_created = False
 
     async def _ensure_table(self, db: "aiosqlite.Connection") -> None:
-        await db.execute(_CREATE_TABLE)
-        await db.commit()
+        if not self._table_created:
+            await db.execute(_CREATE_TABLE)
+            await db.commit()
+            self._table_created = True
 
     async def save(self, checkpoint: Checkpoint) -> None:
         state_json = json.dumps(_safe_json(checkpoint.state))
