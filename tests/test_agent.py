@@ -844,3 +844,23 @@ async def test_attempt_history_is_snapshot_not_reference():
     assert len(snapshots[0]) == 0
     assert len(snapshots[1]) == 1
     assert len(snapshots[2]) == 2
+
+
+async def test_cancelled_error_propagates_without_recovery():
+    """CancelledError must never be caught and classified as a failure."""
+    import asyncio
+
+    calls = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        calls[0] += 1
+        raise asyncio.CancelledError("task cancelled")
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy, max_recovery_attempts=3)
+
+    with pytest.raises(asyncio.CancelledError):
+        await ag.run("task")
+
+    # Must have run exactly once — no recovery attempts
+    assert calls[0] == 1

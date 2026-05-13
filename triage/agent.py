@@ -212,7 +212,9 @@ class Agent:
                 await self._drain_checkpoints()
                 raise
 
-            except Exception as exc:
+            except BaseException as exc:
+                if not isinstance(exc, Exception):
+                    raise  # CancelledError, KeyboardInterrupt, GeneratorExit — never recover
                 await self._drain_checkpoints()
 
                 # If the agent raised before calling record_step(), synthesize a
@@ -342,12 +344,12 @@ class Agent:
         self._current_state = dict(state)
 
     async def _drain_checkpoints(self) -> None:
-        for coro in self._pending_checkpoints:
+        pending, self._pending_checkpoints = self._pending_checkpoints, []
+        for coro in pending:
             try:
                 await coro
             except Exception as exc:
                 logger.warning("[triage] auto_checkpoint failed: %s", exc)
-        self._pending_checkpoints = []
 
     async def _save_auto_checkpoint(self) -> None:
         checkpoint = make_checkpoint(
