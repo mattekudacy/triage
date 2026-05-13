@@ -189,3 +189,34 @@ class FailurePolicy:
         async def _abort(ctx: FailureContext) -> RecoveryAction:
             return RecoveryAction.ABORT(reason=ctx.failure_type.value)
         return _abort
+
+    @classmethod
+    def from_dict(
+        cls,
+        strategies: dict[FailureType, StrategyFn],
+        *,
+        default: StrategyFn | None = None,
+    ) -> "FailurePolicy":
+        """Build a ``FailurePolicy`` from a ``{FailureType: strategy}`` mapping.
+
+        Useful when constructing policies dynamically (e.g. from a config dict,
+        per-tenant rules, or runtime composition)::
+
+            policy = FailurePolicy.from_dict({
+                FailureType.EXTERNAL_FAULT: backoff_and_retry(max_attempts=3),
+                FailureType.TIMEOUT:        backoff_and_retry(max_attempts=2),
+            }, default=FailurePolicy.escalate_by_default())
+
+        ``FailureType`` member names match the dataclass field names exactly,
+        so this is equivalent to::
+
+            policy = FailurePolicy(
+                EXTERNAL_FAULT=backoff_and_retry(max_attempts=3),
+                TIMEOUT=backoff_and_retry(max_attempts=2),
+                default=FailurePolicy.escalate_by_default(),
+            )
+        """
+        kwargs: dict[str, StrategyFn | None] = {ft.name: s for ft, s in strategies.items()}
+        if default is not None:
+            kwargs["default"] = default
+        return cls(**kwargs)

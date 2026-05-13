@@ -229,3 +229,44 @@ async def test_timeout_field_resolves_strategy():
 def test_timeout_falls_through_to_default():
     policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
     assert policy.resolve(FailureType.TIMEOUT) is not None  # default is set
+
+
+# ── FailurePolicy.from_dict ───────────────────────────────────────────────────
+
+async def test_from_dict_resolves_strategy():
+    async def strategy(ctx): return RecoveryAction.RETRY()
+    policy = FailurePolicy.from_dict({FailureType.EXTERNAL_FAULT: strategy})
+    ctx = make_ctx(FailureType.EXTERNAL_FAULT)
+    action = await policy.dispatch(ctx)
+    assert action.kind == "retry"
+
+
+async def test_from_dict_with_default():
+    async def strategy(ctx): return RecoveryAction.RETRY()
+    policy = FailurePolicy.from_dict(
+        {FailureType.EXTERNAL_FAULT: strategy},
+        default=FailurePolicy.escalate_by_default(),
+    )
+    ctx = make_ctx(FailureType.UNKNOWN)
+    action = await policy.dispatch(ctx)
+    assert action.kind == "escalate"
+
+
+async def test_from_dict_unregistered_type_escalates_without_default():
+    policy = FailurePolicy.from_dict({FailureType.EXTERNAL_FAULT: FailurePolicy.escalate_by_default()})
+    ctx = make_ctx(FailureType.TIMEOUT)
+    action = await policy.dispatch(ctx)
+    assert action.kind == "escalate"
+
+
+def test_from_dict_multiple_types():
+    async def s(ctx): return RecoveryAction.RETRY()
+    policy = FailurePolicy.from_dict({
+        FailureType.EXTERNAL_FAULT: s,
+        FailureType.TIMEOUT: s,
+        FailureType.SCHEMA_MISMATCH: s,
+    })
+    assert policy.resolve(FailureType.EXTERNAL_FAULT) is s
+    assert policy.resolve(FailureType.TIMEOUT) is s
+    assert policy.resolve(FailureType.SCHEMA_MISMATCH) is s
+    assert policy.resolve(FailureType.UNKNOWN) is None
