@@ -47,6 +47,9 @@ class FailureType(Enum):
     # Tool/API returned an error that is not the agent's fault (rate limit, 500)
     EXTERNAL_FAULT = "external_fault"
 
+    # Agent hit a wall-clock or async deadline (asyncio.TimeoutError, anyio, trio)
+    TIMEOUT = "timeout"
+
     # Could not determine failure type
     UNKNOWN = "unknown"
 

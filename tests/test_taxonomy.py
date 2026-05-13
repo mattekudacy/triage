@@ -8,7 +8,7 @@ def make_step(index: int = 0, error: str | None = None) -> Step:
 
 
 def test_failure_type_count():
-    assert len(FailureType) == 10
+    assert len(FailureType) == 11
 
 
 def test_failure_type_values_are_strings():
@@ -29,6 +29,7 @@ def test_failure_type_all_members_present():
         "CONTEXT_OVERFLOW",
         "GOAL_DRIFT",
         "EXTERNAL_FAULT",
+        "TIMEOUT",
         "UNKNOWN",
     }
     assert names == expected

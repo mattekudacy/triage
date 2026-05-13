@@ -20,6 +20,14 @@ from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import FailureContext, Step, TriageContext
 from triage.trajectory import Trajectory
 
+
+def _safe_hook(fn: Callable[..., None], *args: Any) -> None:
+    """Call a lifecycle hook, swallowing exceptions so hooks never break a run."""
+    try:
+        fn(*args)
+    except Exception as exc:
+        logger.warning("[triage] hook raised: %s", exc)
+
 logger = logging.getLogger("triage")
 
 # ── contextvars for zero-signature-change injection ───────────────────────────
@@ -137,6 +145,9 @@ class Agent:
         max_recovery_attempts: int = 3,
         max_total_attempts: int | None = None,
         auto_checkpoint: bool = False,
+        on_step: Callable[[Step], None] | None = None,
+        on_failure: Callable[[FailureContext], None] | None = None,
+        on_recovery: Callable[[FailureContext, RecoveryAction], None] | None = None,
     ) -> None:
         self._fn = fn
         self._policy = policy
@@ -145,6 +156,9 @@ class Agent:
         self._max_recovery_attempts = max_recovery_attempts
         self._max_total_attempts = max_total_attempts
         self._auto_checkpoint = auto_checkpoint
+        self._on_step = on_step
+        self._on_failure = on_failure
+        self._on_recovery = on_recovery
 
         # mutable run-state (reset on each run() call)
         self._trajectory: Trajectory = Trajectory()
@@ -170,6 +184,9 @@ class Agent:
             max_recovery_attempts=self._max_recovery_attempts,
             max_total_attempts=self._max_total_attempts,
             auto_checkpoint=self._auto_checkpoint,
+            on_step=self._on_step,
+            on_failure=self._on_failure,
+            on_recovery=self._on_recovery,
         )
 
     async def run(self, task: str, **kwargs: Any) -> Any:
@@ -245,6 +262,8 @@ class Agent:
                 )
 
                 logger.info("[triage] %s detected at step %d", failure_type.value, ctx.critical_step_index)
+                if self._on_failure:
+                    _safe_hook(self._on_failure, ctx)
 
                 # Check both per-loop cap and cross-type global cap
                 total_exceeded = (
@@ -264,6 +283,8 @@ class Agent:
 
                 action = await self._policy.dispatch(ctx)
                 logger.info("[triage] Dispatching: %r", action)
+                if self._on_recovery:
+                    _safe_hook(self._on_recovery, ctx, action)
                 attempt_history.append((failure_type, action.kind))
                 attempt += 1
 
@@ -337,6 +358,8 @@ class Agent:
 
     def _record_step(self, step: Step) -> None:
         self._trajectory.append(step)
+        if self._on_step:
+            _safe_hook(self._on_step, step)
         if self._auto_checkpoint:
             self._pending_checkpoints.append(self._save_auto_checkpoint())
 

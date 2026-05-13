@@ -5,10 +5,10 @@ Heuristic, synchronous, zero-API-calls classifier. MVP default.
 Rules are evaluated in priority order; first match wins.
 
 Scope: RulesClassifier reliably detects LOOP_DETECTED, WRONG_TOOL_CALLED,
-SCHEMA_MISMATCH, EXTERNAL_FAULT, and CONSTRAINT_IGNORED. It returns UNKNOWN
-for HALLUCINATED_STATE, GOAL_DRIFT, PLAN_INCOMPLETE, and CONTEXT_OVERFLOW —
-those require semantic understanding and are handled by LLMClassifier or
-HybridClassifier.
+SCHEMA_MISMATCH, EXTERNAL_FAULT, TIMEOUT, and CONSTRAINT_IGNORED. It returns
+UNKNOWN for HALLUCINATED_STATE, GOAL_DRIFT, PLAN_INCOMPLETE, and
+CONTEXT_OVERFLOW — those require semantic understanding and are handled by
+LLMClassifier or HybridClassifier.
 """
 
 from __future__ import annotations
@@ -40,6 +40,10 @@ _SCHEMA_RE = re.compile(
 # HTTP status codes matched as whole tokens to avoid "expected 200 items" false positives.
 _EXTERNAL_CODE_RE = re.compile(
     r"\b(429|500|502|503)\b"
+)
+_TIMEOUT_RE = re.compile(
+    r"\btimeout\b|\btimed[\s_]?out\b|\bdeadline[\s_]?exceeded\b|\btime[\s_]?limit\b",
+    re.IGNORECASE,
 )
 
 
@@ -105,7 +109,12 @@ class RulesClassifier:
             if step.error and _EXTERNAL_CODE_RE.search(step.error):
                 return FailureType.EXTERNAL_FAULT
 
-        # 5. CONSTRAINT_IGNORED — llm_output contains a forbidden constraint string
+        # 5. TIMEOUT — Python-level timeout exceptions
+        for step in steps:
+            if step.error and _TIMEOUT_RE.search(step.error):
+                return FailureType.TIMEOUT
+
+        # 6. CONSTRAINT_IGNORED — llm_output contains a forbidden constraint string
         if self.constraints:
             for step in steps:
                 if step.llm_output:

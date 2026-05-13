@@ -864,3 +864,113 @@ async def test_cancelled_error_propagates_without_recovery():
 
     # Must have run exactly once — no recovery attempts
     assert calls[0] == 1
+
+
+# ── Lifecycle hooks ───────────────────────────────────────────────────────────
+
+async def test_on_step_called_for_each_recorded_step():
+    received: list[Step] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="a"))
+        record_step(Step(index=1, action="b"))
+        record_step(Step(index=2, action="c"))
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy, on_step=received.append)
+    await ag.run("task")
+
+    assert len(received) == 3
+    assert [s.action for s in received] == ["a", "b", "c"]
+
+
+async def test_on_failure_called_with_failure_context():
+    received: list[Any] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        if not kw.get("_triage_context"):
+            raise RuntimeError("fail")
+        return "ok"
+
+    async def retry(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(UNKNOWN=retry)
+    ag = Agent(agent_fn, policy, on_failure=received.append)
+    await ag.run("task")
+
+    assert len(received) == 1
+    assert received[0].failure_type == FailureType.UNKNOWN
+
+
+async def test_on_recovery_called_with_ctx_and_action():
+    ctx_received: list[Any] = []
+    action_received: list[Any] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        if not kw.get("_triage_context"):
+            raise RuntimeError("fail")
+        return "ok"
+
+    async def retry(ctx: Any) -> Any:
+        return RecoveryAction.RETRY(hint="go again")
+
+    policy = FailurePolicy(UNKNOWN=retry)
+
+    def hook(ctx: Any, action: Any) -> None:
+        ctx_received.append(ctx)
+        action_received.append(action)
+
+    ag = Agent(agent_fn, policy, on_recovery=hook)
+    await ag.run("task")
+
+    assert len(action_received) == 1
+    assert action_received[0].kind == "retry"
+    assert ctx_received[0].failure_type == FailureType.UNKNOWN
+
+
+async def test_hooks_not_called_on_clean_success():
+    failure_calls: list[Any] = []
+    recovery_calls: list[Any] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy,
+               on_failure=failure_calls.append,
+               on_recovery=recovery_calls.append)
+    await ag.run("task")
+
+    assert failure_calls == []
+    assert recovery_calls == []
+
+
+async def test_hook_exception_does_not_break_run():
+    def exploding_hook(step: Step) -> None:
+        raise ValueError("hook error")
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="work"))
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy, on_step=exploding_hook)
+    result = await ag.run("task")
+    assert result == "ok"
+
+
+async def test_clone_copies_hooks():
+    received: list[Step] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="x"))
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    original = Agent(agent_fn, policy, on_step=received.append)
+    cloned = original.clone()
+
+    await cloned.run("task")
+    assert len(received) == 1  # hook fired on cloned agent

@@ -212,3 +212,20 @@ async def test_chain_does_not_call_fallback_on_replan():
     action = await chained(ctx)
     assert action.kind == "replan"
     assert calls == []
+
+
+# ── TIMEOUT field ─────────────────────────────────────────────────────────────
+
+async def test_timeout_field_resolves_strategy():
+    async def strategy(ctx):
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(TIMEOUT=strategy)
+    ctx = make_ctx(FailureType.TIMEOUT)
+    action = await policy.dispatch(ctx)
+    assert action.kind == "retry"
+
+
+def test_timeout_falls_through_to_default():
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    assert policy.resolve(FailureType.TIMEOUT) is not None  # default is set

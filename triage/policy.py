@@ -97,6 +97,7 @@ class FailurePolicy:
     CONTEXT_OVERFLOW: StrategyFn | None = None
     GOAL_DRIFT: StrategyFn | None = None
     EXTERNAL_FAULT: StrategyFn | None = None
+    TIMEOUT: StrategyFn | None = None
     UNKNOWN: StrategyFn | None = None
     default: StrategyFn | None = None
 
@@ -110,6 +111,7 @@ class FailurePolicy:
         FailureType.CONTEXT_OVERFLOW:   "CONTEXT_OVERFLOW",
         FailureType.GOAL_DRIFT:         "GOAL_DRIFT",
         FailureType.EXTERNAL_FAULT:     "EXTERNAL_FAULT",
+        FailureType.TIMEOUT:            "TIMEOUT",
         FailureType.UNKNOWN:            "UNKNOWN",
     })
 

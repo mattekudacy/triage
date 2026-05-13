@@ -112,7 +112,7 @@ def test_wrong_tool_called_function_does_not_exist():
 
 
 def test_wrong_tool_not_triggered_by_unrelated_error():
-    t = traj(make_step(error="connection timeout after 30s"))
+    t = traj(make_step(error="connection refused"))
     assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
 
 
@@ -213,6 +213,40 @@ def test_unknown_fallback():
 def test_empty_trajectory():
     t = Trajectory()
     assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+# ── TIMEOUT ───────────────────────────────────────────────────────────────────
+
+def test_timeout_detected_from_asyncio_error():
+    t = traj(make_step(error="asyncio.TimeoutError: timeout"))
+    assert RulesClassifier().classify(t, "task") == FailureType.TIMEOUT
+
+
+def test_timeout_detected_timed_out():
+    t = traj(make_step(error="request timed out after 30s"))
+    assert RulesClassifier().classify(t, "task") == FailureType.TIMEOUT
+
+
+def test_timeout_detected_deadline_exceeded():
+    t = traj(make_step(error="deadline exceeded"))
+    assert RulesClassifier().classify(t, "task") == FailureType.TIMEOUT
+
+
+def test_timeout_detected_time_limit():
+    t = traj(make_step(error="time limit reached"))
+    assert RulesClassifier().classify(t, "task") == FailureType.TIMEOUT
+
+
+def test_timeout_not_detected_on_unrelated_error():
+    t = traj(make_step(error="connection refused"))
+    assert RulesClassifier().classify(t, "task") != FailureType.TIMEOUT
+
+
+def test_priority_external_over_timeout():
+    # A step with both an HTTP code and a timeout string — EXTERNAL_FAULT wins (rule 4).
+    # This documents that HTTP codes take priority over timeout patterns.
+    t = traj(make_step(error="503 service timeout"))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
 
 
 # ── Priority: LOOP_DETECTED wins over EXTERNAL_FAULT ─────────────────────────
