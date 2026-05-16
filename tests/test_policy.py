@@ -120,10 +120,10 @@ async def test_dispatch_calls_strategy_and_returns_action():
 
 async def test_dispatch_no_strategy_escalates():
     policy = FailurePolicy()
-    ctx = make_ctx(FailureType.HALLUCINATED_STATE)
+    ctx = make_ctx(FailureType.SCHEMA_MISMATCH)
     action = await policy.dispatch(ctx)
     assert action.kind == "escalate"
-    assert "hallucinated_state" in action.params.get("message", "")
+    assert "schema_mismatch" in action.params.get("message", "")
 
 
 async def test_dispatch_uses_default_when_no_specific():
@@ -131,7 +131,7 @@ async def test_dispatch_uses_default_when_no_specific():
         return RecoveryAction.ABORT(reason="unhandled")
 
     policy = FailurePolicy(default=fallback)
-    ctx = make_ctx(FailureType.GOAL_DRIFT)
+    ctx = make_ctx(FailureType.CONTEXT_OVERFLOW)
     action = await policy.dispatch(ctx)
     assert action.kind == "abort"
 
@@ -208,7 +208,7 @@ async def test_chain_does_not_call_fallback_on_replan():
         return RecoveryAction.ABORT(reason="should not reach")
 
     chained = FailurePolicy.chain(primary, fallback)
-    ctx = make_ctx(FailureType.GOAL_DRIFT)
+    ctx = make_ctx(FailureType.UNKNOWN)
     action = await chained(ctx)
     assert action.kind == "replan"
     assert calls == []

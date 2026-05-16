@@ -51,7 +51,7 @@ def _mock_llm(return_value: FailureType) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 def test_rules_result_returned_without_calling_llm():
-    llm = _mock_llm(FailureType.GOAL_DRIFT)
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
     clf = HybridClassifier(llm=llm)
 
     # WRONG_TOOL_CALLED — rules catches this
@@ -63,7 +63,7 @@ def test_rules_result_returned_without_calling_llm():
 
 
 def test_schema_mismatch_handled_by_rules_without_llm():
-    llm = _mock_llm(FailureType.GOAL_DRIFT)
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
     clf = HybridClassifier(llm=llm)
 
     step = make_step(0, error="validation error: field 'name' is required")
@@ -74,7 +74,7 @@ def test_schema_mismatch_handled_by_rules_without_llm():
 
 
 def test_external_fault_handled_by_rules_without_llm():
-    llm = _mock_llm(FailureType.GOAL_DRIFT)
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
     clf = HybridClassifier(llm=llm)
 
     step = make_step(0, error="received 429 Too Many Requests")
@@ -85,7 +85,7 @@ def test_external_fault_handled_by_rules_without_llm():
 
 
 def test_loop_detected_handled_by_rules_without_llm():
-    llm = _mock_llm(FailureType.GOAL_DRIFT)
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
     clf = HybridClassifier(llm=llm)
 
     steps = [
@@ -103,13 +103,13 @@ def test_loop_detected_handled_by_rules_without_llm():
 # ---------------------------------------------------------------------------
 
 def test_llm_called_when_rules_returns_unknown():
-    llm = _mock_llm(FailureType.GOAL_DRIFT)
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
     clf = HybridClassifier(llm=llm)
 
     step = make_step(0, error="something ambiguous happened")
     result = clf.classify(traj(step), "task")
 
-    assert result == FailureType.GOAL_DRIFT
+    assert result == FailureType.PLAN_INCOMPLETE
     llm.classify.assert_called_once()
 
 
@@ -123,7 +123,7 @@ def test_llm_result_returned_on_unknown():
 
 
 def test_llm_receives_same_trajectory_and_task():
-    llm = _mock_llm(FailureType.HALLUCINATED_STATE)
+    llm = _mock_llm(FailureType.CONTEXT_OVERFLOW)
     clf = HybridClassifier(llm=llm)
 
     t = traj(make_step(0, error="unclear"))

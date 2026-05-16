@@ -974,3 +974,29 @@ async def test_clone_copies_hooks():
 
     await cloned.run("task")
     assert len(received) == 1  # hook fired on cloned agent
+
+
+# ── Step.idempotent is informational, not enforced by agent.py ────────────────
+
+async def test_retry_does_not_check_idempotency_automatically():
+    """Agents that mark steps non-idempotent still get retried.
+    The idempotent flag is informational — strategies must check it explicitly.
+    """
+    calls: list[int] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        calls.append(1)
+        record_step(Step(index=0, action="charge_card", idempotent=False,
+                         error="tool foo not found"))
+        if len(calls) == 1:
+            raise RuntimeError("tool foo not found")
+        return "ok"
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy)
+    result = await ag.run("task")
+    assert result == "ok"
+    assert len(calls) == 2  # retried despite idempotent=False

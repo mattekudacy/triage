@@ -10,10 +10,13 @@ from triage.agent import Agent, TriageAbortError, TriageEscalationError, agent, 
 from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
+from triage.bench import BenchReport, BenchResult, run_benchmark
 from triage.testing import assert_classifies_as, make_step, RecordingAgent
 
 __all__ = [
     "Agent",
+    "BenchReport",
+    "BenchResult",
     "Checkpoint",
     "CheckpointStore",
     "InMemoryCheckpointStore",
@@ -28,6 +31,7 @@ __all__ = [
     "agent",
     "get_recorder",
     "get_state_updater",
+    "run_benchmark",
     # testing utilities
     "RecordingAgent",
     "assert_classifies_as",
@@ -39,7 +43,7 @@ __all__ = [
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 def __getattr__(name: str) -> object:

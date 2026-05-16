@@ -8,7 +8,7 @@ def make_step(index: int = 0, error: str | None = None) -> Step:
 
 
 def test_failure_type_count():
-    assert len(FailureType) == 11
+    assert len(FailureType) == 9
 
 
 def test_failure_type_values_are_strings():
@@ -23,11 +23,9 @@ def test_failure_type_all_members_present():
         "WRONG_TOOL_CALLED",
         "CONSTRAINT_IGNORED",
         "LOOP_DETECTED",
-        "HALLUCINATED_STATE",
         "PLAN_INCOMPLETE",
         "SCHEMA_MISMATCH",
         "CONTEXT_OVERFLOW",
-        "GOAL_DRIFT",
         "EXTERNAL_FAULT",
         "TIMEOUT",
         "UNKNOWN",
@@ -110,6 +108,18 @@ def test_steps_after_failure_middle():
         original_task="test",
     )
     assert ctx.steps_after_failure == [steps[3], steps[4]]
+
+
+# ── TriageContext ─────────────────────────────────────────────────────────────
+
+def test_step_idempotent_defaults_to_true():
+    step = Step(index=0, action="send_email")
+    assert step.idempotent is True
+
+
+def test_step_idempotent_can_be_set_false():
+    step = Step(index=0, action="charge_card", idempotent=False)
+    assert step.idempotent is False
 
 
 # ── TriageContext ─────────────────────────────────────────────────────────────

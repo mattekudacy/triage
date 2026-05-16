@@ -91,11 +91,9 @@ class FailurePolicy:
     WRONG_TOOL_CALLED: StrategyFn | None = None
     CONSTRAINT_IGNORED: StrategyFn | None = None
     LOOP_DETECTED: StrategyFn | None = None
-    HALLUCINATED_STATE: StrategyFn | None = None
     PLAN_INCOMPLETE: StrategyFn | None = None
     SCHEMA_MISMATCH: StrategyFn | None = None
     CONTEXT_OVERFLOW: StrategyFn | None = None
-    GOAL_DRIFT: StrategyFn | None = None
     EXTERNAL_FAULT: StrategyFn | None = None
     TIMEOUT: StrategyFn | None = None
     UNKNOWN: StrategyFn | None = None
@@ -105,11 +103,9 @@ class FailurePolicy:
         FailureType.WRONG_TOOL_CALLED:  "WRONG_TOOL_CALLED",
         FailureType.CONSTRAINT_IGNORED: "CONSTRAINT_IGNORED",
         FailureType.LOOP_DETECTED:      "LOOP_DETECTED",
-        FailureType.HALLUCINATED_STATE: "HALLUCINATED_STATE",
         FailureType.PLAN_INCOMPLETE:    "PLAN_INCOMPLETE",
         FailureType.SCHEMA_MISMATCH:    "SCHEMA_MISMATCH",
         FailureType.CONTEXT_OVERFLOW:   "CONTEXT_OVERFLOW",
-        FailureType.GOAL_DRIFT:         "GOAL_DRIFT",
         FailureType.EXTERNAL_FAULT:     "EXTERNAL_FAULT",
         FailureType.TIMEOUT:            "TIMEOUT",
         FailureType.UNKNOWN:            "UNKNOWN",

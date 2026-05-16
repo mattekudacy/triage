@@ -29,9 +29,6 @@ class FailureType(Enum):
     # Agent is repeating the same action or plan branch across N steps
     LOOP_DETECTED = "loop_detected"
 
-    # Agent asserts facts about the world that contradict tool outputs or memory
-    HALLUCINATED_STATE = "hallucinated_state"
-
     # Agent declared success but not all required sub-goals were completed
     PLAN_INCOMPLETE = "plan_incomplete"
 
@@ -40,9 +37,6 @@ class FailureType(Enum):
 
     # Agent lost track of earlier task context due to long-horizon drift
     CONTEXT_OVERFLOW = "context_overflow"
-
-    # Agent is making progress but toward a wrong interpretation of the goal
-    GOAL_DRIFT = "goal_drift"
 
     # Tool/API returned an error that is not the agent's fault (rate limit, 500)
     EXTERNAL_FAULT = "external_fault"
@@ -68,6 +62,7 @@ class Step:
     timestamp: float = field(default_factory=time.time)
     state_hash: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    idempotent: bool = True
 
 
 @dataclass
