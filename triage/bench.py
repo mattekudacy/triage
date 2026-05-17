@@ -147,6 +147,21 @@ async def run_benchmark(
     Recovery count is tracked via the on_recovery lifecycle hook — no
     changes to agent.py required.
 
+    To compare triage vs a raw baseline, pass ``baseline_fn``::
+
+        async def raw_agent(task: str) -> str:
+            ...  # same logic, no triage callbacks needed
+
+        report = await run_benchmark(
+            triage_agent,
+            tasks=["task A", "task B"],
+            policy=policy,
+            label="with-triage",
+            baseline_fn=raw_agent,
+            baseline_label="baseline",
+        )
+        print(report.compare())   # side-by-side table
+
     Parameters
     ----------
     agent_fn:
@@ -164,9 +179,11 @@ async def run_benchmark(
     max_recovery_attempts:
         Passed to Agent.__init__.
     baseline_fn:
-        Optional raw agent callable (no triage wrap). Run for each (task, run)
-        pair. Exceptions are caught as failures. Results stored in
-        ``report.baseline_results`` and shown in ``report.compare()``.
+        Optional raw agent callable ``(task: str) -> Any`` (no triage wrap).
+        Run for each (task, run) pair alongside agent_fn. Exceptions are caught
+        as failures. Results stored in ``report.baseline_results`` and shown
+        in ``report.compare()``. ``baseline_fn`` does not receive ``record_step``
+        or ``update_state`` — it is the unmodified agent.
     baseline_label:
         Label for baseline results in ``report.compare()``.
     """

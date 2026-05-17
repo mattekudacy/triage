@@ -32,5 +32,8 @@ htmlcov/
 # macOS
 .DS_Store
 
+# Docs build output — never commit rendered HTML
+site/
+
 # Environment
 .env
