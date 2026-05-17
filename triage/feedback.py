@@ -1,16 +1,17 @@
 """
 triage.feedback
 ~~~~~~~~~~~~~~~
-Classifier feedback loop. Record misclassifications and review coverage.
+Record classifier misclassifications and review coverage.
 
 Usage::
 
-    # After a failed run, record the correct type:
+    # After a failed run where the classifier got it wrong, record the truth:
     agent.report_misclassification(FailureType.EXTERNAL_FAULT)
 
-    # Later, review coverage:
-    classifier = RulesClassifier()
-    classifier.fit("corrections.jsonl")
+    # Later, review which failure types are being misclassified most often:
+    corrections = load_corrections("corrections.jsonl")
+    report = coverage_report(corrections)
+    # {"external_fault": {"correct": 12, "wrong": 3}, ...}
 """
 
 from __future__ import annotations
@@ -96,3 +97,31 @@ def load_corrections(store_path: str = "corrections.jsonl") -> list[Correction]:
     except FileNotFoundError:
         pass
     return corrections
+
+
+def coverage_report(
+    corrections: list[Correction],
+) -> dict[str, dict[str, int]]:
+    """Summarise classifier accuracy from a list of corrections.
+
+    Returns a dict keyed by the *expected* failure type value, each containing
+    ``{"correct": N, "wrong": N}`` counts.  "correct" means the classifier
+    agreed with the human label; "wrong" means it didn't.
+
+    Example::
+
+        corrections = load_corrections("corrections.jsonl")
+        report = coverage_report(corrections)
+        for ft, counts in sorted(report.items()):
+            total = counts["correct"] + counts["wrong"]
+            pct = 100 * counts["correct"] / total
+            print(f"{ft}: {pct:.0f}% correct ({total} samples)")
+    """
+    result: dict[str, dict[str, int]] = {}
+    for c in corrections:
+        entry = result.setdefault(c.expected_type, {"correct": 0, "wrong": 0})
+        if c.observed_type == c.expected_type:
+            entry["correct"] += 1
+        else:
+            entry["wrong"] += 1
+    return result

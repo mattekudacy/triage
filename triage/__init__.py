@@ -11,7 +11,7 @@ from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointSto
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.bench import BenchReport, BenchResult, run_benchmark
-from triage.feedback import Correction, record_correction
+from triage.feedback import Correction, coverage_report, record_correction
 from triage.testing import assert_classifies_as, make_step, RecordingAgent
 
 __all__ = [
@@ -21,6 +21,7 @@ __all__ = [
     "Checkpoint",
     "CheckpointStore",
     "Correction",
+    "coverage_report",
     "InMemoryCheckpointStore",
     "FailureContext",
     "TriageContext",

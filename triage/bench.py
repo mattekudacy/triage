@@ -192,6 +192,9 @@ async def run_benchmark(
     for task in tasks:
         for _ in range(n_runs):
             # ── triage run ────────────────────────────────────────────────────
+            # recoveries and failure_types are re-bound each iteration, so the
+            # on_recovery closure below always captures the current iteration's
+            # variables — not the loop variable. Do not hoist these out of the loop.
             recoveries = 0
             failure_types: list[str] = []
 

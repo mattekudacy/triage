@@ -1,4 +1,4 @@
-"""Tests for triage.feedback — Correction, record_correction, load_corrections."""
+"""Tests for triage.feedback — Correction, record_correction, load_corrections, coverage_report."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import tempfile
 import pytest
 
 from triage.classifier.rules import RulesClassifier
-from triage.feedback import Correction, load_corrections, record_correction
+from triage.feedback import Correction, coverage_report, load_corrections, record_correction
 from triage.taxonomy import FailureContext, FailureType, Step
 
 
@@ -136,6 +136,33 @@ def test_fit_empty_file(tmp_path: Any):
     clf = RulesClassifier()
     coverage = clf.fit(store)
     assert coverage == {}
+
+
+# ── coverage_report ───────────────────────────────────────────────────────────
+
+def test_coverage_report_counts_correct_and_wrong():
+    corrections = [
+        Correction(task="t", steps_summary=[], expected_type="external_fault", observed_type="external_fault", timestamp=0.0),
+        Correction(task="t", steps_summary=[], expected_type="external_fault", observed_type="unknown", timestamp=0.0),
+        Correction(task="t", steps_summary=[], expected_type="external_fault", observed_type="unknown", timestamp=0.0),
+        Correction(task="t", steps_summary=[], expected_type="timeout", observed_type="timeout", timestamp=0.0),
+    ]
+    report = coverage_report(corrections)
+    assert report["external_fault"] == {"correct": 1, "wrong": 2}
+    assert report["timeout"] == {"correct": 1, "wrong": 0}
+
+
+def test_coverage_report_empty_list():
+    assert coverage_report([]) == {}
+
+
+def test_coverage_report_all_correct():
+    corrections = [
+        Correction(task="t", steps_summary=[], expected_type="timeout", observed_type="timeout", timestamp=0.0),
+        Correction(task="t", steps_summary=[], expected_type="timeout", observed_type="timeout", timestamp=0.0),
+    ]
+    report = coverage_report(corrections)
+    assert report["timeout"] == {"correct": 2, "wrong": 0}
 
 
 # type annotation fix for pytest fixtures
