@@ -30,9 +30,10 @@ pip install "triage-agent[redis]"    # RedisCheckpointStore
 
 # Framework adapters
 pip install "triage-agent[langgraph]"      # LangGraph
-pip install "triage-agent[crewai]"         # CrewAI
-pip install "triage-agent[openai-agents]"  # OpenAI Agents SDK
 pip install "triage-agent[langchain]"      # LangChain
+
+# Policy config files
+pip install "triage-agent[yaml]"           # FailurePolicy.from_yaml() with .yaml/.yml files
 ```
 
 ## BYOK — provider env vars

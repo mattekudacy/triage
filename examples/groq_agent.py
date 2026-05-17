@@ -157,7 +157,7 @@ def _make_classifier() -> LLMClassifier:
 
 policy = triage.FailurePolicy(
     EXTERNAL_FAULT=backoff_and_retry(max_attempts=3),
-    GOAL_DRIFT=replan(hint="Stay focused on the original task."),
+    CONSTRAINT_IGNORED=replan(hint="Stay focused on the original task."),
     default=triage.FailurePolicy.escalate_by_default(),
 )
 

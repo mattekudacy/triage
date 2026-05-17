@@ -16,7 +16,6 @@ policy = triage.FailurePolicy(
     EXTERNAL_FAULT     = backoff_and_retry(max_attempts=5),
     LOOP_DETECTED      = replan(hint="Try a different approach."),
     CONSTRAINT_IGNORED = replan(hint="Re-read the constraints carefully."),
-    HALLUCINATED_STATE = rollback_to_checkpoint(),
     PLAN_INCOMPLETE    = resume_from_subgoal(),
     default            = triage.FailurePolicy.escalate_by_default(),
 )

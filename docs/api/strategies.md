@@ -46,7 +46,7 @@ Returns `RecoveryAction.REPLAN` with the given hint (defaults to `"Generate a ne
 ```python
 policy = triage.FailurePolicy(
     LOOP_DETECTED=replan(hint="You're stuck. Try a completely different approach."),
-    GOAL_DRIFT=replan(hint="Re-read the original task before continuing."),
+    CONSTRAINT_IGNORED=replan(hint="Re-read the original task before continuing."),
 )
 ```
 
@@ -74,7 +74,7 @@ Returns `RecoveryAction.ROLLBACK`. If `checkpoint_id` is not given, uses `ctx.la
 
 ```python
 policy = triage.FailurePolicy(
-    HALLUCINATED_STATE=rollback_to_checkpoint(),
+    LOOP_DETECTED=rollback_to_checkpoint(),
 )
 ```
 

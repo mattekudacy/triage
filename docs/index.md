@@ -16,7 +16,7 @@ Current agent frameworks know *that* your agent failed. They don't know *why* �
 agent fails → classify failure type → route to matching strategy → recover
 ```
 
-It wraps any async agent callable — OpenAI, LangGraph, CrewAI, raw LLM loops — without requiring you to change your framework.
+It wraps any async agent callable — OpenAI, LangGraph, raw LLM loops — without requiring you to change your framework.
 
 ## At a glance
 
@@ -24,7 +24,6 @@ It wraps any async agent callable — OpenAI, LangGraph, CrewAI, raw LLM loops �
 import triage
 from triage.strategies.retry import retry_with_tool_manifest, backoff_and_retry
 from triage.strategies.replan import replan
-from triage.strategies.rollback import rollback_to_checkpoint
 from triage.taxonomy import Step
 
 async def my_agent(task: str, *, record_step, update_state, **kwargs):
@@ -37,7 +36,6 @@ policy = triage.FailurePolicy(
     WRONG_TOOL_CALLED  = retry_with_tool_manifest(max_attempts=3),
     EXTERNAL_FAULT     = backoff_and_retry(max_attempts=5),
     LOOP_DETECTED      = replan(hint="Try a different approach."),
-    HALLUCINATED_STATE = rollback_to_checkpoint(),
     default            = triage.FailurePolicy.escalate_by_default(),
 )
 
@@ -47,13 +45,14 @@ result = await agent.run("your task")
 
 ## Key features
 
-- **10 failure types** — from `WRONG_TOOL_CALLED` to `GOAL_DRIFT`, each with a distinct recovery path
+- **9 failure types** — from `WRONG_TOOL_CALLED` to `TIMEOUT`, each with a distinct recovery path
 - **Zero-dependency classifier** — `RulesClassifier` catches most failures with pattern matching and zero API calls
 - **Semantic classifier** — `LLMClassifier` handles ambiguous failures using any LLM (Anthropic, Ollama, Groq, HuggingFace)
 - **Hybrid mode** — rules first, LLM only when rules return `UNKNOWN`
-- **Framework adapters** — drop-in wrappers for LangGraph, CrewAI, OpenAI Agents SDK, LangChain
+- **Framework adapters** — drop-in wrappers for LangGraph and LangChain
 - **Durable checkpoints** — in-memory, SQLite, or Redis; real agent state persisted and restored on rollback
 - **Attempt history** — strategies see every prior `(failure_type, action)` pair and can escalate intelligently
+- **Benchmarking** — `run_benchmark()` measures success rate, latency, and recovery counts; `compare()` shows triage vs raw baseline side-by-side
 
 ## Install
 
@@ -62,13 +61,12 @@ result = await agent.run("your task")
 pip install triage-agent
 
 # With extras
-pip install "triage-agent[anthropic]"       # LLMClassifier via Claude
-pip install "triage-agent[sqlite]"          # SQLiteCheckpointStore
-pip install "triage-agent[redis]"           # RedisCheckpointStore
-pip install "triage-agent[langgraph]"       # LangGraph adapter
-pip install "triage-agent[crewai]"          # CrewAI adapter
-pip install "triage-agent[openai-agents]"   # OpenAI Agents SDK adapter
-pip install "triage-agent[langchain]"       # LangChain adapter
+pip install "triage-agent[anthropic]"    # LLMClassifier via Claude
+pip install "triage-agent[sqlite]"       # SQLiteCheckpointStore
+pip install "triage-agent[redis]"        # RedisCheckpointStore
+pip install "triage-agent[langgraph]"    # LangGraph adapter
+pip install "triage-agent[langchain]"    # LangChain adapter
+pip install "triage-agent[yaml]"         # FailurePolicy.from_yaml() with .yaml/.yml files
 ```
 
 ## Why not just if/else?

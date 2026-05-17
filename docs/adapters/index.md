@@ -1,6 +1,6 @@
 # Framework Adapters
 
-triage ships adapters for four popular agent frameworks. Each adapter wraps the framework's native agent object and returns a `triage.Agent` that adds failure classification and recovery on top.
+triage ships adapters for two popular agent frameworks. Each adapter wraps the framework's native agent object and returns a `triage.Agent` that adds failure classification and recovery on top.
 
 ## How adapters work
 
@@ -19,8 +19,6 @@ The adapter intercepts the framework's native step events (tool calls, LLM outpu
 | Adapter | Install | Function |
 |---|---|---|
 | [LangGraph](langgraph.md) | `pip install "triage-agent[langgraph]"` | `wrap_langgraph(graph, policy)` |
-| [CrewAI](crewai.md) | `pip install "triage-agent[crewai]"` | `wrap_crewai(crew, policy)` |
-| [OpenAI Agents SDK](openai-agents.md) | `pip install "triage-agent[openai-agents]"` | `wrap_openai_agents(agent, policy)` |
 | [LangChain](langchain.md) | `pip install "triage-agent[langchain]"` | `wrap_langchain(executor, policy)` |
 
 ## Common pattern
@@ -45,4 +43,4 @@ result = await agent.run("Summarize the latest earnings report.")
 
 ## Lazy imports
 
-Framework imports are lazy — the adapter module only raises `ImportError` at import time if the optional dependency is missing. Installing `triage-agent` without any extras does not pull in LangGraph, CrewAI, or any other framework.
+Framework imports are lazy — the adapter module only raises `ImportError` at import time if the optional dependency is missing. Installing `triage-agent` without any extras does not pull in LangGraph or any other framework.

@@ -79,7 +79,6 @@ class FailurePolicy:
             WRONG_TOOL_CALLED  = retry_with_tool_manifest(max_attempts=3),
             CONSTRAINT_IGNORED = replan(hint="re-read the constraints carefully"),
             LOOP_DETECTED      = replan(max_replans=2),
-            HALLUCINATED_STATE = rollback_to_checkpoint(),
             PLAN_INCOMPLETE    = resume_from_subgoal(),
             EXTERNAL_FAULT     = backoff_and_retry(max_attempts=5),
             default            = FailurePolicy.escalate_by_default(),
@@ -215,4 +214,148 @@ class FailurePolicy:
         kwargs: dict[str, StrategyFn | None] = {ft.name: s for ft, s in strategies.items()}
         if default is not None:
             kwargs["default"] = default
+        return cls(**kwargs)
+
+    @classmethod
+    def from_yaml(
+        cls,
+        path: str,
+        *,
+        strategy_registry: "dict[str, Any] | None" = None,
+    ) -> "FailurePolicy":
+        """Load a ``FailurePolicy`` from a TOML or YAML config file.
+
+        File format is determined by extension:
+        - ``.toml`` — parsed with stdlib ``tomllib`` (Python 3.11+)
+        - ``.yaml`` / ``.yml`` — parsed with ``pyyaml`` (install ``triage-agent[yaml]``)
+
+        TOML example (``policy.toml``)::
+
+            [EXTERNAL_FAULT]
+            strategy = "backoff_and_retry"
+            max_attempts = 5
+
+            [TIMEOUT]
+            strategy = "backoff_and_retry"
+            max_attempts = 3
+
+            [WRONG_TOOL_CALLED]
+            strategy = "retry_with_tool_manifest"
+            max_attempts = 2
+
+            default = "escalate"
+
+        YAML example (``policy.yaml``)::
+
+            EXTERNAL_FAULT:
+              strategy: backoff_and_retry
+              max_attempts: 5
+            default: escalate
+
+        Built-in strategy names: ``backoff_and_retry``, ``retry_with_tool_manifest``,
+        ``replan``, ``resume_from_subgoal``, ``rollback_to_checkpoint``,
+        ``escalate``, ``abort``.
+
+        Parameters
+        ----------
+        path:
+            Path to the config file.
+        strategy_registry:
+            Optional dict mapping name → callable (or factory). When provided,
+            merged with the built-in registry (custom names take precedence).
+        """
+        # Lazy imports to keep core deps minimal
+        import os
+        raw: dict[str, Any]
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".toml":
+            try:
+                import tomllib  # stdlib 3.11+
+            except ImportError:
+                import tomli as tomllib  # type: ignore[no-reuse-decl]
+            with open(path, "rb") as f:
+                raw = tomllib.load(f)
+        elif ext in (".yaml", ".yml"):
+            try:
+                import yaml  # type: ignore[import]
+            except ImportError as e:
+                raise ImportError(
+                    "pyyaml is required for YAML config files. "
+                    "Install it with: pip install triage-agent[yaml]"
+                ) from e
+            with open(path, encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        else:
+            raise ValueError(
+                f"Unsupported config file extension {ext!r}. Use .toml, .yaml, or .yml"
+            )
+
+        return cls._from_raw_config(raw, strategy_registry=strategy_registry)
+
+    @classmethod
+    def _from_raw_config(
+        cls,
+        raw: "dict[str, Any]",
+        *,
+        strategy_registry: "dict[str, Any] | None" = None,
+    ) -> "FailurePolicy":
+        """Build a FailurePolicy from a parsed config dict (internal)."""
+        # Lazy import strategies here to avoid circular imports at module level
+        from triage.strategies.retry import backoff_and_retry, retry_with_tool_manifest
+        from triage.strategies.replan import replan, resume_from_subgoal
+        from triage.strategies.rollback import rollback_to_checkpoint
+
+        _builtin: dict[str, Any] = {
+            "backoff_and_retry": backoff_and_retry,
+            "retry_with_tool_manifest": retry_with_tool_manifest,
+            "replan": replan,
+            "resume_from_subgoal": resume_from_subgoal,
+            "rollback_to_checkpoint": rollback_to_checkpoint,
+            "escalate": lambda **_kw: cls.escalate_by_default(),
+            "abort": lambda **_kw: cls.abort_by_default(),
+        }
+        registry = {**_builtin, **(strategy_registry or {})}
+
+        valid_fields = {ft.name for ft in FailureType}
+        kwargs: dict[str, StrategyFn | None] = {}
+
+        for key, value in raw.items():
+            if key == "default":
+                # default = "escalate" or default = "abort"
+                if isinstance(value, str):
+                    if value not in registry:
+                        raise ValueError(
+                            f"Unknown strategy {value!r} for 'default'. "
+                            f"Available: {sorted(registry)}"
+                        )
+                    kwargs["default"] = registry[value]()
+                continue
+
+            if key not in valid_fields:
+                raise ValueError(
+                    f"Unknown FailureType {key!r}. "
+                    f"Valid types: {sorted(valid_fields)}"
+                )
+
+            if isinstance(value, str):
+                # EXTERNAL_FAULT = "backoff_and_retry"
+                strategy_name = value
+                strategy_kwargs: dict[str, Any] = {}
+            elif isinstance(value, dict):
+                strategy_name = value.get("strategy", "")
+                strategy_kwargs = {k: v for k, v in value.items() if k != "strategy"}
+            else:
+                raise ValueError(
+                    f"Invalid value for {key!r}: expected string or dict, got {type(value)!r}"
+                )
+
+            if strategy_name not in registry:
+                raise ValueError(
+                    f"Unknown strategy {strategy_name!r} for {key!r}. "
+                    f"Available: {sorted(registry)}"
+                )
+
+            factory = registry[strategy_name]
+            kwargs[key] = factory(**strategy_kwargs)
+
         return cls(**kwargs)

@@ -21,7 +21,7 @@ Current agent frameworks know *that* your agent failed. They don't know *why* �
 agent fails → classify failure type → route to matching strategy → recover
 ```
 
-It works with any async agent callable — OpenAI, LangGraph, CrewAI, raw LLM loops — without requiring you to change your framework.
+It works with any async agent callable — OpenAI, LangGraph, raw LLM loops — without requiring you to change your framework.
 
 ---
 
@@ -33,8 +33,6 @@ pip install triage-agent
 
 # With framework adapters
 pip install "triage-agent[langgraph]"
-pip install "triage-agent[crewai]"
-pip install "triage-agent[openai-agents]"
 pip install "triage-agent[langchain]"
 
 # With LLM-based classifier
@@ -43,6 +41,9 @@ pip install "triage-agent[anthropic]"
 # With durable checkpoint storage
 pip install "triage-agent[sqlite]"
 pip install "triage-agent[redis]"
+
+# With YAML/TOML policy config
+pip install "triage-agent[yaml]"
 ```
 
 Python 3.10+ required. Core dependencies: `anyio>=4.0`, `pydantic>=2.0`.
@@ -55,7 +56,6 @@ Python 3.10+ required. Core dependencies: `anyio>=4.0`, `pydantic>=2.0`.
 import triage
 from triage.strategies.retry import retry_with_tool_manifest, backoff_and_retry
 from triage.strategies.replan import replan
-from triage.strategies.rollback import rollback_to_checkpoint
 from triage.taxonomy import Step
 
 # 1. Define your agent — it receives record_step and update_state callbacks
@@ -72,7 +72,6 @@ policy = triage.FailurePolicy(
     WRONG_TOOL_CALLED  = retry_with_tool_manifest(max_attempts=3),
     EXTERNAL_FAULT     = backoff_and_retry(max_attempts=5),
     LOOP_DETECTED      = replan(hint="Try a different approach."),
-    HALLUCINATED_STATE = rollback_to_checkpoint(),
     default            = triage.FailurePolicy.escalate_by_default(),
 )
 
@@ -105,28 +104,6 @@ result = await agent.run("your task")
 ```
 
 Streams events via `graph.astream_events(..., version="v2")` to capture tool calls and LLM turns.
-
-### CrewAI
-
-```python
-from triage.adapters.crewai import wrap_crewai
-
-agent = wrap_crewai(crew, policy=policy)
-result = await agent.run("your task")
-```
-
-Patches `crew.step_callback` for each run (original restored in `finally`).
-
-### OpenAI Agents SDK
-
-```python
-from triage.adapters.openai_agents import wrap_openai_agents
-
-agent = wrap_openai_agents(sdk_agent, policy=policy)
-result = await agent.run("your task")
-```
-
-Uses `Runner.run_streamed` and iterates `stream_events()`.
 
 ### LangChain
 
@@ -163,19 +140,18 @@ async def my_agent(task: str, *, record_step, **kwargs):
 
 ### 2. Classify the failure
 
-When your agent raises an exception, `triage` runs the classifier over the recorded trajectory and returns one of 10 `FailureType` values:
+When your agent raises an exception, `triage` runs the classifier over the recorded trajectory and returns one of 9 `FailureType` values:
 
 | FailureType | Trigger | Default recovery |
 |---|---|---|
 | `WRONG_TOOL_CALLED` | Error matches `"tool not found"` / `"no tool named"` | Retry with correct manifest |
 | `CONSTRAINT_IGNORED` | LLM output contains a forbidden string | Replan with constraint reminder |
 | `LOOP_DETECTED` | Last 3 steps identical tool + input | Replan or rollback |
-| `HALLUCINATED_STATE` | Agent asserts facts contradicting tool output | Rollback to checkpoint |
 | `PLAN_INCOMPLETE` | Success declared but sub-goals incomplete | Resume from subgoal |
 | `SCHEMA_MISMATCH` | Error matches `"validation error"` / JSON parse failure | Retry with schema hint |
 | `CONTEXT_OVERFLOW` | Agent lost earlier context | Replan with compressed context |
-| `GOAL_DRIFT` | Agent making progress toward the wrong goal | Replan with goal restatement |
 | `EXTERNAL_FAULT` | HTTP 429 / 500 / 502 / 503 in error | Exponential backoff + retry |
+| `TIMEOUT` | `timeout` / `timed out` / `deadline exceeded` in error | Backoff and retry |
 | `UNKNOWN` | None of the above | Escalate to human |
 
 The default `RulesClassifier` is pattern-based and makes zero API calls. For semantic classification use `LLMClassifier`, or use `HybridClassifier` to get the best of both:
@@ -248,7 +224,6 @@ policy = triage.FailurePolicy(
     WRONG_TOOL_CALLED  = retry_with_tool_manifest(max_attempts=3),
     CONSTRAINT_IGNORED = replan(hint="Re-read the task constraints carefully."),
     LOOP_DETECTED      = replan(max_replans=2),
-    HALLUCINATED_STATE = rollback_to_checkpoint(),
     PLAN_INCOMPLETE    = resume_from_subgoal(),
     SCHEMA_MISMATCH    = retry_with_tool_manifest(max_attempts=2),
     EXTERNAL_FAULT     = backoff_and_retry(max_attempts=5),
@@ -404,7 +379,7 @@ async def smart_strategy(ctx: triage.FailureContext) -> triage.RecoveryAction:
         return triage.RecoveryAction.ESCALATE(message="Replanned twice, still failing.")
     return triage.RecoveryAction.REPLAN(hint="Try a different approach.")
 
-policy = triage.FailurePolicy(GOAL_DRIFT=smart_strategy)
+policy = triage.FailurePolicy(CONSTRAINT_IGNORED=smart_strategy)
 ```
 
 `attempt_history` is empty on the first failure and grows by one entry per recovery attempt. Each entry is `(failure_type, action_kind)` where `action_kind` is one of `"retry"`, `"replan"`, `"rollback"`, `"resume"`, `"escalate"`, `"abort"`.
@@ -471,7 +446,7 @@ Result: 714
 
 ```
 triage/
-  taxonomy.py        FailureType enum, Step, FailureContext
+  taxonomy.py        FailureType enum (9 types), Step, FailureContext
   trajectory.py      Trajectory (append / replay_from / last_n_steps)
   checkpoint/
     base.py          Checkpoint, CheckpointStore protocol, serialization helpers
@@ -491,9 +466,9 @@ triage/
     rollback.py      rollback_to_checkpoint()
   adapters/
     langgraph.py     wrap_langgraph() (requires langgraph)
-    crewai.py        wrap_crewai() (requires crewai)
-    openai_agents.py wrap_openai_agents() (requires openai-agents)
     langchain.py     wrap_langchain() (requires langchain)
+  bench.py           run_benchmark(), BenchReport, BenchResult
+  feedback.py        Correction, record_correction(), load_corrections()
 ```
 
 ---

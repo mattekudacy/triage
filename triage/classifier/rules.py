@@ -6,9 +6,8 @@ Rules are evaluated in priority order; first match wins.
 
 Scope: RulesClassifier reliably detects LOOP_DETECTED, WRONG_TOOL_CALLED,
 SCHEMA_MISMATCH, EXTERNAL_FAULT, TIMEOUT, and CONSTRAINT_IGNORED. It returns
-UNKNOWN for HALLUCINATED_STATE, GOAL_DRIFT, PLAN_INCOMPLETE, and
-CONTEXT_OVERFLOW — those require semantic understanding and are handled by
-LLMClassifier or HybridClassifier.
+UNKNOWN for PLAN_INCOMPLETE and CONTEXT_OVERFLOW — those require semantic
+understanding and are handled by LLMClassifier or HybridClassifier.
 """
 
 from __future__ import annotations
@@ -140,6 +139,71 @@ class RulesClassifier:
                         if constraint.lower() in output_lower:
                             return FailureType.CONSTRAINT_IGNORED
 
-        # HALLUCINATED_STATE, GOAL_DRIFT, PLAN_INCOMPLETE, CONTEXT_OVERFLOW cannot
-        # be detected by pattern matching — use LLMClassifier or HybridClassifier.
+        # PLAN_INCOMPLETE and CONTEXT_OVERFLOW cannot be detected by pattern
+        # matching — use LLMClassifier or HybridClassifier for those.
         return FailureType.UNKNOWN
+
+    def fit(self, corrections_path: str = "corrections.jsonl") -> dict[str, dict[str, int]]:
+        """Read a corrections JSONL file and report classifier coverage.
+
+        For each correction where the rules classifier would have returned a
+        different type than expected, a warning is logged. Use this to identify
+        systematic misclassifications after calling
+        ``agent.report_misclassification()``.
+
+        Returns a coverage dict keyed by FailureType value::
+
+            {
+                "wrong_tool_called": {"correct": 5, "wrong": 1},
+                "external_fault":    {"correct": 3, "wrong": 0},
+            }
+
+        Does not modify the classifier's rules or thresholds — purely diagnostic.
+        """
+        import logging as _logging
+        from triage.feedback import load_corrections
+        from triage.trajectory import Trajectory
+        from triage.taxonomy import Step
+
+        log = _logging.getLogger("triage")
+        corrections = load_corrections(corrections_path)
+
+        coverage: dict[str, dict[str, int]] = {}
+
+        for c in corrections:
+            # Reconstruct a minimal trajectory from the summary
+            steps = [
+                Step(
+                    index=s.get("index", 0),
+                    action=s.get("action", ""),
+                    tool_called=s.get("tool_called"),
+                    error=s.get("error"),
+                )
+                for s in c.steps_summary
+            ]
+            traj = Trajectory()
+            for step in steps:
+                traj.append(step)
+
+            predicted = self.classify(traj, c.task).value
+            expected = c.expected_type
+
+            if expected not in coverage:
+                coverage[expected] = {"correct": 0, "wrong": 0}
+
+            if predicted == expected:
+                coverage[expected]["correct"] += 1
+            else:
+                coverage[expected]["wrong"] += 1
+                log.warning(
+                    "[triage] fit: misclassification detected",
+                    extra={
+                        "triage_event": "fit_misclassification",
+                        "task": c.task,
+                        "expected": expected,
+                        "predicted": predicted,
+                        "steps": c.steps_summary,
+                    },
+                )
+
+        return coverage

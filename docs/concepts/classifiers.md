@@ -58,19 +58,18 @@ A loop is only declared when `loop_window` consecutive steps share **both** the 
 
 ### What RulesClassifier cannot detect
 
-`HALLUCINATED_STATE`, `PLAN_INCOMPLETE`, `CONTEXT_OVERFLOW`, and `GOAL_DRIFT` require semantic understanding of the trajectory. Pattern-matching physically cannot detect these. For these failure types, use `LLMClassifier` or `HybridClassifier`. If you use `RulesClassifier` alone and these failure types occur, they will be classified as `UNKNOWN` and routed to your `UNKNOWN` strategy (or escalated if none is set).
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` require semantic understanding of the trajectory. Pattern-matching physically cannot detect these. For these failure types, use `LLMClassifier` or `HybridClassifier`. If you use `RulesClassifier` alone and these failure types occur, they will be classified as `UNKNOWN` and routed to your `UNKNOWN` strategy (or escalated if none is set).
 
 | Failure type | RulesClassifier | LLMClassifier / HybridClassifier |
 |---|---|---|
 | `WRONG_TOOL_CALLED` | ✓ | ✓ |
 | `SCHEMA_MISMATCH` | ✓ | ✓ |
 | `EXTERNAL_FAULT` | ✓ | ✓ |
+| `TIMEOUT` | ✓ | ✓ |
 | `LOOP_DETECTED` | ✓ | ✓ |
 | `CONSTRAINT_IGNORED` | ✓ (with `constraints=`) | ✓ |
-| `HALLUCINATED_STATE` | ✗ → `UNKNOWN` | ✓ |
 | `PLAN_INCOMPLETE` | ✗ → `UNKNOWN` | ✓ |
 | `CONTEXT_OVERFLOW` | ✗ → `UNKNOWN` | ✓ |
-| `GOAL_DRIFT` | ✗ → `UNKNOWN` | ✓ |
 
 ---
 
@@ -175,7 +174,7 @@ classifier = HybridClassifier(llm=LLMClassifier())
 This is the recommended production configuration:
 
 - Rules handle the common cases (loops, HTTP errors, schema failures) for free
-- LLM handles the semantically ambiguous cases (`HALLUCINATED_STATE`, `GOAL_DRIFT`, `CONTEXT_OVERFLOW`, `PLAN_INCOMPLETE`)
+- LLM handles the semantically ambiguous cases (`CONTEXT_OVERFLOW`, `PLAN_INCOMPLETE`)
 - LLM is only called when necessary — API cost stays low
 
 ```python

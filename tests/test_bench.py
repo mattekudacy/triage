@@ -134,3 +134,52 @@ async def test_run_benchmark_label_in_report():
     policy = FailurePolicy()
     report = await run_benchmark(agent, tasks=["t"], policy=policy, label="my-label")
     assert report.label == "my-label"
+
+
+# ── baseline comparison ───────────────────────────────────────────────────────
+
+async def test_run_benchmark_with_baseline_fn():
+    async def agent(task: str, *, record_step, update_state, **kwargs) -> str:
+        return "ok"
+
+    async def baseline(task: str) -> str:
+        return "ok"
+
+    policy = FailurePolicy()
+    report = await run_benchmark(
+        agent, tasks=["t1", "t2"], policy=policy, baseline_fn=baseline
+    )
+    assert len(report.baseline_results) == 2
+    assert all(r.success for r in report.baseline_results)
+
+
+async def test_bench_report_compare_output():
+    async def agent(task: str, *, record_step, update_state, **kwargs) -> str:
+        return "ok"
+
+    async def baseline(task: str) -> str:
+        raise RuntimeError("baseline fails")
+
+    policy = FailurePolicy()
+    report = await run_benchmark(
+        agent,
+        tasks=["t"],
+        policy=policy,
+        baseline_fn=baseline,
+        label="triage",
+        baseline_label="raw",
+    )
+    cmp = report.compare()
+    assert "triage" in cmp
+    assert "raw" in cmp
+    assert "100.0%" in cmp   # triage success rate
+    assert "0.0%" in cmp     # baseline failure rate
+
+
+async def test_bench_report_compare_no_baseline_returns_empty():
+    async def agent(task: str, *, record_step, update_state, **kwargs) -> str:
+        return "ok"
+
+    policy = FailurePolicy()
+    report = await run_benchmark(agent, tasks=["t"], policy=policy)
+    assert report.compare() == ""

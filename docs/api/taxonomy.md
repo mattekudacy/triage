@@ -8,19 +8,18 @@ Core data types used throughout the triage API.
 from triage.taxonomy import FailureType
 ```
 
-An `Enum` with 10 members. The classifier assigns one value per failure; the policy maps each to a strategy.
+An `Enum` with 9 members. The classifier assigns one value per failure; the policy maps each to a strategy.
 
 | Member | String value | Default recovery |
 |---|---|---|
 | `WRONG_TOOL_CALLED` | `wrong_tool_called` | Retry with correct manifest |
 | `CONSTRAINT_IGNORED` | `constraint_ignored` | Replan with constraint reminder |
 | `LOOP_DETECTED` | `loop_detected` | Replan or rollback |
-| `HALLUCINATED_STATE` | `hallucinated_state` | Rollback to checkpoint |
 | `PLAN_INCOMPLETE` | `plan_incomplete` | Resume from subgoal |
 | `SCHEMA_MISMATCH` | `schema_mismatch` | Retry with schema hint |
 | `CONTEXT_OVERFLOW` | `context_overflow` | Replan with compressed context |
-| `GOAL_DRIFT` | `goal_drift` | Replan with goal restatement |
 | `EXTERNAL_FAULT` | `external_fault` | Backoff and retry |
+| `TIMEOUT` | `timeout` | Backoff and retry |
 | `UNKNOWN` | `unknown` | Escalate |
 
 String values are the stable public identifiers used in logs and serialized state. Never change them.
@@ -46,6 +45,7 @@ class Step:
     timestamp: float                    # unix timestamp (auto-set)
     state_hash: str | None = None       # optional hash for dedup
     metadata: dict[str, Any]           # arbitrary extra data
+    idempotent: bool = False            # set True only for read-only / safe-to-retry steps
 ```
 
 Record steps by calling the injected `record_step` callback:
@@ -59,8 +59,13 @@ record_step(Step(
     tool_called="search",
     tool_input={"query": "latest AI news"},
     tool_output=["result 1", "result 2"],
+    idempotent=True,   # safe to replay — read-only
 ))
 ```
+
+`idempotent` defaults to `False`. Mark a step `idempotent=True` only when it is genuinely safe to replay without side effects (read-only tool calls, pure computations). Steps that send emails, write to databases, or charge payment methods must remain `False`.
+
+When `Agent(strict_idempotency=True)` is set, any `RETRY` action is blocked if the trajectory contains a step with `idempotent=False`, and `TriageEscalationError` is raised instead.
 
 ## FailureContext
 
@@ -136,14 +141,4 @@ async def my_agent(task: str, *, record_step, update_state, **kwargs) -> Any:
         if tc.state:
             # skip re-fetching — state was restored from checkpoint
             data = tc.state.get("data")
-```
-
-### 
-
-A list of `(FailureType, action_kind)` tuples from all prior recovery attempts in the current `run()` call. Use it to detect repeated failures and escalate intelligently:
-
-```python
-prior_retries = sum(1 for _, kind in ctx.attempt_history if kind == "retry")
-if prior_retries >= 2:
-    return RecoveryAction.ESCALATE("Too many retries.")
 ```

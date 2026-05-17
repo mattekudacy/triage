@@ -11,9 +11,9 @@ What happens:
   A multi-phase agent runs three phases. After each phase it records a step.
   auto_checkpoint=True saves a checkpoint after every step.
 
-  Phase 2 deliberately raises a HALLUCINATED_STATE error on the first attempt.
-  triage classifies it, rolls back to the last checkpoint (end of phase 1),
-  and re-runs from there with a corrective hint.
+  Phase 2 deliberately raises an error on the first attempt.
+  triage classifies it as UNKNOWN (no pattern match), rolls back to the last
+  checkpoint (end of phase 1), and re-runs from there.
 
   The SQLite database is written to a temp file so the example is self-contained
   and cleans up after itself.
@@ -114,13 +114,10 @@ async def main() -> None:
         store = SQLiteCheckpointStore(db_path)
         print(f"\nCheckpoint DB: {db_path}")
 
-        # RulesClassifier has no pattern-based rule for HALLUCINATED_STATE —
-        # detecting it requires LLMClassifier (see examples/llm_classifier.py).
-        # Here we map UNKNOWN → rollback so the demo runs end-to-end with the
-        # default classifier. In production you would use LLMClassifier and
-        # map HALLUCINATED_STATE directly.
+        # Map UNKNOWN → rollback so the demo works with the default RulesClassifier.
+        # For semantically ambiguous failures (PLAN_INCOMPLETE, CONTEXT_OVERFLOW),
+        # swap in HybridClassifier — see examples/llm_classifier.py.
         policy = triage.FailurePolicy(
-            HALLUCINATED_STATE=rollback_to_checkpoint(),
             UNKNOWN=rollback_to_checkpoint(),
             default=triage.FailurePolicy.escalate_by_default(),
         )

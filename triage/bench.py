@@ -18,8 +18,9 @@ Usage::
         policy=policy,
         n_runs=3,
         label="with-triage",
+        baseline_fn=my_raw_agent_fn,
     )
-    print(report.summary())
+    print(report.compare())
 """
 
 from __future__ import annotations
@@ -50,6 +51,8 @@ class BenchReport:
 
     label: str
     results: list[BenchResult] = field(default_factory=list)
+    baseline_label: str = "baseline"
+    baseline_results: list[BenchResult] = field(default_factory=list)
 
     @property
     def success_rate(self) -> float:
@@ -67,6 +70,27 @@ class BenchReport:
     def total_recoveries(self) -> int:
         return sum(r.recoveries for r in self.results)
 
+    @property
+    def failure_type_counts(self) -> dict[str, int]:
+        """Count how many times each failure type triggered a recovery."""
+        counts: dict[str, int] = {}
+        for r in self.results:
+            for ft in r.failure_types:
+                counts[ft] = counts.get(ft, 0) + 1
+        return counts
+
+    @property
+    def _baseline_success_rate(self) -> float:
+        if not self.baseline_results:
+            return 0.0
+        return sum(1 for r in self.baseline_results if r.success) / len(self.baseline_results)
+
+    @property
+    def _baseline_mean_latency_s(self) -> float:
+        if not self.baseline_results:
+            return 0.0
+        return sum(r.duration_s for r in self.baseline_results) / len(self.baseline_results)
+
     def summary(self) -> str:
         lines = [
             f"Benchmark: {self.label}",
@@ -74,6 +98,31 @@ class BenchReport:
             f"  success_rate:  {self.success_rate:.1%}",
             f"  mean_latency:  {self.mean_latency_s:.3f}s",
             f"  recoveries:    {self.total_recoveries}",
+        ]
+        counts = self.failure_type_counts
+        if counts:
+            lines.append("  failure_types:")
+            for ft, n in sorted(counts.items(), key=lambda x: -x[1]):
+                lines.append(f"    {ft}: {n}")
+        return "\n".join(lines)
+
+    def compare(self) -> str:
+        """Side-by-side comparison of triage vs baseline.
+
+        Returns an empty string if no baseline results are available.
+        """
+        if not self.baseline_results:
+            return ""
+
+        w = max(len(self.label), len(self.baseline_label), 10)
+        bl = self.baseline_label.ljust(w)
+        tr = self.label.ljust(w)
+
+        lines = [
+            f"{'':20}  {bl}  {tr}",
+            f"{'success_rate:':<20}  {self._baseline_success_rate:.1%}{'':<{w - 4}}  {self.success_rate:.1%}",
+            f"{'mean_latency_s:':<20}  {self._baseline_mean_latency_s:.3f}s{'':<{w - 6}}  {self.mean_latency_s:.3f}s",
+            f"{'recoveries:':<20}  {'—':<{w}}  {self.total_recoveries}",
         ]
         return "\n".join(lines)
 
@@ -87,6 +136,8 @@ async def run_benchmark(
     label: str = "triage",
     classifier: Any = None,
     max_recovery_attempts: int = 3,
+    baseline_fn: Callable[..., Any] | None = None,
+    baseline_label: str = "baseline",
 ) -> BenchReport:
     """Run agent_fn on each task n_runs times, wrapped with triage.
 
@@ -107,16 +158,23 @@ async def run_benchmark(
     n_runs:
         Number of times to run each task (for averaging).
     label:
-        Human-readable label for the report.
+        Human-readable label for the triage results in the report.
     classifier:
         Optional classifier to pass to Agent. Defaults to RulesClassifier.
     max_recovery_attempts:
         Passed to Agent.__init__.
+    baseline_fn:
+        Optional raw agent callable (no triage wrap). Run for each (task, run)
+        pair. Exceptions are caught as failures. Results stored in
+        ``report.baseline_results`` and shown in ``report.compare()``.
+    baseline_label:
+        Label for baseline results in ``report.compare()``.
     """
-    report = BenchReport(label=label)
+    report = BenchReport(label=label, baseline_label=baseline_label)
 
     for task in tasks:
         for _ in range(n_runs):
+            # ── triage run ────────────────────────────────────────────────────
             recoveries = 0
             failure_types: list[str] = []
 
@@ -125,14 +183,14 @@ async def run_benchmark(
                 recoveries += 1
                 failure_types.append(ctx.failure_type.value)
 
-            kwargs: dict[str, Any] = dict(
+            agent_kwargs: dict[str, Any] = dict(
                 max_recovery_attempts=max_recovery_attempts,
                 on_recovery=on_recovery,
             )
             if classifier is not None:
-                kwargs["classifier"] = classifier
+                agent_kwargs["classifier"] = classifier
 
-            wrapped = Agent(agent_fn, policy, **kwargs)
+            wrapped = Agent(agent_fn, policy, **agent_kwargs)
 
             t0 = time.perf_counter()
             success = True
@@ -149,5 +207,22 @@ async def run_benchmark(
                 recoveries=recoveries,
                 failure_types=failure_types,
             ))
+
+            # ── baseline run (no triage) ──────────────────────────────────────
+            if baseline_fn is not None:
+                bt0 = time.perf_counter()
+                b_success = True
+                try:
+                    await baseline_fn(task)
+                except Exception:
+                    b_success = False
+                b_duration = time.perf_counter() - bt0
+
+                report.baseline_results.append(BenchResult(
+                    task=task,
+                    success=b_success,
+                    duration_s=b_duration,
+                    recoveries=0,
+                ))
 
     return report

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "triage-agent"
-version = "0.7.0"
+version = "0.8.0"
 description = "Classify why your agent failed. Recover intelligently."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,6 +33,7 @@ otel = ["opentelemetry-sdk>=1.20", "opentelemetry-api>=1.20"]
 anthropic = ["anthropic>=0.25"]
 langgraph = ["langgraph>=0.2"]
 langchain = ["langchain-core>=0.1", "langchain>=0.1"]
+yaml = ["pyyaml>=6.0"]
 sqlite = ["aiosqlite>=0.19"]
 redis = ["redis[asyncio]>=5.0"]
 dev = [

@@ -2,19 +2,18 @@
 
 `FailureType` is the core enum that drives every recovery decision. The classifier assigns one value per failure; the policy maps each value to a strategy.
 
-## All 10 types
+## All 9 types
 
 | Member | String value | When it occurs | Default recovery |
 |---|---|---|---|
 | `WRONG_TOOL_CALLED` | `wrong_tool_called` | Agent called a tool that doesn't exist or isn't in the manifest | Retry with correct manifest |
 | `CONSTRAINT_IGNORED` | `constraint_ignored` | LLM output violates an explicit constraint from the task | Replan with constraint reminder |
 | `LOOP_DETECTED` | `loop_detected` | Agent repeating the same tool + input across 3+ steps | Replan or rollback |
-| `HALLUCINATED_STATE` | `hallucinated_state` | Agent asserts facts that contradict tool outputs | Rollback to checkpoint |
 | `PLAN_INCOMPLETE` | `plan_incomplete` | Agent declared success before completing all sub-goals | Resume from subgoal |
 | `SCHEMA_MISMATCH` | `schema_mismatch` | Tool output or LLM response didn't match expected structure | Retry with schema hint |
 | `CONTEXT_OVERFLOW` | `context_overflow` | Agent lost earlier task context due to long-horizon drift | Replan with compressed context |
-| `GOAL_DRIFT` | `goal_drift` | Agent making progress toward the wrong interpretation of the goal | Replan with goal restatement |
 | `EXTERNAL_FAULT` | `external_fault` | Tool/API returned a transient error (429, 500, 502, 503) | Backoff and retry |
+| `TIMEOUT` | `timeout` | Wall-clock or async deadline exceeded | Backoff and retry |
 | `UNKNOWN` | `unknown` | Classifier could not determine the failure type | Escalate |
 
 ## Classifier coverage
@@ -26,14 +25,13 @@ Not all failure types are detectable by the pattern-based `RulesClassifier`. The
 | `WRONG_TOOL_CALLED` | ✓ | ✓ |
 | `SCHEMA_MISMATCH` | ✓ | ✓ |
 | `EXTERNAL_FAULT` | ✓ | ✓ |
+| `TIMEOUT` | ✓ | ✓ |
 | `LOOP_DETECTED` | ✓ (window configurable) | ✓ |
 | `CONSTRAINT_IGNORED` | ✓ (requires `constraints=` arg) | ✓ |
-| `HALLUCINATED_STATE` | ✗ → `UNKNOWN` | ✓ |
 | `PLAN_INCOMPLETE` | ✗ → `UNKNOWN` | ✓ |
 | `CONTEXT_OVERFLOW` | ✗ → `UNKNOWN` | ✓ |
-| `GOAL_DRIFT` | ✗ → `UNKNOWN` | ✓ |
 
-`HALLUCINATED_STATE`, `GOAL_DRIFT`, `PLAN_INCOMPLETE`, and `CONTEXT_OVERFLOW` require semantic understanding of the trajectory — pattern-matching cannot detect them. If you use `RulesClassifier` alone, these failures arrive at your `UNKNOWN` strategy. Use `HybridClassifier` (rules first, LLM on `UNKNOWN`) to get full coverage without paying for an LLM call on every failure.
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` require semantic understanding of the trajectory — pattern-matching cannot detect them. If you use `RulesClassifier` alone, these failures arrive at your `UNKNOWN` strategy. Use `HybridClassifier` (rules first, LLM on `UNKNOWN`) to get full coverage without paying for an LLM call on every failure.
 
 ## Design rules
 

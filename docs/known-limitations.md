@@ -10,8 +10,6 @@ This page documents the current limitations of triage honestly. Some are design 
 
 `RulesClassifier` is pattern-based and makes zero API calls. It reliably detects structural failures — wrong tool name, bad JSON, HTTP errors, loops — but it physically cannot detect:
 
-- `HALLUCINATED_STATE` — requires comparing LLM assertions against tool outputs
-- `GOAL_DRIFT` — requires understanding intent vs. trajectory
 - `PLAN_INCOMPLETE` — requires knowing what sub-goals were supposed to be completed
 - `CONTEXT_OVERFLOW` — requires detecting that the agent lost track of earlier context
 

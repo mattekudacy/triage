@@ -22,6 +22,7 @@ async def my_agent(task: str, *, record_step, update_state, _triage_hint=None, *
         tool_called="my_tool",
         tool_input={"task": task},
         tool_output=result,
+        idempotent=True,   # mark True only for safe-to-retry (read-only) steps
     ))
 
     # Persist state so rollback can restore it
@@ -44,7 +45,6 @@ policy = triage.FailurePolicy(
     EXTERNAL_FAULT     = backoff_and_retry(max_attempts=5),
     LOOP_DETECTED      = replan(hint="Try a different approach."),
     CONSTRAINT_IGNORED = replan(hint="Re-read the constraints carefully."),
-    HALLUCINATED_STATE = rollback_to_checkpoint(),
     PLAN_INCOMPLETE    = resume_from_subgoal(),
     default            = triage.FailurePolicy.escalate_by_default(),
 )
@@ -98,4 +98,14 @@ from triage.classifier.llm import LLMClassifier
 classifier = HybridClassifier(llm=LLMClassifier())
 
 agent = triage.Agent(my_agent, policy=policy, classifier=classifier)
+```
+
+## Safety options
+
+```python
+# Escalate instead of retrying when any non-idempotent step is in the trajectory
+agent = triage.Agent(my_agent, policy=policy, strict_idempotency=True)
+
+# Cap total wall-clock time spent on recovery
+agent = triage.Agent(my_agent, policy=policy, max_recovery_seconds=30.0)
 ```

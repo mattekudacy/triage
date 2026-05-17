@@ -67,9 +67,7 @@ async def main():
         store = SQLiteCheckpointStore(db_path)
 
         # Map UNKNOWN → rollback so the demo works without LLMClassifier.
-        # In production, use LLMClassifier and map HALLUCINATED_STATE directly.
         policy = triage.FailurePolicy(
-            HALLUCINATED_STATE=rollback_to_checkpoint(),
             UNKNOWN=rollback_to_checkpoint(),
             default=triage.FailurePolicy.escalate_by_default(),
         )
@@ -114,7 +112,7 @@ python examples/durable_checkpoints.py
 
 ## Production setup
 
-For a real production agent, replace `UNKNOWN → rollback` with `HALLUCINATED_STATE → rollback` and use `HybridClassifier` so the LLM can detect hallucinated state semantically:
+For a real production agent, pair rollback with `HybridClassifier` so the LLM can semantically detect failures that pattern-matching misses (e.g. `PLAN_INCOMPLETE`, `CONTEXT_OVERFLOW`):
 
 ```python
 from triage.classifier.hybrid import HybridClassifier
@@ -123,7 +121,7 @@ from triage.strategies.rollback import rollback_to_checkpoint
 
 classifier = HybridClassifier(llm=LLMClassifier())
 policy = triage.FailurePolicy(
-    HALLUCINATED_STATE=rollback_to_checkpoint(),
+    LOOP_DETECTED=rollback_to_checkpoint(),
     EXTERNAL_FAULT=backoff_and_retry(max_attempts=3),
     default=triage.FailurePolicy.escalate_by_default(),
 )

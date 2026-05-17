@@ -82,7 +82,7 @@ classifier = LLMClassifier(
 )
 
 policy = triage.FailurePolicy(
-    GOAL_DRIFT=replan(hint="Stay focused on the original task. Do not pursue sub-topics."),
+    CONSTRAINT_IGNORED=replan(hint="Stay focused on the original task. Do not pursue sub-topics."),
     EXTERNAL_FAULT=backoff_and_retry(max_attempts=3),
     default=triage.FailurePolicy.escalate_by_default(),
 )

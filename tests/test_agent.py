@@ -1000,3 +1000,277 @@ async def test_retry_does_not_check_idempotency_automatically():
     result = await ag.run("task")
     assert result == "ok"
     assert len(calls) == 2  # retried despite idempotent=False
+
+
+# ── strict_idempotency ────────────────────────────────────────────────────────
+
+async def test_strict_idempotency_escalates_on_non_idempotent_step():
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="charge_card", idempotent=False,
+                         error="tool foo not found"))
+        raise RuntimeError("tool foo not found")
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy, strict_idempotency=True)
+    with pytest.raises(TriageEscalationError):
+        await ag.run("task")
+
+
+async def test_strict_idempotency_message_lists_non_idempotent_steps():
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="send_email", idempotent=False,
+                         error="tool foo not found"))
+        raise RuntimeError("tool foo not found")
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy, strict_idempotency=True)
+    with pytest.raises(TriageEscalationError, match="send_email"):
+        await ag.run("task")
+
+
+async def test_strict_idempotency_false_allows_retry():
+    calls: list[int] = []
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        calls.append(1)
+        record_step(Step(index=0, action="charge_card", idempotent=False,
+                         error="tool foo not found"))
+        if len(calls) == 1:
+            raise RuntimeError("tool foo not found")
+        return "ok"
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy, strict_idempotency=False)
+    result = await ag.run("task")
+    assert result == "ok"
+    assert len(calls) == 2
+
+
+async def test_strict_idempotency_only_checks_on_retry():
+    """Non-retry actions (replan) are not blocked by strict_idempotency."""
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="charge_card", idempotent=False))
+        raise RuntimeError("plan failed")
+
+    async def replan_strategy(ctx: Any) -> Any:
+        return RecoveryAction.REPLAN(hint="try again")
+
+    calls: list[str] = []
+
+    async def agent_fn2(task: str, *, record_step: Any, **kw: Any) -> str:
+        calls.append("called")
+        if len(calls) == 1:
+            record_step(Step(index=0, action="charge_card", idempotent=False))
+            raise RuntimeError("plan failed")
+        return "ok"
+
+    policy = FailurePolicy(default=replan_strategy)
+    ag = Agent(agent_fn2, policy, strict_idempotency=True)
+    result = await ag.run("task")
+    assert result == "ok"
+
+
+async def test_clone_copies_strict_idempotency():
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    original = Agent(agent_fn, policy, strict_idempotency=True)
+    cloned = original.clone()
+    assert cloned._strict_idempotency is True
+
+
+# ── max_recovery_seconds ──────────────────────────────────────────────────────
+
+async def test_max_recovery_seconds_escalates_when_exceeded(monkeypatch: Any):
+    import time as _time
+    calls: list[float] = [0.0]
+
+    def fake_monotonic() -> float:
+        # First call returns 0, second returns 100 (exceeds any cap)
+        val = calls[0]
+        calls[0] += 100.0
+        return val
+
+    monkeypatch.setattr(_time, "monotonic", fake_monotonic)
+
+    attempt_count: list[int] = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        attempt_count[0] += 1
+        record_step(Step(index=0, action="step", error="tool foo not found"))
+        raise RuntimeError("tool foo not found")
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy, max_recovery_seconds=10.0, max_recovery_attempts=10)
+    with pytest.raises(TriageEscalationError, match="max_recovery_seconds"):
+        await ag.run("task")
+
+
+async def test_max_recovery_seconds_none_does_not_cap():
+    """Default (None) never triggers time-based escalation."""
+    calls: list[int] = [0]
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        calls[0] += 1
+        record_step(Step(index=0, action="step", error="tool foo not found"))
+        if calls[0] < 3:
+            raise RuntimeError("tool foo not found")
+        return "ok"
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy, max_recovery_seconds=None)
+    result = await ag.run("task")
+    assert result == "ok"
+
+
+async def test_clone_copies_max_recovery_seconds():
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    original = Agent(agent_fn, policy, max_recovery_seconds=30.0)
+    cloned = original.clone()
+    assert cloned._max_recovery_seconds == 30.0
+
+
+# ── structured logs ───────────────────────────────────────────────────────────
+
+async def test_structured_log_failure_classified(caplog: Any):
+    import logging
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="step", error="tool foo not found"))
+        raise RuntimeError("tool foo not found")
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy, max_recovery_attempts=1)
+
+    with caplog.at_level(logging.INFO, logger="triage"):
+        with pytest.raises(TriageEscalationError):
+            await ag.run("task")
+
+    events = [r for r in caplog.records if getattr(r, "triage_event", None) == "failure_classified"]
+    assert events, "Expected at least one failure_classified log record"
+    assert events[0].__dict__["failure_type"] == "wrong_tool_called"
+
+
+async def test_structured_log_action_dispatched(caplog: Any):
+    import logging
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="step", error="tool foo not found"))
+        raise RuntimeError("tool foo not found")
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy, max_recovery_attempts=1)
+
+    with caplog.at_level(logging.INFO, logger="triage"):
+        with pytest.raises(TriageEscalationError):
+            await ag.run("task")
+
+    events = [r for r in caplog.records if getattr(r, "triage_event", None) == "action_dispatched"]
+    assert events, "Expected at least one action_dispatched log record"
+    assert events[0].__dict__["action_kind"] == "retry"
+
+
+# ── multi-agent context propagation ──────────────────────────────────────────
+
+async def test_child_triage_escalation_propagates_to_parent():
+    """Child TriageEscalationError propagates unchanged through the parent agent.
+
+    The parent's except (TriageEscalationError, TriageAbortError) re-raise clause
+    ensures the child's exception is never re-classified — it surfaces directly to
+    the caller of the outer agent's run().
+    """
+    inner_policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+
+    async def inner_agent(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="step", error="tool foo not found"))
+        raise RuntimeError("tool foo not found")
+
+    inner = Agent(inner_agent, inner_policy)
+
+    async def outer_agent(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="outer step"))
+        await inner.run(task)  # inner escalates; propagates out unchanged
+        return "ok"
+
+    outer_policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    outer = Agent(outer_agent, outer_policy)
+
+    # The child's TriageEscalationError propagates through the outer agent
+    # unchanged — the outer's re-raise clause handles it without re-classifying.
+    with pytest.raises(TriageEscalationError) as exc_info:
+        await outer.run("task")
+
+    # Context comes from the inner agent's classification
+    assert exc_info.value.context.failure_type == FailureType.WRONG_TOOL_CALLED
+
+
+async def test_child_triage_context_reused_when_chained_exception():
+    """If exception chains to TriageEscalationError, outer reuses child's failure_type."""
+    inner_policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+
+    async def inner_agent(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="step", error="tool foo not found"))
+        raise RuntimeError("tool foo not found")
+
+    inner = Agent(inner_agent, inner_policy)
+
+    outer_received_types: list[str] = []
+
+    async def outer_agent(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="outer step"))
+        try:
+            await inner.run(task)
+        except TriageEscalationError as e:
+            # Wrap and re-raise — outer should reuse child's failure_type
+            raise RuntimeError("outer wrapped child failure") from e
+        return "ok"
+
+    async def outer_recovery(ctx: Any) -> Any:
+        outer_received_types.append(ctx.failure_type.value)
+        return RecoveryAction.ABORT(reason="handled")
+
+    outer_policy = FailurePolicy(default=outer_recovery)
+    outer = Agent(outer_agent, outer_policy)
+
+    with pytest.raises(TriageAbortError):
+        await outer.run("task")
+
+    # Outer should have reused the child's wrong_tool_called classification
+    assert outer_received_types == ["wrong_tool_called"]
+
+
+# ── report_misclassification ──────────────────────────────────────────────────
+
+async def test_report_misclassification_raises_when_no_context():
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy)
+    with pytest.raises(RuntimeError, match="No failure context"):
+        ag.report_misclassification(FailureType.EXTERNAL_FAULT)

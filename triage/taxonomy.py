@@ -62,7 +62,7 @@ class Step:
     timestamp: float = field(default_factory=time.time)
     state_hash: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    idempotent: bool = True
+    idempotent: bool = False
 
 
 @dataclass

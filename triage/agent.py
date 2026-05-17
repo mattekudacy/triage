@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import time
 from typing import Any, Awaitable, Callable, Coroutine
 
 import anyio
@@ -26,7 +27,10 @@ def _safe_hook(fn: Callable[..., None], *args: Any) -> None:
     try:
         fn(*args)
     except Exception as exc:
-        logger.warning("[triage] hook raised: %s", exc)
+        logger.warning(
+            "[triage] hook error",
+            extra={"triage_event": "hook_error", "error": str(exc)},
+        )
 
 logger = logging.getLogger("triage")
 
@@ -130,10 +134,17 @@ class Agent:
         Hard cap on ``len(attempt_history)`` across all failure types. When
         reached, triage escalates regardless of the active strategy. ``None``
         (default) disables this cap and defers entirely to ``max_recovery_attempts``.
-        Use this to bound total retries when your policy has multiple failure types
-        that could alternate and extend the loop beyond intent.
+    max_recovery_seconds:
+        Wall-clock budget for the entire recovery process. If recovery has been
+        ongoing for more than this many seconds, triage escalates. ``None``
+        (default) disables this cap. The timer starts after the first failure.
     auto_checkpoint:
         If ``True``, saves a checkpoint after every ``record_step()`` call.
+    strict_idempotency:
+        If ``True``, triage will escalate instead of retrying whenever any step
+        in the trajectory has ``idempotent=False``. Default ``False``.
+        Use this when your agent has steps that send emails, charge cards, or
+        perform other non-reversible side effects.
     """
 
     def __init__(
@@ -144,10 +155,12 @@ class Agent:
         checkpoint_store: CheckpointStore | None = None,
         max_recovery_attempts: int = 3,
         max_total_attempts: int | None = None,
+        max_recovery_seconds: float | None = None,
         auto_checkpoint: bool = False,
         on_step: Callable[[Step], None] | None = None,
         on_failure: Callable[[FailureContext], None] | None = None,
         on_recovery: Callable[[FailureContext, RecoveryAction], None] | None = None,
+        strict_idempotency: bool = False,
     ) -> None:
         self._fn = fn
         self._policy = policy
@@ -155,16 +168,19 @@ class Agent:
         self._checkpoint_store: CheckpointStore = checkpoint_store or InMemoryCheckpointStore()
         self._max_recovery_attempts = max_recovery_attempts
         self._max_total_attempts = max_total_attempts
+        self._max_recovery_seconds = max_recovery_seconds
         self._auto_checkpoint = auto_checkpoint
         self._on_step = on_step
         self._on_failure = on_failure
         self._on_recovery = on_recovery
+        self._strict_idempotency = strict_idempotency
 
         # mutable run-state (reset on each run() call)
         self._trajectory: Trajectory = Trajectory()
         self._current_state: dict[str, Any] = {}
         self._last_checkpoint_id: str | None = None
         self._pending_checkpoints: list[Coroutine[Any, Any, None]] = []
+        self._last_ctx: FailureContext | None = None
 
     def clone(self) -> "Agent":
         """Return a new Agent sharing the same policy, classifier, and checkpoint
@@ -183,10 +199,12 @@ class Agent:
             checkpoint_store=self._checkpoint_store,
             max_recovery_attempts=self._max_recovery_attempts,
             max_total_attempts=self._max_total_attempts,
+            max_recovery_seconds=self._max_recovery_seconds,
             auto_checkpoint=self._auto_checkpoint,
             on_step=self._on_step,
             on_failure=self._on_failure,
             on_recovery=self._on_recovery,
+            strict_idempotency=self._strict_idempotency,
         )
 
     async def run(self, task: str, **kwargs: Any) -> Any:
@@ -210,6 +228,8 @@ class Agent:
         attempt_history: list[tuple[Any, str]],
         kwargs: dict[str, Any],
     ) -> Any:
+        _recovery_start: float | None = None
+
         while True:
             self._trajectory = Trajectory()
             self._current_state = {}
@@ -245,10 +265,21 @@ class Agent:
 
                 steps = self._trajectory.steps
 
-                # Run classify() in a thread — LLMClassifier blocks ~100-400ms.
-                failure_type = await anyio.to_thread.run_sync(
-                    self._classifier.classify, self._trajectory, task
+                # If a child triage agent already classified this failure, reuse
+                # its context type rather than re-classifying.
+                child_escalation = (
+                    exc.__cause__ if isinstance(exc.__cause__, (TriageEscalationError, TriageAbortError))
+                    else exc.__context__ if isinstance(exc.__context__, (TriageEscalationError, TriageAbortError))
+                    else None
                 )
+
+                if child_escalation is not None:
+                    failure_type = child_escalation.context.failure_type
+                else:
+                    # Run classify() in a thread — LLMClassifier blocks ~100-400ms.
+                    failure_type = await anyio.to_thread.run_sync(
+                        self._classifier.classify, self._trajectory, task
+                    )
 
                 ctx = FailureContext(
                     failure_type=failure_type,
@@ -260,8 +291,18 @@ class Agent:
                     metadata={"attempt_number": attempt},
                     attempt_history=list(attempt_history),
                 )
+                self._last_ctx = ctx
 
-                logger.info("[triage] %s detected at step %d", failure_type.value, ctx.critical_step_index)
+                logger.info(
+                    "[triage] failure classified",
+                    extra={
+                        "triage_event": "failure_classified",
+                        "failure_type": failure_type.value,
+                        "step_index": ctx.critical_step_index,
+                        "attempt": attempt,
+                        "task": task,
+                    },
+                )
                 if self._on_failure:
                     _safe_hook(self._on_failure, ctx)
 
@@ -281,8 +322,27 @@ class Agent:
                         ctx,
                     ) from exc
 
+                # Wall-clock recovery budget: start timing on first failure,
+                # escalate on subsequent failures if elapsed time exceeds cap.
+                if self._max_recovery_seconds is not None:
+                    if _recovery_start is None:
+                        _recovery_start = time.monotonic()
+                    elif (time.monotonic() - _recovery_start) >= self._max_recovery_seconds:
+                        raise TriageEscalationError(
+                            f"max_recovery_seconds ({self._max_recovery_seconds}s) exceeded.",
+                            ctx,
+                        ) from exc
+
                 action = await self._policy.dispatch(ctx)
-                logger.info("[triage] Dispatching: %r", action)
+                logger.info(
+                    "[triage] action dispatched",
+                    extra={
+                        "triage_event": "action_dispatched",
+                        "action_kind": action.kind,
+                        "failure_type": failure_type.value,
+                        "attempt": attempt,
+                    },
+                )
                 if self._on_recovery:
                     _safe_hook(self._on_recovery, ctx, action)
                 attempt_history.append((failure_type, action.kind))
@@ -303,10 +363,31 @@ class Agent:
         if action.kind == "retry":
             delay = action.params.get("delay", 0.0)
             if delay:
-                logger.info("[triage] Backing off %.1fs before retry (attempt %d)", delay, ctx.metadata["attempt_number"] + 1)
+                logger.info(
+                    "[triage] retry backoff",
+                    extra={
+                        "triage_event": "retry_backoff",
+                        "delay_s": delay,
+                        "attempt": ctx.metadata["attempt_number"] + 1,
+                    },
+                )
                 await anyio.sleep(delay)
             if "hint" in action.params:
                 new_kwargs["_triage_hint"] = action.params["hint"]
+
+            # Idempotency enforcement: escalate instead of retrying if any
+            # executed step was non-idempotent and strict_idempotency is set.
+            if self._strict_idempotency:
+                non_idempotent = [s for s in ctx.trajectory if not s.idempotent]
+                if non_idempotent:
+                    names = ", ".join(
+                        f"step[{s.index}] {s.action!r}" for s in non_idempotent
+                    )
+                    raise TriageEscalationError(
+                        f"strict_idempotency: cannot retry — non-idempotent steps "
+                        f"in trajectory: {names}",
+                        ctx,
+                    )
 
         elif action.kind == "replan":
             new_kwargs["_triage_hint"] = action.params.get("hint", "Generate a new plan.")
@@ -353,8 +434,47 @@ class Agent:
             state=dict(new_kwargs.get("_triage_state", {})),
         )
 
-        logger.info("[triage] Attempt %d...", ctx.metadata["attempt_number"] + 1)
+        logger.info(
+            "[triage] attempt start",
+            extra={
+                "triage_event": "attempt_start",
+                "attempt": ctx.metadata["attempt_number"] + 1,
+                "action_kind": action.kind,
+            },
+        )
         return new_kwargs
+
+    def report_misclassification(
+        self,
+        expected_type: "FailureType",  # noqa: F821 — avoid circular at module level
+        *,
+        store_path: str = "corrections.jsonl",
+    ) -> None:
+        """Record that the last classification was wrong.
+
+        Call this after ``run()`` raises, passing the correct failure type::
+
+            try:
+                await agent.run("task")
+            except TriageEscalationError:
+                agent.report_misclassification(
+                    FailureType.EXTERNAL_FAULT,
+                    store_path="corrections.jsonl",
+                )
+
+        Appends a labeled entry to ``corrections.jsonl``. Use
+        ``RulesClassifier.fit(path)`` to review coverage.
+        """
+        if self._last_ctx is None:
+            raise RuntimeError(
+                "No failure context available — call report_misclassification() "
+                "after a failed run()."
+            )
+        from triage.feedback import record_correction
+        from triage.taxonomy import FailureType  # local import avoids any circularity
+        if not isinstance(expected_type, FailureType):
+            raise TypeError(f"expected_type must be a FailureType, got {type(expected_type)!r}")
+        record_correction(self._last_ctx, expected_type, store_path=store_path)
 
     def _record_step(self, step: Step) -> None:
         self._trajectory.append(step)

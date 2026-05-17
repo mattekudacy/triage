@@ -112,14 +112,14 @@ def test_steps_after_failure_middle():
 
 # ── TriageContext ─────────────────────────────────────────────────────────────
 
-def test_step_idempotent_defaults_to_true():
+def test_step_idempotent_defaults_to_false():
     step = Step(index=0, action="send_email")
-    assert step.idempotent is True
-
-
-def test_step_idempotent_can_be_set_false():
-    step = Step(index=0, action="charge_card", idempotent=False)
     assert step.idempotent is False
+
+
+def test_step_idempotent_can_be_set_true():
+    step = Step(index=0, action="read_file", idempotent=True)
+    assert step.idempotent is True
 
 
 # ── TriageContext ─────────────────────────────────────────────────────────────

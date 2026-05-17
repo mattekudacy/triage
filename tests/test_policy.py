@@ -270,3 +270,56 @@ def test_from_dict_multiple_types():
     assert policy.resolve(FailureType.TIMEOUT) is s
     assert policy.resolve(FailureType.SCHEMA_MISMATCH) is s
     assert policy.resolve(FailureType.UNKNOWN) is None
+
+
+# ── FailurePolicy.from_yaml ───────────────────────────────────────────────────
+
+def test_from_yaml_toml_format(tmp_path):
+    config = tmp_path / "policy.toml"
+    config.write_text(
+        '[EXTERNAL_FAULT]\nstrategy = "backoff_and_retry"\nmax_attempts = 3\n'
+        '\n[WRONG_TOOL_CALLED]\nstrategy = "retry_with_tool_manifest"\nmax_attempts = 2\n'
+    )
+    policy = FailurePolicy.from_yaml(str(config))
+    assert policy.resolve(FailureType.EXTERNAL_FAULT) is not None
+    assert policy.resolve(FailureType.WRONG_TOOL_CALLED) is not None
+    assert policy.resolve(FailureType.UNKNOWN) is None
+
+
+def test_from_yaml_default_escalate(tmp_path):
+    config = tmp_path / "policy.toml"
+    config.write_text('default = "escalate"\n')
+    policy = FailurePolicy.from_yaml(str(config))
+    assert policy.resolve(FailureType.UNKNOWN) is not None
+
+
+def test_from_yaml_unknown_strategy_raises(tmp_path):
+    import pytest
+    config = tmp_path / "policy.toml"
+    config.write_text('[EXTERNAL_FAULT]\nstrategy = "does_not_exist"\n')
+    with pytest.raises(ValueError, match="Unknown strategy"):
+        FailurePolicy.from_yaml(str(config))
+
+
+def test_from_yaml_custom_registry(tmp_path):
+    async def my_strategy(ctx): return RecoveryAction.RETRY()
+    config = tmp_path / "policy.toml"
+    config.write_text('[EXTERNAL_FAULT]\nstrategy = "my_custom"\n')
+    policy = FailurePolicy.from_yaml(str(config), strategy_registry={"my_custom": lambda **_: my_strategy})
+    assert policy.resolve(FailureType.EXTERNAL_FAULT) is my_strategy
+
+
+def test_from_yaml_unknown_failure_type_raises(tmp_path):
+    import pytest
+    config = tmp_path / "policy.toml"
+    config.write_text('[NOT_A_REAL_TYPE]\nstrategy = "escalate"\n')
+    with pytest.raises(ValueError, match="Unknown FailureType"):
+        FailurePolicy.from_yaml(str(config))
+
+
+def test_from_yaml_unsupported_extension_raises(tmp_path):
+    import pytest
+    config = tmp_path / "policy.json"
+    config.write_text('{}')
+    with pytest.raises(ValueError, match="Unsupported config file extension"):
+        FailurePolicy.from_yaml(str(config))
