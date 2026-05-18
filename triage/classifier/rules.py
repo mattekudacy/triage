@@ -49,6 +49,43 @@ _TIMEOUT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Per-framework patterns — activated when RulesClassifier(framework=...) is set.
+# These supplement (OR) the generic patterns above; they do not replace them.
+_WRONG_TOOL_FRAMEWORK: dict[str, re.Pattern[str]] = {
+    "openai": re.compile(
+        r"tool\s+['\"]?\w+['\"]?\s+does\s+not\s+exist",
+        re.IGNORECASE,
+    ),
+    "anthropic": re.compile(
+        r"does\s+not\s+exist\s+in\s+tools?\s+list|invalid\s+tool\s+use",
+        re.IGNORECASE,
+    ),
+    "langgraph": re.compile(
+        r"not\s+found\s+in\s+tool\s+map|no\s+tool\s+with\s+name",
+        re.IGNORECASE,
+    ),
+}
+_SCHEMA_FRAMEWORK: dict[str, re.Pattern[str]] = {
+    "openai": re.compile(
+        r"failed\s+to\s+parse\s+tool\s+arguments",
+        re.IGNORECASE,
+    ),
+    "anthropic": re.compile(
+        r"tool\s+input\s+schema|failed\s+to\s+parse\s+tool\s+input",
+        re.IGNORECASE,
+    ),
+}
+_EXTERNAL_FRAMEWORK: dict[str, re.Pattern[str]] = {
+    "openai": re.compile(
+        r"exceeded\s+your\s+current\s+quota|rate_limit_exceeded",
+        re.IGNORECASE,
+    ),
+    "anthropic": re.compile(
+        r"rate\s+limit\s+exceeded",
+        re.IGNORECASE,
+    ),
+}
+
 
 def _tool_input_key(tool_input: object) -> str:
     """Canonical string form of a tool_input dict for equality comparison."""
@@ -82,17 +119,33 @@ class RulesClassifier:
         Number of consecutive identical steps required to declare a loop.
         Default 3. Set higher (e.g. 4–5) if your agent legitimately repeats
         the same tool call twice in a row.
+
+    framework:
+        Optional SDK/framework name. When set, per-framework error patterns
+        are checked in addition to the generic patterns. Supported values:
+        ``"openai"``, ``"anthropic"``, ``"langgraph"``. Case-insensitive.
+        Unknown values (including ``"langchain"`` — covered by generic patterns)
+        are silently ignored; generic patterns still apply.
     """
 
     def __init__(
         self,
         constraints: list[str] | None = None,
         loop_window: int = 3,
+        framework: str | None = None,
     ) -> None:
         self.constraints: list[str] = constraints or []
         if loop_window < 2:
             raise ValueError("loop_window must be >= 2")
         self.loop_window = loop_window
+        self._framework: str | None = framework.lower() if framework else None
+
+    def _fw_match(self, error: str, table: dict[str, "re.Pattern[str]"]) -> bool:
+        """Return True if a framework-specific pattern matches the error string."""
+        if self._framework is None:
+            return False
+        pat = table.get(self._framework)
+        return bool(pat and pat.search(error))
 
     def classify(self, trajectory: Trajectory, task: str) -> FailureType:  # noqa: ARG002
         steps = trajectory.steps
@@ -112,17 +165,26 @@ class RulesClassifier:
 
         # 2. WRONG_TOOL_CALLED
         for step in steps:
-            if step.error and _WRONG_TOOL_RE.search(step.error):
+            if step.error and (
+                _WRONG_TOOL_RE.search(step.error)
+                or self._fw_match(step.error, _WRONG_TOOL_FRAMEWORK)
+            ):
                 return FailureType.WRONG_TOOL_CALLED
 
         # 3. SCHEMA_MISMATCH
         for step in steps:
-            if step.error and _SCHEMA_RE.search(step.error):
+            if step.error and (
+                _SCHEMA_RE.search(step.error)
+                or self._fw_match(step.error, _SCHEMA_FRAMEWORK)
+            ):
                 return FailureType.SCHEMA_MISMATCH
 
         # 4. EXTERNAL_FAULT — HTTP status codes as whole tokens
         for step in steps:
-            if step.error and _EXTERNAL_CODE_RE.search(step.error):
+            if step.error and (
+                _EXTERNAL_CODE_RE.search(step.error)
+                or self._fw_match(step.error, _EXTERNAL_FRAMEWORK)
+            ):
                 return FailureType.EXTERNAL_FAULT
 
         # 5. TIMEOUT — Python-level timeout exceptions

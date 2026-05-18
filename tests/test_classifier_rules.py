@@ -261,3 +261,47 @@ def test_priority_loop_over_external():
         make_step(2, tool_called="search", tool_input={"q": "q"}, error="503 error"),
     )
     assert RulesClassifier().classify(t, "task") == FailureType.LOOP_DETECTED
+
+
+# ── per-framework patterns ────────────────────────────────────────────────────
+
+def test_openai_wrong_tool_pattern():
+    t = traj(make_step(error="Tool 'search' does not exist"))
+    assert RulesClassifier(framework="openai").classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_anthropic_wrong_tool_pattern():
+    t = traj(make_step(error="Invalid tool use: foo does not exist in tools list"))
+    assert RulesClassifier(framework="anthropic").classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_langgraph_wrong_tool_pattern():
+    t = traj(make_step(error="search not found in tool map"))
+    assert RulesClassifier(framework="langgraph").classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_openai_schema_pattern():
+    t = traj(make_step(error="Failed to parse tool arguments: unexpected end of JSON"))
+    assert RulesClassifier(framework="openai").classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+def test_anthropic_schema_pattern():
+    t = traj(make_step(error="Tool input schema must be an object: calculator"))
+    assert RulesClassifier(framework="anthropic").classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+def test_openai_rate_limit_pattern():
+    t = traj(make_step(error="You exceeded your current quota, please check your billing"))
+    assert RulesClassifier(framework="openai").classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+def test_framework_none_misses_framework_errors():
+    # Framework-specific error string with no framework= set → falls through to UNKNOWN
+    t = traj(make_step(error="Tool 'search' does not exist"))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_unknown_framework_falls_back_to_generic():
+    # Unrecognised framework value — generic patterns still fire
+    t = traj(make_step(error="tool foo not found"))
+    assert RulesClassifier(framework="crewai").classify(t, "task") == FailureType.WRONG_TOOL_CALLED
