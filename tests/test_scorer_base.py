@@ -25,9 +25,10 @@ def test_risk_score_clamps_below_zero():
 
 
 def test_step_risk_scorer_is_callable_protocol():
-    from triage.scorer.base import StepRiskScorer
-    from typing import runtime_checkable
-    # Any callable with the right signature satisfies the protocol
-    def my_scorer(step, trajectory):
+    from triage.taxonomy import Step
+    from triage.trajectory import Trajectory
+
+    def my_scorer(step: Step, trajectory: Trajectory) -> RiskScore:
         return RiskScore(score=0.0)
-    assert callable(my_scorer)
+
+    assert isinstance(my_scorer, StepRiskScorer)
