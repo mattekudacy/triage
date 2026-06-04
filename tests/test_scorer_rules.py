@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 from triage.scorer.rules import RulesRiskScorer
 from triage.taxonomy import Step
 from triage.trajectory import Trajectory
@@ -65,14 +64,14 @@ def test_non_idempotent_flag_raises_base_score():
     scorer = RulesRiskScorer()
     step = make_step(action="update_record", idempotent=False)
     result = scorer(step, traj(step))
-    assert result.score > 0.0
+    assert result.score == 0.2
 
 
 def test_idempotent_flag_keeps_score_low():
     scorer = RulesRiskScorer()
     step = make_step(action="get_data", idempotent=True)
     result = scorer(step, traj(step))
-    assert result.score < 0.5
+    assert result.score == 0.0
 
 
 def test_custom_high_risk_patterns():
@@ -80,6 +79,13 @@ def test_custom_high_risk_patterns():
     step = make_step(action="nuke_db")
     result = scorer(step, traj(step))
     assert result.score >= 0.9
+
+
+def test_custom_medium_risk_patterns():
+    scorer = RulesRiskScorer(medium_risk_patterns=["sync_data", "refresh_cache"])
+    step = make_step(action="sync_data")
+    result = scorer(step, traj(step))
+    assert result.score >= 0.6
 
 
 def test_score_returns_risk_score_instance():
