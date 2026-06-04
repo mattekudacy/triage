@@ -1,0 +1,262 @@
+# triage — project memory
+
+## What this project is
+
+`triage` is a framework-agnostic Python library (PyPI: `triage-agent`, import: `triage`)
+that wraps any async agent callable, classifies failures by type, and routes each type to
+a recovery strategy. It does not replace agent frameworks — it wraps them.
+
+Core deps: `anyio>=4.0`, `pydantic>=2.0`, stdlib only inside `triage/`.
+No framework imports anywhere in `triage/` core — adapters live in `triage/adapters/`.
+
+## Repo layout
+
+```
+triage/                   — importable package
+  taxonomy.py             — FailureType enum (9 members), Step (with idempotent field), FailureContext
+  trajectory.py           — Trajectory class (append / replay_from / last_n_steps)
+  checkpoint/             — Checkpoint package
+    __init__.py           — re-exports Checkpoint, CheckpointStore, InMemoryCheckpointStore, make_checkpoint
+    base.py               — Checkpoint dataclass, CheckpointStore protocol, make_checkpoint, serialization helpers
+    memory.py             — InMemoryCheckpointStore (default, not concurrency-safe)
+    sqlite.py             — SQLiteCheckpointStore (requires aiosqlite)
+    redis.py              — RedisCheckpointStore (requires redis[asyncio])
+  policy.py               — RecoveryAction (6 constructors), FailurePolicy dataclass
+  agent.py                — Agent class, TriageEscalationError, TriageAbortError, @agent decorator
+  classifier/
+    base.py               — Classifier protocol (runtime_checkable)
+    rules.py              — RulesClassifier — 6 rules in priority order, sync, zero API calls
+    llm.py                — LLMClassifier — semantic classifier; Anthropic or OpenAI-compatible backend
+    hybrid.py             — HybridClassifier — rules first, LLMClassifier fallback on UNKNOWN
+  strategies/
+    retry.py              — retry_with_tool_manifest(), backoff_and_retry()
+    replan.py             — replan(), resume_from_subgoal()
+    rollback.py           — rollback_to_checkpoint()
+  adapters/
+    langgraph.py          — wrap_langgraph() — wraps a compiled LangGraph StateGraph
+    langchain.py          — wrap_langchain() — wraps a LangChain AgentExecutor
+  bench.py                — run_benchmark(), BenchReport, BenchResult — eval harness with baseline comparison
+  feedback.py             — Correction, record_correction(), load_corrections() — misclassification feedback loop
+  scorer/
+    base.py             — RiskScore dataclass, StepRiskScorer protocol (sync, no API calls)
+    rules.py            — RulesRiskScorer — destructive pattern detection, zero API calls
+tests/                    — pytest-asyncio, asyncio_mode=auto, 283+ tests (2 skipped without optional deps)
+examples/
+  raw_openai.py           — end-to-end demo, needs OPENAI_API_KEY
+```
+
+## Running tests
+
+```bash
+PYTHONPATH=. .venv/bin/pytest tests/ -x --tb=short
+```
+
+The venv uses Python 3.13 (`/opt/homebrew/bin/python3.13`). Install deps with:
+```bash
+.venv/bin/pip install anyio pydantic pytest pytest-asyncio anthropic aiosqlite fakeredis
+```
+
+Note: `pip install -e .` fails due to a hatchling shadow issue in the local env.
+Use `PYTHONPATH=.` instead of editable install until resolved.
+
+## Key design rules
+
+- **All public APIs are `async def`**, even if the body has no awaits.
+- **Strategies declare intent; `agent.py` executes it.** A `RecoveryAction.ROLLBACK`
+  does not restore state — it tells `agent.py` which checkpoint to load.
+- **`RulesClassifier.classify()` is synchronous** and must make zero API calls.
+  `LLMClassifier` uses the Anthropic sync client — blocks ~100-400ms, acceptable on
+  the failure path only.
+- **No framework imports in core.** Adapter code for LangGraph, CrewAI, etc. lives in
+  `triage/adapters/`. The only allowed imports inside `triage/` core are:
+  `stdlib`, `anyio`, `pydantic`, and sibling `triage.*` modules.
+- **Wrapped callables receive `record_step` by keyword injection**, not positional arg:
+  ```python
+  async def my_agent(task: str, *, record_step, **kwargs) -> Any: ...
+  ```
+- **`auto_checkpoint` uses `_pending_checkpoints` drain.** `_record_step` queues
+  coroutines; `run()` drains them via `_drain_checkpoints()` before returning or
+  re-raising. Guarantees checkpoints are awaited before any policy action runs.
+- **`classify()` runs in a thread.** `Agent.run()` calls `classify` via
+  `anyio.to_thread.run_sync()` so `LLMClassifier`'s blocking HTTP never freezes
+  the event loop. `RulesClassifier` is fast but the thread overhead is negligible
+  on the failure path.
+- **Agent state is real.** Wrapped callables receive `update_state` as a second
+  injected keyword argument. Calling `update_state({"key": value})` stores state
+  in `_current_state`, which is written into every checkpoint. On ROLLBACK, the
+  checkpoint state is restored to `_current_state` and injected into kwargs as
+  `_triage_state`.
+
+## FailureType taxonomy (stable — do not reorder)
+
+9 members. HALLUCINATED_STATE and GOAL_DRIFT were removed in v0.7 — the LLMClassifier
+had no disambiguation logic for them and they were indistinguishable from CONSTRAINT_IGNORED
+without a labeled corpus.
+
+| Member | String value | Recovery intent |
+|--------|-------------|-----------------|
+| WRONG_TOOL_CALLED | wrong_tool_called | retry with correct manifest |
+| CONSTRAINT_IGNORED | constraint_ignored | replan with constraint reminder |
+| LOOP_DETECTED | loop_detected | replan or rollback |
+| PLAN_INCOMPLETE | plan_incomplete | resume from subgoal |
+| SCHEMA_MISMATCH | schema_mismatch | retry with schema hint |
+| CONTEXT_OVERFLOW | context_overflow | replan with compressed context |
+| EXTERNAL_FAULT | external_fault | backoff_and_retry |
+| TIMEOUT | timeout | backoff_and_retry or replan |
+| UNKNOWN | unknown | escalate |
+
+## RulesClassifier rule priority
+
+1. LOOP_DETECTED — last `loop_window` steps (default 3, configurable): identical `tool_called` + canonical `tool_input`
+2. WRONG_TOOL_CALLED — error matches tool-not-found patterns across OpenAI/Anthropic/generic SDKs
+3. SCHEMA_MISMATCH — error matches `validation error|json.*parse|jsondecodeerror|invalid json|unexpected token`
+4. EXTERNAL_FAULT — error contains `\b(429|500|502|503)\b` (word-boundary, avoids false positives)
+5. TIMEOUT — error matches `timeout|timed out|deadline exceeded|time limit`
+6. CONSTRAINT_IGNORED — `llm_output` contains any string from `self.constraints`
+7. UNKNOWN — default
+
+**RulesClassifier scope:** Detects only structural/syntactic failures. PLAN_INCOMPLETE and
+CONTEXT_OVERFLOW require semantic understanding and always return UNKNOWN from RulesClassifier
+— use LLMClassifier or HybridClassifier for those.
+
+**`StepRiskScorer` contract:** `StepRiskScorer.__call__()` is synchronous and must not make
+API calls. It is invoked on the hot path inside `_record_step` on every recorded step; keep
+it fast (< 1ms for typical inputs). This matches the same zero-API-call contract as
+`RulesClassifier.classify()`.
+
+**Per-framework patterns:** `RulesClassifier(framework="openai"|"anthropic"|"langgraph")` adds
+SDK-specific patterns for rules 2–4 (WRONG_TOOL, SCHEMA, EXTERNAL_FAULT). Generic patterns
+always apply; framework patterns are ORed in. Unknown framework values are silently ignored.
+
+**Zero-trajectory fallback:** If the agent raises before calling `record_step()`, Agent
+synthesizes a sentinel `Step(action="<no steps recorded>", error=str(exc))` so the
+classifier always has at least one step to inspect.
+
+## RecoveryAction constructors (stable API)
+
+```python
+RecoveryAction.RETRY(hint, inject, delay)
+RecoveryAction.REPLAN(hint)
+RecoveryAction.ROLLBACK(checkpoint_id)   # None → agent uses store.latest()
+RecoveryAction.RESUME(from_subgoal)
+RecoveryAction.ESCALATE(message)         # raises TriageEscalationError in agent.py
+RecoveryAction.ABORT(reason)             # raises TriageAbortError in agent.py
+```
+
+`None` kwargs are excluded from `action.params`. Access payload as `action.params["key"]`.
+
+## Agent kwargs convention
+
+`agent.py` injects two callbacks and recovery context into `**kwargs`:
+
+| Key | Type | Set by |
+|-----|------|--------|
+| `record_step` | `(Step) -> None` | Always — injected on every call |
+| `update_state` | `(dict) -> None` | Always — injected on every call |
+| `_triage_context` | `TriageContext` | All recovery actions (v0.4+) |
+| `_triage_hint` | `str` | RETRY, REPLAN, ROLLBACK (backward compat) |
+| `_triage_subgoal` | `str` | RESUME (backward compat) |
+| `_triage_state` | `dict` | ROLLBACK (only when checkpoint state is non-empty; backward compat) |
+
+`_triage_context` is the canonical form — a typed `TriageContext(failure_type, attempt_number, hint, subgoal, state)`. The individual `_triage_*` kwargs remain for backward compatibility and will not be removed.
+
+Alternatively, use `triage.get_recorder()` and `triage.get_state_updater()` (backed by `contextvars`) inside the agent body to avoid signature changes.
+
+Wrapped functions should accept `**kwargs` and check for these keys.
+
+## Adapter pattern
+
+Each adapter in `triage/adapters/` exposes one public function:
+
+```python
+wrap_<name>(agent_obj, policy, **kwargs) -> triage.Agent
+```
+
+`**kwargs` are passed through to `Agent.__init__` (classifier, checkpoint_store,
+max_recovery_attempts, auto_checkpoint). Framework imports are lazy — inside a
+`try/except ImportError` — so the adapter module only raises at import time if
+the optional dep is missing.
+
+## Optional extras
+
+| Extra | Installs | Enables |
+|-------|----------|---------|
+| `triage-agent[anthropic]` | `anthropic>=0.25` | `LLMClassifier` |
+| `triage-agent[sqlite]` | `aiosqlite>=0.19` | `SQLiteCheckpointStore` |
+| `triage-agent[redis]` | `redis[asyncio]>=5.0` | `RedisCheckpointStore` |
+| `triage-agent[langgraph]` | `langgraph>=0.2` | `wrap_langgraph` |
+| `triage-agent[langchain]` | `langchain-core>=0.1`, `langchain>=0.1` | `wrap_langchain` |
+| `triage-agent[yaml]` | `pyyaml>=6.0` | `FailurePolicy.from_yaml()` with `.yaml`/`.yml` files |
+
+## Public API stability (v0.2)
+
+Stable: `FailureType` members + values, `Step`/`FailureContext` field names,
+`RecoveryAction` constructor names + kwarg names, `FailurePolicy` field names,
+`Classifier.classify()` signature, `Agent.__init__` arg names,
+`CheckpointStore` method signatures, adapter `wrap_*` function signatures.
+
+Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layout,
+`Agent._record_step`, `Agent._trajectory`, `Agent._pending_checkpoints`,
+`InMemoryCheckpointStore` internals, checkpoint serialization format.
+
+## v0.3 changes (shipped)
+
+- **Async `LLMClassifier`** — `classify()` runs via `anyio.to_thread.run_sync`; event loop never blocked.
+- **Real agent state in checkpoints** — `update_state(dict)` injected alongside `record_step`; state persisted in every checkpoint; restored as `_triage_state` on ROLLBACK.
+- **`HybridClassifier`** — rules first, LLM only on UNKNOWN. See `triage/classifier/hybrid.py`.
+- **BYOK env vars** — `TRIAGE_LLM_BASE_URL`, `TRIAGE_LLM_MODEL`, `TRIAGE_LLM_API_KEY` read by `LLMClassifier.__init__` when no explicit arg supplied.
+- **`attempt_history` on `FailureContext`** — `list[tuple[FailureType, str]]` of `(failure_type, action_kind)` from all prior attempts in the current `run()` call.
+
+## v0.4 changes (shipped)
+
+- **`max_total_attempts`** — global cross-type attempt cap on `Agent.__init__`; fires before `max_recovery_attempts` when `len(attempt_history)` reaches the limit.
+- **`Agent.clone()`** — returns a new `Agent` sharing policy/classifier/store but with fresh per-run state; required for concurrent `run()` calls across tasks.
+- **`FailurePolicy.chain(primary, fallback, after_kinds)`** — static factory returning a strategy that falls through to `fallback` when `primary` returns an action whose `kind` is in `after_kinds` (default `"escalate"`).
+- **`contextvars` injection** — `triage.get_recorder()` and `triage.get_state_updater()` read from `ContextVar`s set by `run()`; allows agent functions to avoid signature changes.
+- **`TriageContext` dataclass** — replaces scattered `_triage_hint`/`_triage_subgoal`/`_triage_state` kwargs with a single typed `_triage_context` object; individual kwargs remain for backward compat.
+- **RulesClassifier improvements** — configurable `loop_window`, expanded `_WRONG_TOOL_RE` (OpenAI/Anthropic/generic), word-boundary `_EXTERNAL_CODE_RE`, `invalid json`/`unexpected token` in `_SCHEMA_RE`.
+
+## v0.5 changes (shipped)
+
+- **`py.typed` marker** — PEP 561 marker file; mypy/pyright now type-check triage in strict codebases.
+- **`CancelledError` propagation** — `_run_loop` now uses `except BaseException` with explicit re-raise for non-`Exception` subclasses; `_drain_checkpoints` uses swap-and-clear so `_pending_checkpoints` is atomically emptied before iteration.
+- **`triage.testing` module** — public `make_step()`, `RecordingAgent`, and `assert_classifies_as()` utilities for testing triage-wrapped agents without hand-rolling fixtures.
+
+## v0.6 changes (shipped)
+
+- **`TIMEOUT` failure type** — `FailureType.TIMEOUT = "timeout"` added before `UNKNOWN`; `RulesClassifier` detects it via `_TIMEOUT_RE` (matches `timeout`, `timed out`, `deadline exceeded`, `time limit`); `FailurePolicy.TIMEOUT` field added.
+- **Lifecycle hooks** — `on_step`, `on_failure`, `on_recovery` sync callbacks on `Agent.__init__`; exceptions from hooks are swallowed with `logger.warning`; hooks are copied by `clone()`; `on_recovery(ctx, action)` signature.
+
+## v0.7 changes (shipped)
+
+- **Taxonomy trimmed to 9 types** — `HALLUCINATED_STATE` and `GOAL_DRIFT` removed; LLMClassifier had no prompt logic to distinguish them from `CONSTRAINT_IGNORED` without a labeled corpus.
+- **Adapters cut to 2** — `crewai` (patches internal `step_callback`) and `openai_agents` (SDK still pre-stable) removed; `langgraph` and `langchain` remain.
+- **`Step.idempotent: bool = True`** — informational flag; strategies can inspect `ctx.trajectory` before recommending retry on steps that sent email/wrote DB; not auto-enforced by `agent.py`.
+- **`triage.bench`** — `run_benchmark(agent_fn, tasks, policy)` eval harness; returns `BenchReport` with `success_rate`, `mean_latency_s`, `total_recoveries`, and `summary()`; uses `on_recovery` hook, no agent.py changes needed.
+
+## v0.8 changes (shipped)
+
+- **`strict_idempotency=True` on `Agent`** — escalates instead of retrying when any `step.idempotent=False` is in the trajectory; safe default for agents that send emails, charge cards, or write to external systems.
+- **`max_recovery_seconds: float | None` on `Agent`** — wall-clock budget cap; timer starts on first failure; subsequent failures that exceed the cap raise `TriageEscalationError`; copied by `clone()`.
+- **Structured event logs** — all five `logger` calls now pass `extra={"triage_event": ...}` dicts; keys: `failure_classified`, `action_dispatched`, `retry_backoff`, `attempt_start`, `hook_error`; no new deps.
+- **`triage.feedback` module** — `Correction` dataclass + `record_correction(ctx, expected_type)` appends JSONL corrections; `load_corrections()` reads them back; `Agent.report_misclassification(expected_type)` convenience method uses `self._last_ctx`.
+- **`RulesClassifier.fit(corrections_path)`** — reads `corrections.jsonl`, re-classifies each entry, logs structured `fit_misclassification` warnings where predicted ≠ expected; returns `{failure_type: {"correct": N, "wrong": N}}` coverage dict.
+- **`FailurePolicy.from_yaml(path)`** — loads policy from `.toml` (stdlib `tomllib`) or `.yaml`/`.yml` (optional `pyyaml`); built-in strategy registry: `backoff_and_retry`, `retry_with_tool_manifest`, `replan`, `resume_from_subgoal`, `rollback_to_checkpoint`, `escalate`, `abort`; `strategy_registry` param for custom strategies.
+- **Bench baseline comparison** — `run_benchmark(baseline_fn=...)` runs a raw (no-triage) callable alongside the triage-wrapped agent; `BenchReport.compare()` returns a side-by-side table; `baseline_results` list on `BenchReport`.
+- **Multi-agent context propagation** — `_run_loop` checks `exc.__cause__`/`exc.__context__` for chained `TriageEscalationError`; reuses child's `failure_type` instead of re-classifying; outer policy decides whether to re-route or escalate.
+
+## v0.9 changes (shipped)
+
+- **Per-framework error pattern tables on `RulesClassifier`** — `RulesClassifier(framework="openai"|"anthropic"|"langgraph")` activates supplemental per-SDK patterns for WRONG_TOOL_CALLED, SCHEMA_MISMATCH, and EXTERNAL_FAULT; generic patterns unchanged; unknown framework values silently ignored (generic still applies); no protocol or agent.py changes.
+- **Step risk scoring** — `RulesRiskScorer` scores each step as it's recorded; `Agent(risk_scorer=..., risk_threshold=0.9)` raises `TriageAbortError` before the agent executes a step scoring >= threshold; `RulesRiskScorer` detects destructive patterns (email, payment, DELETE, DROP TABLE) with zero API calls; `StepRiskScorer` protocol and `RiskScore` dataclass are the public extension points.
+
+## v0.9 ideas (not committed)
+
+### Classifier improvements
+- **Fuzzy loop detection** — catch loops where `tool_input` varies slightly (e.g. minor
+  query rewrites) using string similarity rather than exact equality; configurable
+  `loop_similarity_threshold` on RulesClassifier
+
+### Observability
+- **OpenTelemetry spans** — optional `triage-agent[otel]` extra that wraps `run()`,
+  classify, and each strategy dispatch in spans

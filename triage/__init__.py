@@ -13,6 +13,8 @@ from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.bench import BenchReport, BenchResult, run_benchmark
 from triage.feedback import Correction, coverage_report, record_correction
 from triage.testing import assert_classifies_as, make_step, RecordingAgent
+from triage.scorer.base import RiskScore, StepRiskScorer
+from triage.scorer.rules import RulesRiskScorer
 
 __all__ = [
     "Agent",
@@ -36,6 +38,9 @@ __all__ = [
     "get_state_updater",
     "record_correction",
     "run_benchmark",
+    "RiskScore",
+    "RulesRiskScorer",
+    "StepRiskScorer",
     # testing utilities
     "RecordingAgent",
     "assert_classifies_as",
@@ -47,7 +52,7 @@ __all__ = [
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 
 def __getattr__(name: str) -> object:
