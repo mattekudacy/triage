@@ -10,7 +10,10 @@ from __future__ import annotations
 import contextvars
 import logging
 import time
-from typing import Any, Awaitable, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
+
+if TYPE_CHECKING:
+    from triage.scorer.base import StepRiskScorer
 
 import anyio
 
@@ -95,7 +98,7 @@ class TriageEscalationError(Exception):
 class TriageAbortError(Exception):
     """Raised when a strategy returns RecoveryAction.ABORT."""
 
-    def __init__(self, reason: str, context: FailureContext) -> None:
+    def __init__(self, reason: str, context: FailureContext | None) -> None:
         super().__init__(reason)
         self.context = context
 
@@ -161,6 +164,8 @@ class Agent:
         on_failure: Callable[[FailureContext], None] | None = None,
         on_recovery: Callable[[FailureContext, RecoveryAction], None] | None = None,
         strict_idempotency: bool = False,
+        risk_scorer: "StepRiskScorer | None" = None,
+        risk_threshold: float = 0.9,
     ) -> None:
         self._fn = fn
         self._policy = policy
@@ -174,6 +179,8 @@ class Agent:
         self._on_failure = on_failure
         self._on_recovery = on_recovery
         self._strict_idempotency = strict_idempotency
+        self._risk_scorer = risk_scorer
+        self._risk_threshold = risk_threshold
 
         # mutable run-state (reset on each run() call)
         self._trajectory: Trajectory = Trajectory()
@@ -205,6 +212,8 @@ class Agent:
             on_failure=self._on_failure,
             on_recovery=self._on_recovery,
             strict_idempotency=self._strict_idempotency,
+            risk_scorer=self._risk_scorer,
+            risk_threshold=self._risk_threshold,
         )
 
     async def run(self, task: str, **kwargs: Any) -> Any:
@@ -480,6 +489,14 @@ class Agent:
         self._trajectory.append(step)
         if self._on_step:
             _safe_hook(self._on_step, step)
+        if self._risk_scorer is not None:
+            risk = self._risk_scorer(step, self._trajectory)
+            if risk.score >= self._risk_threshold:
+                raise TriageAbortError(
+                    f"step risk score {risk.score:.2f} >= threshold {self._risk_threshold}"
+                    + (f": {risk.reason}" if risk.reason else ""),
+                    None,
+                )
         if self._auto_checkpoint:
             self._pending_checkpoints.append(self._save_auto_checkpoint())
 

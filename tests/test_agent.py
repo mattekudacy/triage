@@ -1274,3 +1274,81 @@ async def test_report_misclassification_raises_when_no_context():
     ag = Agent(agent_fn, policy)
     with pytest.raises(RuntimeError, match="No failure context"):
         ag.report_misclassification(FailureType.EXTERNAL_FAULT)
+
+
+# ── step risk scoring ─────────────────────────────────────────────────────────
+
+async def test_risk_scorer_aborts_on_high_score():
+    from triage.scorer.base import RiskScore
+
+    def always_risky(step, trajectory):
+        return RiskScore(score=1.0, reason="always abort")
+
+    async def agent_fn(task, *, record_step, update_state, **kwargs):
+        record_step(Step(index=0, action="dangerous action"))
+        return "should not reach"
+
+    policy = FailurePolicy()
+    ag = Agent(agent_fn, policy, risk_scorer=always_risky, risk_threshold=0.9)
+    with pytest.raises(TriageAbortError) as exc_info:
+        await ag.run("task")
+    assert "always abort" in str(exc_info.value)
+
+
+async def test_risk_scorer_does_not_abort_below_threshold():
+    from triage.scorer.base import RiskScore
+
+    def low_risk(step, trajectory):
+        return RiskScore(score=0.5)
+
+    async def agent_fn(task, *, record_step, update_state, **kwargs):
+        record_step(Step(index=0, action="safe step"))
+        return "ok"
+
+    policy = FailurePolicy()
+    ag = Agent(agent_fn, policy, risk_scorer=low_risk, risk_threshold=0.9)
+    result = await ag.run("task")
+    assert result == "ok"
+
+
+async def test_risk_scorer_none_does_not_affect_run():
+    async def agent_fn(task, *, record_step, update_state, **kwargs):
+        record_step(Step(index=0, action="step"))
+        return "ok"
+
+    policy = FailurePolicy()
+    ag = Agent(agent_fn, policy)  # no risk_scorer
+    result = await ag.run("task")
+    assert result == "ok"
+
+
+async def test_risk_scorer_receives_trajectory():
+    received = []
+
+    def capture_scorer(step, trajectory):
+        from triage.scorer.base import RiskScore
+        received.append(len(trajectory.steps))
+        return RiskScore(score=0.0)
+
+    async def agent_fn(task, *, record_step, update_state, **kwargs):
+        record_step(Step(index=0, action="step 1"))
+        record_step(Step(index=1, action="step 2"))
+        return "ok"
+
+    policy = FailurePolicy()
+    ag = Agent(agent_fn, policy, risk_scorer=capture_scorer)
+    await ag.run("task")
+    assert received == [1, 2]  # trajectory grows with each step
+
+
+def test_clone_copies_risk_scorer_and_threshold():
+    from triage.scorer.base import RiskScore
+
+    def scorer(step, trajectory):
+        return RiskScore(score=0.0)
+
+    policy = FailurePolicy()
+    ag = Agent(lambda t, **kw: None, policy, risk_scorer=scorer, risk_threshold=0.8)
+    cloned = ag.clone()
+    assert cloned._risk_scorer is scorer
+    assert cloned._risk_threshold == 0.8
