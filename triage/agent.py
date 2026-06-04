@@ -490,13 +490,20 @@ class Agent:
         if self._on_step:
             _safe_hook(self._on_step, step)
         if self._risk_scorer is not None:
-            risk = self._risk_scorer(step, self._trajectory)
-            if risk.score >= self._risk_threshold:
-                raise TriageAbortError(
-                    f"step risk score {risk.score:.2f} >= threshold {self._risk_threshold}"
-                    + (f": {risk.reason}" if risk.reason else ""),
-                    None,
+            try:
+                risk = self._risk_scorer(step, self._trajectory)
+            except Exception as exc:
+                logger.warning(
+                    "[triage] risk scorer raised — skipping score check",
+                    extra={"triage_event": "scorer_error", "error": str(exc)},
                 )
+            else:
+                if risk.score >= self._risk_threshold:
+                    raise TriageAbortError(
+                        f"step risk score {risk.score:.2f} >= threshold {self._risk_threshold}"
+                        + (f": {risk.reason}" if risk.reason else ""),
+                        None,
+                    )
         if self._auto_checkpoint:
             self._pending_checkpoints.append(self._save_auto_checkpoint())
 

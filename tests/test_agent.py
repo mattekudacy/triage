@@ -1352,3 +1352,18 @@ def test_clone_copies_risk_scorer_and_threshold():
     cloned = ag.clone()
     assert cloned._risk_scorer is scorer
     assert cloned._risk_threshold == 0.8
+
+
+async def test_risk_scorer_exception_is_sandboxed():
+    """A buggy scorer that raises must not crash the run — skip score check and continue."""
+    def buggy_scorer(step, trajectory):
+        raise RuntimeError("scorer bug")
+
+    async def agent_fn(task, *, record_step, update_state, **kwargs):
+        record_step(Step(index=0, action="safe step"))
+        return "ok"
+
+    policy = FailurePolicy()
+    ag = Agent(agent_fn, policy, risk_scorer=buggy_scorer)
+    result = await ag.run("task")
+    assert result == "ok"
