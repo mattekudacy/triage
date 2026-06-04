@@ -282,7 +282,7 @@ class Agent:
                     else None
                 )
 
-                if child_escalation is not None:
+                if child_escalation is not None and child_escalation.context is not None:
                     failure_type = child_escalation.context.failure_type
                 else:
                     # Run classify() in a thread — LLMClassifier blocks ~100-400ms.
