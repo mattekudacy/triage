@@ -1,4 +1,4 @@
-# Claude Code — local dev only
+# Claude Code — local dev only (skills, agents, commands, superpowers all covered)
 .claude/
 CLAUDE.md
 PLAN.md
@@ -34,9 +34,6 @@ htmlcov/
 
 # Docs build output — never commit rendered HTML
 site/
-
-# Superpowers skills (local dev tool, not part of the project)
-.claude/superpowers/
 
 # Environment
 .env
