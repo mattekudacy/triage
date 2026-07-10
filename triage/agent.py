@@ -260,10 +260,13 @@ class Agent:
 
     def clone(self) -> "Agent":
         """Return a new Agent sharing the same policy, classifier, and checkpoint
-        store but with fresh per-run state.
+        store but with fresh per-run state, independent lifecycle hooks, and its
+        own ``_last_ctx``.
 
-        Use this to run multiple tasks concurrently — a single Agent instance is
-        not safe for concurrent ``run()`` calls::
+        Concurrent ``run()`` calls on a single Agent instance are already safe
+        (per-run state is isolated via contextvars) — use ``clone()`` when you
+        want a task to have independent hooks or a dedicated checkpoint store
+        instead::
 
             agents = [agent.clone() for _ in tasks]
             results = await asyncio.gather(*[ag.run(t) for ag, t in zip(agents, tasks)])
@@ -289,6 +292,12 @@ class Agent:
         """Run the wrapped agent, recovering from failures per the policy."""
         attempt = 0
         attempt_history: list[tuple[Any, str]] = []
+
+        # Reset any per-run budget the classifier tracks (e.g. HybridClassifier's
+        # max_llm_calls_per_run). Duck-typed — most classifiers don't define this.
+        reset_call_count = getattr(self._classifier, "reset_call_count", None)
+        if reset_call_count is not None:
+            reset_call_count()
 
         # Set contextvars so get_recorder() / get_state_updater() work inside fn
         rec_token = _record_step_var.set(self._record_step)

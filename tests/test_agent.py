@@ -484,6 +484,41 @@ async def test_classify_thread_fallback_when_no_aclassify():
     assert calls["classify"][0] != threading.main_thread().ident
 
 
+async def test_run_resets_classifier_call_count_when_present():
+    """Agent.run() calls classifier.reset_call_count() (duck-typed) once at the
+    start of every run — e.g. so HybridClassifier's max_llm_calls_per_run budget
+    is scoped per run rather than per classifier lifetime."""
+    reset_calls: list[int] = []
+
+    class BudgetedClassifier:
+        def reset_call_count(self) -> None:
+            reset_calls.append(1)
+
+        def classify(self, trajectory: Any, task: Any) -> FailureType:
+            return FailureType.UNKNOWN
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy, classifier=BudgetedClassifier())
+    await ag.run("task")
+    await ag.run("task")
+
+    assert len(reset_calls) == 2
+
+
+async def test_run_does_not_require_reset_call_count():
+    """Classifiers without reset_call_count() (e.g. RulesClassifier) are unaffected."""
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        return "ok"
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy)  # default RulesClassifier — no reset_call_count
+    result = await ag.run("task")
+    assert result == "ok"
+
+
 # ---------------------------------------------------------------------------
 # Fix 2: agent state in checkpoints — update_state / _triage_state
 # ---------------------------------------------------------------------------

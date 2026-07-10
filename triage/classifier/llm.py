@@ -29,11 +29,30 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 
 import anyio
 
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
+
+# Exception "shapes" worth retrying — checked by attribute/name rather than by
+# importing anthropic/openai's exception classes directly, so this works for
+# whichever backend (or neither, if the SDK isn't installed) is in play.
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 529}
+_RETRYABLE_EXCEPTION_NAMES = {
+    "RateLimitError",
+    "APITimeoutError",
+    "APIConnectionError",
+    "InternalServerError",
+}
+
+
+def _is_retryable(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code in _RETRYABLE_STATUS_CODES:
+        return True
+    return type(exc).__name__ in _RETRYABLE_EXCEPTION_NAMES
 
 # Lazy module-level imports — None when the package is not installed.
 # Keeping them at module scope (rather than inside _get_client) lets tests
@@ -80,6 +99,8 @@ class LLMClassifier:
         model: str | None = None,
         max_trajectory_steps: int = 10,
         base_url: str | None = None,
+        max_retries: int = 1,
+        retry_backoff_base: float = 0.5,
     ) -> None:
         # Explicit args take precedence; env vars are the fallback.
         self._base_url = base_url or os.environ.get("TRIAGE_LLM_BASE_URL") or None
@@ -90,6 +111,12 @@ class LLMClassifier:
             or ("claude-haiku-4-5-20251001" if self._base_url is None else "llama3.2")
         )
         self._max_trajectory_steps = max_trajectory_steps
+        # Retries only kick in for transient errors (429/5xx/timeout/connection) —
+        # classification runs on the failure path, so this budget stays small by
+        # default (1 retry, 0.5s base backoff) to avoid compounding latency on
+        # top of an agent that's already failing.
+        self._max_retries = max_retries
+        self._retry_backoff_base = retry_backoff_base
         self._client: object | None = None
         self._async_client: object | None = None
         self._lock = threading.Lock()
@@ -173,64 +200,73 @@ class LLMClassifier:
                 return ft
         return FailureType.UNKNOWN
 
+    def _call_sync(self, prompt: str) -> str:
+        client = self._get_client()
+        if self._base_url is not None:
+            response = client.chat.completions.create(  # type: ignore[union-attr]
+                model=self._model,
+                max_tokens=32,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            return response.choices[0].message.content or ""
+        message = client.messages.create(  # type: ignore[union-attr]
+            model=self._model,
+            max_tokens=32,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text
+
+    async def _call_async(self, prompt: str) -> str:
+        client = await self._get_async_client()
+        if self._base_url is not None:
+            response = await client.chat.completions.create(  # type: ignore[union-attr]
+                model=self._model,
+                max_tokens=32,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            return response.choices[0].message.content or ""
+        message = await client.messages.create(  # type: ignore[union-attr]
+            model=self._model,
+            max_tokens=32,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text
+
     def classify(self, trajectory: Trajectory, task: str) -> FailureType:
-        try:
-            prompt = self._build_prompt(trajectory, task)
-            client = self._get_client()
-
-            if self._base_url is not None:
-                response = client.chat.completions.create(  # type: ignore[union-attr]
-                    model=self._model,
-                    max_tokens=32,
-                    messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                )
-                raw = response.choices[0].message.content or ""
-            else:
-                message = client.messages.create(  # type: ignore[union-attr]
-                    model=self._model,
-                    max_tokens=32,
-                    system=_SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                raw = message.content[0].text
-
-            return self._parse_response(raw)
-        except Exception:
-            return FailureType.UNKNOWN
+        prompt = self._build_prompt(trajectory, task)
+        for attempt in range(self._max_retries + 1):
+            try:
+                raw = self._call_sync(prompt)
+                return self._parse_response(raw)
+            except Exception as exc:
+                if attempt >= self._max_retries or not _is_retryable(exc):
+                    return FailureType.UNKNOWN
+                time.sleep(self._retry_backoff_base * (2 ** attempt))
+        return FailureType.UNKNOWN
 
     async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
         """Async counterpart to ``classify()`` using the native async SDK client.
 
         Prefer this over ``classify()`` when calling from async code — it awaits
         the HTTP call directly instead of running the sync client in a thread.
-        Same fallback-to-UNKNOWN behavior on any error.
+        Same fallback-to-UNKNOWN behavior on any error, and the same retry
+        budget for transient errors (429/5xx/timeout/connection).
         """
-        try:
-            prompt = self._build_prompt(trajectory, task)
-            client = await self._get_async_client()
-
-            if self._base_url is not None:
-                response = await client.chat.completions.create(  # type: ignore[union-attr]
-                    model=self._model,
-                    max_tokens=32,
-                    messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                )
-                raw = response.choices[0].message.content or ""
-            else:
-                message = await client.messages.create(  # type: ignore[union-attr]
-                    model=self._model,
-                    max_tokens=32,
-                    system=_SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                raw = message.content[0].text
-
-            return self._parse_response(raw)
-        except Exception:
-            return FailureType.UNKNOWN
+        prompt = self._build_prompt(trajectory, task)
+        for attempt in range(self._max_retries + 1):
+            try:
+                raw = await self._call_async(prompt)
+                return self._parse_response(raw)
+            except Exception as exc:
+                if attempt >= self._max_retries or not _is_retryable(exc):
+                    return FailureType.UNKNOWN
+                await anyio.sleep(self._retry_backoff_base * (2 ** attempt))
+        return FailureType.UNKNOWN

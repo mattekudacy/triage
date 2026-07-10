@@ -148,10 +148,14 @@ async def run_parallel(tasks: list[str]) -> list:
 independent lifecycle hooks or per-task classifier/checkpoint-store instances —
 but it is no longer required just to make concurrent `run()` calls safe.
 
-Shared `CheckpointStore` instances are safe to share across agents —
-`InMemoryCheckpointStore` has no concurrency protection on its own storage dict
-(last-write-wins on the same checkpoint id), but `SQLiteCheckpointStore` and
-`RedisCheckpointStore` use atomic operations.
+Shared `CheckpointStore` instances are safe to share across agents. As of v0.11,
+`InMemoryCheckpointStore` guards its storage dict with an `anyio.Lock`, so
+concurrent `save()`/`load()`/`latest()` calls no longer race on the same dict.
+`SQLiteCheckpointStore` and `RedisCheckpointStore` use atomic operations. Note
+that lock-protected storage access is not the same as coordinated recovery —
+if two concurrent runs both call `latest()` expecting to roll back to "their"
+checkpoint, whichever checkpoint has the highest `timestamp` wins for both;
+`triage` does not scope checkpoints per run.
 
 ---
 

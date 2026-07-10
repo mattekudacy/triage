@@ -64,6 +64,8 @@ clf = LLMClassifier(base_url="https://api.groq.com/openai/v1",
 | `model` | `claude-haiku-4-5-20251001` (Anthropic) or `llama3.2` (OpenAI-compat) | Model name |
 | `max_trajectory_steps` | `10` | Steps included in the prompt |
 | `base_url` | `None` → `TRIAGE_LLM_BASE_URL` env var | If set, uses OpenAI-compatible client |
+| `max_retries` | `1` | Retries for transient errors (429/5xx/timeout/connection) before falling back to `UNKNOWN` |
+| `retry_backoff_base` | `0.5` | Seconds; backoff is `retry_backoff_base * 2 ** attempt` |
 
 Falls back to `UNKNOWN` silently on any error.
 
@@ -92,6 +94,8 @@ clf = HybridClassifier(llm=LLMClassifier())
 Recommended for production: free for structural failures, semantic fallback for ambiguous ones.
 
 Also defines `aclassify()` — calls `llm.aclassify()` when the wrapped LLM classifier has one, else falls back to `llm.classify()`.
+
+**Cost cap:** `HybridClassifier(llm=..., max_llm_calls_per_run=N)` bounds LLM calls per `Agent.run()` call; the counter resets via `reset_call_count()` (duck-typed, called by `agent.py`) at the start of each run.
 
 ---
 

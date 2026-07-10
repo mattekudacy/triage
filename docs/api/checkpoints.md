@@ -42,7 +42,7 @@ from triage.checkpoint import InMemoryCheckpointStore
 store = InMemoryCheckpointStore()
 ```
 
-Default. Holds checkpoints in memory. Not persisted across process restarts. Not concurrency-safe for concurrent `run()` calls on the same instance.
+Default. Holds checkpoints in memory. Not persisted across process restarts. Guards its internal dict with an `anyio.Lock`, so it's safe to share across concurrent `Agent.run()` calls — but "latest" is still whichever checkpoint has the highest `timestamp` at query time, so concurrent writers racing to decide what to roll back to is a semantic question `triage` doesn't resolve for you.
 
 ## SQLiteCheckpointStore
 

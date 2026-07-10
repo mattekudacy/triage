@@ -87,3 +87,47 @@ async def test_snapshot_copy_on_save():
 
     loaded = await store.load("iso")
     assert len(loaded.trajectory_snapshot) == 1  # store copy unaffected
+
+
+# ── concurrency ───────────────────────────────────────────────────────────────
+
+async def test_concurrent_saves_all_persisted():
+    """Many concurrent save() calls on distinct ids must not lose any writes."""
+    import anyio
+
+    store = InMemoryCheckpointStore()
+    checkpoints = [make_checkpoint(state={"i": i}, trajectory_steps=[], id=f"cp-{i}") for i in range(20)]
+
+    async with anyio.create_task_group() as tg:
+        for cp in checkpoints:
+            tg.start_soon(store.save, cp)
+
+    for cp in checkpoints:
+        loaded = await store.load(cp.id)
+        assert loaded.state == {"i": int(cp.id.split("-")[1])}
+
+
+async def test_concurrent_save_and_latest_do_not_raise():
+    """latest() running concurrently with save() must not raise (e.g. dict
+    resizing under an unguarded iteration) and must return a valid checkpoint."""
+    import anyio
+
+    store = InMemoryCheckpointStore()
+    results: list = []
+
+    async def saver(i: int) -> None:
+        await store.save(make_checkpoint(state={}, trajectory_steps=[], id=f"cp-{i}"))
+
+    async def reader() -> None:
+        results.append(await store.latest())
+
+    async with anyio.create_task_group() as tg:
+        for i in range(20):
+            tg.start_soon(saver, i)
+        for _ in range(20):
+            tg.start_soon(reader)
+
+    # No crash, and every non-None result is a checkpoint that was actually saved
+    for r in results:
+        if r is not None:
+            assert r.id.startswith("cp-")

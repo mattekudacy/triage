@@ -73,7 +73,7 @@ from triage.checkpoint import InMemoryCheckpointStore
 store = InMemoryCheckpointStore()
 ```
 
-No extra dependencies. Not concurrency-safe across multiple `Agent.run()` calls on the same store instance.
+No extra dependencies. As of v0.11, its internal dict is guarded by an `anyio.Lock`, so it's safe to share across multiple concurrent `Agent.run()` calls on the same store instance.
 
 ### SQLiteCheckpointStore
 

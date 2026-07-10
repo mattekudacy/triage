@@ -163,10 +163,23 @@ Explicit constructor arguments take precedence over environment variables.
 | `model` | `claude-haiku-4-5-20251001` (Anthropic) or `llama3.2` (OpenAI-compat) | Model name |
 | `max_trajectory_steps` | `10` | How many recent steps to include in the prompt |
 | `base_url` | `None` | If set, uses OpenAI-compatible backend |
+| `max_retries` | `1` | Retries for transient errors before falling back to `UNKNOWN` |
+| `retry_backoff_base` | `0.5` | Backoff seconds; doubles each retry (`0.5s`, `1s`, ...) |
+
+### Retrying transient errors
+
+As of v0.11, both `classify()` and `aclassify()` retry on errors that look transient — HTTP `429`/`500`/`502`/`503`/`529`, or an exception class named `RateLimitError`, `APITimeoutError`, `APIConnectionError`, or `InternalServerError` (matched by name, not by importing the real SDK exception classes, so this works regardless of which backend you're on). Non-transient errors (bad request, auth failure, parse error) are never retried — they fall straight to `UNKNOWN` on the first attempt.
+
+```python
+clf = LLMClassifier(max_retries=2, retry_backoff_base=1.0)  # up to 3 attempts total
+clf = LLMClassifier(max_retries=0)                          # disable retries entirely
+```
+
+Keep this budget small — classification runs on the failure path, and every retry adds latency on top of an agent that's already failing. The default (`max_retries=1`, `retry_backoff_base=0.5`) adds at most ~0.5s before falling back to `UNKNOWN`.
 
 ### Fallback behavior
 
-`LLMClassifier` returns `FailureType.UNKNOWN` silently on any error — network failure, rate limit, parse error. This means a degraded LLM classifier degrades gracefully to your `UNKNOWN` strategy rather than crashing the recovery loop. Both `classify()` and `aclassify()` share this fallback.
+`LLMClassifier` returns `FailureType.UNKNOWN` silently on any error — network failure, rate limit, parse error — once the retry budget (if any) is exhausted. This means a degraded LLM classifier degrades gracefully to your `UNKNOWN` strategy rather than crashing the recovery loop. Both `classify()` and `aclassify()` share this fallback and retry behavior.
 
 ### Native async via aclassify()
 
@@ -192,6 +205,18 @@ This is the recommended production configuration:
 - Rules handle the common cases (loops, HTTP errors, schema failures) for free
 - LLM handles the semantically ambiguous cases (`CONTEXT_OVERFLOW`, `PLAN_INCOMPLETE`)
 - LLM is only called when necessary — API cost stays low
+
+### Capping LLM calls per run
+
+An agent that keeps failing ambiguously within one `Agent.run()` call — retry, fail, retry, fail — will call the LLM once per recovery attempt by default. `max_llm_calls_per_run` caps that:
+
+```python
+classifier = HybridClassifier(llm=LLMClassifier(), max_llm_calls_per_run=2)
+```
+
+Once the cap is hit, `HybridClassifier` returns `UNKNOWN` for any further rules-ambiguous failure in that run, without calling the LLM. `Agent.run()` resets the counter (via `reset_call_count()`, duck-typed — checked with `getattr`) at the start of every run, so the budget applies per run, not per classifier lifetime.
+
+If you share one `HybridClassifier` instance across multiple agents or concurrent `run()` calls, the reset is best-effort rather than strictly isolated per task — a concurrent run's reset can zero out a budget another run was still counting against. Note that `agent.clone()` shares the *same* classifier instance as the original, so it does not give you an independent budget either. Construct a separate `HybridClassifier(llm=...)` per concurrent task if you need a precise, independent budget per task.
 
 ```python
 agent = triage.Agent(

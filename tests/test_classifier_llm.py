@@ -325,6 +325,133 @@ async def test_openai_compat_aclassify_uses_async_client_not_sync():
     MockOpenAI.assert_not_called()
 
 
+# ── Retry on transient errors ──────────────────────────────────────────────────
+# max_retries defaults to 1. Retryable errors are identified by status_code in
+# {429, 500, 502, 503, 529} or by exception class name (RateLimitError,
+# APITimeoutError, APIConnectionError, InternalServerError) — checked structurally
+# so this works without importing the real anthropic/openai exception classes.
+
+class RateLimitError(Exception):
+    """Mimics the real anthropic/openai RateLimitError by class name only —
+    _is_retryable() checks type(exc).__name__, not isinstance."""
+
+
+class _FakeStatusError(Exception):
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def test_classify_retries_once_on_rate_limit_then_succeeds(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = MagicMock()
+        client.messages.create.side_effect = [
+            RateLimitError("rate limited"),
+            _anthropic_response("timeout"),
+        ]
+        MockAnthropic.return_value = client
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.TIMEOUT
+    assert client.messages.create.call_count == 2
+
+
+def test_classify_gives_up_after_max_retries_exhausted(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    clf = LLMClassifier(max_retries=1)
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = MagicMock()
+        client.messages.create.side_effect = RateLimitError("still rate limited")
+        MockAnthropic.return_value = client
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+    assert client.messages.create.call_count == 2  # initial + 1 retry
+
+
+def test_classify_retries_on_retryable_status_code():
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic, \
+         patch("time.sleep") as mock_sleep:
+        client = MagicMock()
+        client.messages.create.side_effect = [
+            _FakeStatusError("service unavailable", status_code=503),
+            _anthropic_response("external_fault"),
+        ]
+        MockAnthropic.return_value = client
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.EXTERNAL_FAULT
+    mock_sleep.assert_called_once()
+
+
+def test_classify_does_not_retry_non_retryable_error():
+    """A non-transient error (e.g. malformed request) must not consume a retry."""
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = MagicMock()
+        client.messages.create.side_effect = ValueError("bad request")
+        MockAnthropic.return_value = client
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+    assert client.messages.create.call_count == 1  # no retry attempted
+
+
+def test_classify_max_retries_zero_disables_retry():
+    clf = LLMClassifier(max_retries=0)
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = MagicMock()
+        client.messages.create.side_effect = RateLimitError("rate limited")
+        MockAnthropic.return_value = client
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+    assert client.messages.create.call_count == 1
+
+
+async def test_aclassify_retries_once_on_rate_limit_then_succeeds(monkeypatch):
+    import anyio as _anyio
+    async def _no_sleep(*_a, **_kw):
+        return None
+    monkeypatch.setattr(_anyio, "sleep", _no_sleep)
+
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+        client = MagicMock()
+        client.messages.create = AsyncMock(
+            side_effect=[RateLimitError("rate limited"), _anthropic_response("loop_detected")]
+        )
+        MockAsyncAnthropic.return_value = client
+        result = await clf.aclassify(traj(make_step(0)), "task")
+    assert result == FailureType.LOOP_DETECTED
+    assert client.messages.create.call_count == 2
+
+
+async def test_aclassify_gives_up_after_max_retries_exhausted(monkeypatch):
+    import anyio as _anyio
+    async def _no_sleep(*_a, **_kw):
+        return None
+    monkeypatch.setattr(_anyio, "sleep", _no_sleep)
+
+    clf = LLMClassifier(max_retries=1)
+    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+        client = MagicMock()
+        client.messages.create = AsyncMock(side_effect=RateLimitError("still rate limited"))
+        MockAsyncAnthropic.return_value = client
+        result = await clf.aclassify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+    assert client.messages.create.call_count == 2
+
+
+async def test_aclassify_does_not_retry_non_retryable_error():
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+        client = MagicMock()
+        client.messages.create = AsyncMock(side_effect=ValueError("bad request"))
+        MockAsyncAnthropic.return_value = client
+        result = await clf.aclassify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+    assert client.messages.create.call_count == 1
+
+
 # ── Shared: prompt construction ───────────────────────────────────────────────
 
 def test_prompt_includes_task_and_step_info():

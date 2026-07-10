@@ -18,7 +18,7 @@ triage/                   — importable package
   checkpoint/             — Checkpoint package
     __init__.py           — re-exports Checkpoint, CheckpointStore, InMemoryCheckpointStore, make_checkpoint
     base.py               — Checkpoint dataclass, CheckpointStore protocol, make_checkpoint, serialization helpers
-    memory.py             — InMemoryCheckpointStore (default, not concurrency-safe)
+    memory.py             — InMemoryCheckpointStore (default, anyio.Lock-guarded since v0.11)
     sqlite.py             — SQLiteCheckpointStore (requires aiosqlite)
     redis.py              — RedisCheckpointStore (requires redis[asyncio])
   policy.py               — RecoveryAction (6 constructors), FailurePolicy dataclass
@@ -281,6 +281,47 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
   the thread-based path. `HybridClassifier.aclassify()` runs rules first (unchanged) and,
   on UNKNOWN, calls `self._llm.aclassify()` if the wrapped LLM classifier defines it,
   else falls back to `self._llm.classify()`.
+
+## v0.11 changes (shipped)
+
+- **`InMemoryCheckpointStore` is concurrency-safe** — `save()`/`load()`/`latest()` now
+  guard the internal dict with an `anyio.Lock`. Previously last-write-wins; now safe
+  to share across the concurrent `Agent.run()` calls that v0.10 made possible. Note
+  this only serializes *storage access* — it does not coordinate "which checkpoint is
+  latest" semantics across concurrent writers with different rollback intentions.
+- **`LLMClassifier`/`HybridClassifier` retry on transient errors** — `classify()` and
+  `aclassify()` both gained `max_retries` (default `1`) and `retry_backoff_base`
+  (default `0.5`s, doubles each attempt) constructor params. Retries only fire for
+  errors that look transient — HTTP `429`/`500`/`502`/`503`/`529` (checked via
+  `exc.status_code`) or an exception class named `RateLimitError`/`APITimeoutError`/
+  `APIConnectionError`/`InternalServerError` (checked via `type(exc).__name__`, not
+  `isinstance`, so this works without importing the real anthropic/openai exception
+  types). Non-transient errors fall straight to `UNKNOWN` on the first attempt, same
+  as before. See `_is_retryable()` in `triage/classifier/llm.py`.
+- **`HybridClassifier(max_llm_calls_per_run=N)`** — caps LLM calls within one
+  `Agent.run()` call; once reached, ambiguous (rules-`UNKNOWN`) failures return
+  `UNKNOWN` without touching the LLM. The counter is a `threading.Lock`-guarded plain
+  instance attribute, **not** a `ContextVar` — a `ContextVar` mutated inside
+  `anyio.to_thread.run_sync()` (the dispatch path for `classify()`) is invisible to
+  the caller once that thread call returns, which would silently make the cap a
+  no-op. `Agent.run()` calls `classifier.reset_call_count()` (duck-typed via
+  `getattr`) at the start of every run, scoping the budget per run. Sharing one
+  `HybridClassifier` across concurrent runs makes the reset best-effort, not strictly
+  isolated per task — construct a separate instance per concurrent task for a precise
+  budget. See `tests/test_classifier_hybrid.py::test_cap_persists_across_calls_dispatched_via_to_thread`
+  for the regression this guards against.
+- **`Trajectory.append()` warns on non-monotonic `Step.index`** — logs a
+  `non_monotonic_step_index` structured warning (does not raise, does not block the
+  append) when an appended step's index is `<=` the previous step's index.
+  `Step.index` remains caller-supplied and informational, not auto-assigned or
+  enforced — this is a diagnostic aid for a common caller bug (e.g. reusing an index
+  across a retry), not a new invariant. New `tests/test_trajectory.py` covers
+  `Trajectory` end-to-end (previously untested as a standalone module).
+- **`corrections.jsonl` rotation** — `record_correction(..., max_lines=10_000)` (new
+  param, default 10,000) rotates the corrections file once it exceeds the threshold:
+  the whole file is moved to `<path>.1` (overwriting any previous backup) and a fresh
+  file starts. Pass `max_lines=None` to disable rotation and grow unbounded, matching
+  pre-v0.11 behavior.
 
 ## v0.9 ideas (not committed)
 

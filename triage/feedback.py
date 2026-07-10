@@ -17,11 +17,14 @@ Usage::
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from triage.taxonomy import FailureContext, FailureType
+
+_DEFAULT_MAX_LINES = 10_000
 
 
 @dataclass
@@ -40,6 +43,7 @@ def record_correction(
     expected_type: FailureType,
     *,
     store_path: str = "corrections.jsonl",
+    max_lines: int | None = _DEFAULT_MAX_LINES,
 ) -> None:
     """Append a labeled correction to a JSONL file.
 
@@ -52,6 +56,14 @@ def record_correction(
         The correct FailureType the user believes should have been classified.
     store_path:
         Path to the corrections JSONL file. Appended to, not overwritten.
+    max_lines:
+        Rotation threshold. When appending pushes the file over this many
+        lines, the whole file (including the line just written) is moved to
+        ``<store_path>.1`` (overwriting any previous backup there) and a fresh
+        empty file starts at ``store_path``. Pass ``None`` to disable rotation
+        and let the file grow unbounded. Default 10,000 lines — comfortably
+        larger than any reasonable local feedback loop, small enough that an
+        unattended long-running agent can't silently fill the disk.
     """
     correction = Correction(
         task=ctx.original_task,
@@ -75,6 +87,20 @@ def record_correction(
             "observed_type": correction.observed_type,
             "timestamp": correction.timestamp,
         }) + "\n")
+    if max_lines is not None:
+        _rotate_if_needed(store_path, max_lines)
+
+
+def _rotate_if_needed(store_path: str, max_lines: int) -> None:
+    try:
+        with open(store_path, encoding="utf-8") as f:
+            line_count = sum(1 for _ in f)
+    except FileNotFoundError:
+        return
+    if line_count <= max_lines:
+        return
+    backup_path = store_path + ".1"
+    os.replace(store_path, backup_path)
 
 
 def load_corrections(store_path: str = "corrections.jsonl") -> list[Correction]:

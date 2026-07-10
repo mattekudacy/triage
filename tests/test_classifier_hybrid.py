@@ -217,3 +217,117 @@ async def test_aclassify_falls_back_to_sync_classify_when_llm_has_no_aclassify()
 
     assert result == FailureType.EXTERNAL_FAULT
     llm.classify.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# max_llm_calls_per_run — cost cap
+# ---------------------------------------------------------------------------
+
+def test_max_llm_calls_per_run_none_by_default_allows_unlimited_calls():
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
+    clf = HybridClassifier(llm=llm)
+
+    for _ in range(10):
+        clf.classify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert llm.classify.call_count == 10
+
+
+def test_classify_stops_calling_llm_once_cap_reached():
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
+    clf = HybridClassifier(llm=llm, max_llm_calls_per_run=2)
+
+    results = [clf.classify(traj(make_step(0, error="ambiguous")), "task") for _ in range(4)]
+
+    assert results == [
+        FailureType.PLAN_INCOMPLETE,
+        FailureType.PLAN_INCOMPLETE,
+        FailureType.UNKNOWN,
+        FailureType.UNKNOWN,
+    ]
+    assert llm.classify.call_count == 2
+
+
+async def test_aclassify_stops_calling_llm_once_cap_reached():
+    llm = MagicMock()
+    llm.aclassify = AsyncMock(return_value=FailureType.CONTEXT_OVERFLOW)
+    clf = HybridClassifier(llm=llm, max_llm_calls_per_run=1)
+
+    first = await clf.aclassify(traj(make_step(0, error="ambiguous")), "task")
+    second = await clf.aclassify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert first == FailureType.CONTEXT_OVERFLOW
+    assert second == FailureType.UNKNOWN
+    llm.aclassify.assert_called_once()
+
+
+def test_max_llm_calls_per_run_zero_disables_llm_entirely():
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
+    clf = HybridClassifier(llm=llm, max_llm_calls_per_run=0)
+
+    result = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.UNKNOWN
+    llm.classify.assert_not_called()
+
+
+def test_reset_call_count_restores_budget():
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
+    clf = HybridClassifier(llm=llm, max_llm_calls_per_run=1)
+
+    clf.classify(traj(make_step(0, error="ambiguous")), "task")
+    capped = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+    assert capped == FailureType.UNKNOWN
+
+    clf.reset_call_count()
+    after_reset = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert after_reset == FailureType.PLAN_INCOMPLETE
+    assert llm.classify.call_count == 2
+
+
+def test_rules_hits_do_not_consume_llm_call_budget():
+    """A rules-resolved failure must not count against max_llm_calls_per_run."""
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
+    clf = HybridClassifier(llm=llm, max_llm_calls_per_run=1)
+
+    # WRONG_TOOL_CALLED — resolved by rules, no LLM call
+    for _ in range(5):
+        result = clf.classify(traj(make_step(0, error="no tool named 'missing_tool'")), "task")
+        assert result == FailureType.WRONG_TOOL_CALLED
+
+    llm.classify.assert_not_called()
+
+    # The LLM budget (1 call) is still fully available
+    result = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+    assert result == FailureType.PLAN_INCOMPLETE
+    llm.classify.assert_called_once()
+
+
+def test_cap_persists_across_calls_dispatched_via_to_thread():
+    """Regression: the counter must be visible across anyio.to_thread.run_sync
+    dispatches, not just within a single synchronous call chain. A ContextVar-
+    based counter would silently reset to 0 on every thread dispatch and let
+    the cap never engage — see HybridClassifier's docstring on why this uses a
+    threading.Lock-guarded plain counter instead.
+    """
+    import anyio
+
+    llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
+    clf = HybridClassifier(llm=llm, max_llm_calls_per_run=1)
+    t = traj(make_step(0, error="ambiguous"))
+
+    async def main():
+        results = []
+        for _ in range(3):
+            results.append(await anyio.to_thread.run_sync(clf.classify, t, "task"))
+        return results
+
+    results = anyio.run(main)
+
+    assert results == [
+        FailureType.PLAN_INCOMPLETE,
+        FailureType.UNKNOWN,
+        FailureType.UNKNOWN,
+    ]
+    assert llm.classify.call_count == 1

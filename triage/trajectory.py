@@ -6,7 +6,11 @@ Ordered, appendable record of agent steps with replay support.
 
 from __future__ import annotations
 
+import logging
+
 from triage.taxonomy import Step
+
+logger = logging.getLogger("triage")
 
 
 class Trajectory:
@@ -20,6 +24,21 @@ class Trajectory:
         return list(self._steps)
 
     def append(self, step: Step) -> None:
+        # Step.index is caller-supplied, not auto-assigned — a non-monotonic
+        # index usually means the caller mismanaged its own counter (e.g.
+        # reused an index across retries). Warn rather than raise: index is
+        # informational (used in log lines and LLM prompts, not by any
+        # internal invariant), and existing agents that don't track it
+        # carefully should not suddenly break on upgrade.
+        if self._steps and step.index <= self._steps[-1].index:
+            logger.warning(
+                "[triage] Trajectory.append() received non-monotonic index "
+                "(step.index=%r, previous=%r) — Step.index should increase "
+                "with each recorded step",
+                step.index,
+                self._steps[-1].index,
+                extra={"triage_event": "non_monotonic_step_index"},
+            )
         self._steps.append(step)
 
     def replay_from(self, index: int) -> "Trajectory":

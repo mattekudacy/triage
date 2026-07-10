@@ -68,6 +68,75 @@ def test_record_correction_fields(tmp_path: Any):
     assert data["steps_summary"][0]["action"] == "step"
 
 
+# ── rotation ───────────────────────────────────────────────────────────────────
+
+def test_record_correction_does_not_rotate_below_threshold(tmp_path: Any):
+    store = str(tmp_path / "corrections.jsonl")
+    ctx = make_ctx(FailureType.WRONG_TOOL_CALLED)
+    for _ in range(5):
+        record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store, max_lines=10)
+
+    assert not os.path.exists(store + ".1")
+    with open(store) as f:
+        assert len(f.read().splitlines()) == 5
+
+
+def test_record_correction_rotates_when_threshold_exceeded(tmp_path: Any):
+    store = str(tmp_path / "corrections.jsonl")
+    ctx = make_ctx(FailureType.WRONG_TOOL_CALLED)
+    for _ in range(4):
+        record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store, max_lines=3)
+
+    # 4th write pushes the file to 4 lines (> 3) — rotates: store_path becomes
+    # empty/fresh (about to receive the *next* write), backup holds all 4 lines
+    assert os.path.exists(store + ".1")
+    with open(store + ".1") as f:
+        assert len(f.read().splitlines()) == 4
+    assert not os.path.exists(store) or open(store).read() == ""
+
+
+def test_record_correction_rotation_overwrites_previous_backup(tmp_path: Any):
+    store = str(tmp_path / "corrections.jsonl")
+    backup = store + ".1"
+    ctx = make_ctx(FailureType.WRONG_TOOL_CALLED)
+
+    for _ in range(3):
+        record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store, max_lines=2)
+    with open(backup) as f:
+        first_backup_lines = len(f.read().splitlines())
+
+    for _ in range(3):
+        record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store, max_lines=2)
+    with open(backup) as f:
+        second_backup_lines = len(f.read().splitlines())
+
+    # Backup was overwritten, not appended to — same shape both times
+    assert first_backup_lines == second_backup_lines
+
+
+def test_record_correction_max_lines_none_disables_rotation(tmp_path: Any):
+    store = str(tmp_path / "corrections.jsonl")
+    ctx = make_ctx(FailureType.WRONG_TOOL_CALLED)
+    for _ in range(10):
+        record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store, max_lines=None)
+
+    assert not os.path.exists(store + ".1")
+    with open(store) as f:
+        assert len(f.read().splitlines()) == 10
+
+
+def test_record_correction_default_max_lines_does_not_rotate_small_files(tmp_path: Any):
+    """Sanity check that the default threshold (10,000) doesn't kick in for
+    ordinary usage — only an explicit low max_lines should trigger rotation
+    in these tests."""
+    store = str(tmp_path / "corrections.jsonl")
+    ctx = make_ctx(FailureType.WRONG_TOOL_CALLED)
+    for _ in range(5):
+        record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store)
+
+    assert not os.path.exists(store + ".1")
+
+
 def test_load_corrections_returns_empty_for_missing_file(tmp_path: Any):
     corrections = load_corrections(str(tmp_path / "nonexistent.jsonl"))
     assert corrections == []
