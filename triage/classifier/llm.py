@@ -30,6 +30,8 @@ from __future__ import annotations
 import os
 import threading
 
+import anyio
+
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
 
@@ -89,7 +91,9 @@ class LLMClassifier:
         )
         self._max_trajectory_steps = max_trajectory_steps
         self._client: object | None = None
+        self._async_client: object | None = None
         self._lock = threading.Lock()
+        self._async_lock = anyio.Lock()
 
     def _get_client(self) -> object:
         if self._client is not None:
@@ -98,6 +102,14 @@ class LLMClassifier:
             if self._client is None:
                 self._client = self._build_client()
         return self._client
+
+    async def _get_async_client(self) -> object:
+        if self._async_client is not None:
+            return self._async_client
+        async with self._async_lock:
+            if self._async_client is None:
+                self._async_client = self._build_async_client()
+        return self._async_client
 
     def _build_client(self) -> object:
         if self._base_url is not None:
@@ -119,6 +131,26 @@ class LLMClassifier:
             )
         return _anthropic.Anthropic(api_key=self._api_key)
 
+    def _build_async_client(self) -> object:
+        if self._base_url is not None:
+            try:
+                import openai as _oi
+            except ImportError as exc:
+                raise ImportError(
+                    "LLMClassifier with base_url requires 'openai'. "
+                    "Install it with: pip install openai"
+                ) from exc
+            return _oi.AsyncOpenAI(
+                api_key=self._api_key or "no-key",
+                base_url=self._base_url,
+            )
+        if _anthropic is None:
+            raise ImportError(
+                "LLMClassifier requires 'anthropic'. "
+                "Install it with: pip install triage-agent[anthropic]"
+            )
+        return _anthropic.AsyncAnthropic(api_key=self._api_key)
+
     def _build_prompt(self, trajectory: Trajectory, task: str) -> str:
         steps = trajectory.last_n_steps(self._max_trajectory_steps)
         lines = [f"Task: {task}", "", "Recent steps:"]
@@ -134,6 +166,13 @@ class LLMClassifier:
         lines.append("Classify the failure type:")
         return "\n".join(lines)
 
+    def _parse_response(self, raw: str) -> FailureType:
+        raw = raw.strip().lower()
+        for ft in FailureType:
+            if ft.value == raw:
+                return ft
+        return FailureType.UNKNOWN
+
     def classify(self, trajectory: Trajectory, task: str) -> FailureType:
         try:
             prompt = self._build_prompt(trajectory, task)
@@ -148,7 +187,7 @@ class LLMClassifier:
                         {"role": "user", "content": prompt},
                     ],
                 )
-                raw = (response.choices[0].message.content or "").strip().lower()
+                raw = response.choices[0].message.content or ""
             else:
                 message = client.messages.create(  # type: ignore[union-attr]
                     model=self._model,
@@ -156,11 +195,42 @@ class LLMClassifier:
                     system=_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                raw = message.content[0].text.strip().lower()
+                raw = message.content[0].text
 
-            for ft in FailureType:
-                if ft.value == raw:
-                    return ft
+            return self._parse_response(raw)
         except Exception:
-            pass
-        return FailureType.UNKNOWN
+            return FailureType.UNKNOWN
+
+    async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
+        """Async counterpart to ``classify()`` using the native async SDK client.
+
+        Prefer this over ``classify()`` when calling from async code — it awaits
+        the HTTP call directly instead of running the sync client in a thread.
+        Same fallback-to-UNKNOWN behavior on any error.
+        """
+        try:
+            prompt = self._build_prompt(trajectory, task)
+            client = await self._get_async_client()
+
+            if self._base_url is not None:
+                response = await client.chat.completions.create(  # type: ignore[union-attr]
+                    model=self._model,
+                    max_tokens=32,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                )
+                raw = response.choices[0].message.content or ""
+            else:
+                message = await client.messages.create(  # type: ignore[union-attr]
+                    model=self._model,
+                    max_tokens=32,
+                    system=_SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = message.content[0].text
+
+            return self._parse_response(raw)
+        except Exception:
+            return FailureType.UNKNOWN

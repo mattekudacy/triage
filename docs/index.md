@@ -71,4 +71,4 @@ pip install "triage-agent[yaml]"         # FailurePolicy.from_yaml() with .yaml/
 
 ## Why not just if/else?
 
-See [How It Works](getting-started/how-it-works.md) for a full explanation. The short version: agent failures don't give you clean discriminators. The same `RuntimeError` can mean ten different things depending on what the agent was doing before it failed — and the signal lives in the trajectory, not the exception string.
+See [How It Works](getting-started/how-it-works.md) for a full explanation. The short version: agent failures don't give you clean discriminators. The same `RuntimeError` can mean nine different things depending on what the agent was doing before it failed — and the signal lives in the trajectory, not the exception string.

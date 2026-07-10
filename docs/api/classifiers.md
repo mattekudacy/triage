@@ -9,6 +9,8 @@ class Classifier(Protocol):
 
 `classify()` is always `def` (not `async def`). triage runs it via `anyio.to_thread.run_sync()` to keep the event loop unblocked.
 
+Classifiers may optionally define `async def aclassify(self, trajectory, task) -> FailureType`. Duck-typed, not part of the protocol; when present, `agent.py` awaits it directly instead of using the thread path. `LLMClassifier` and `HybridClassifier` both define it.
+
 ---
 
 ## RulesClassifier
@@ -65,6 +67,8 @@ clf = LLMClassifier(base_url="https://api.groq.com/openai/v1",
 
 Falls back to `UNKNOWN` silently on any error.
 
+Also defines `async def aclassify(trajectory, task) -> FailureType`, backed by `AsyncAnthropic`/`AsyncOpenAI`. `agent.py` prefers this over `classify()` when present — no thread hop.
+
 **Install:**
 ```bash
 pip install "triage-agent[anthropic]"   # Anthropic backend
@@ -86,6 +90,8 @@ clf = HybridClassifier(llm=LLMClassifier())
 ```
 
 Recommended for production: free for structural failures, semantic fallback for ambiguous ones.
+
+Also defines `aclassify()` — calls `llm.aclassify()` when the wrapped LLM classifier has one, else falls back to `llm.classify()`.
 
 ---
 

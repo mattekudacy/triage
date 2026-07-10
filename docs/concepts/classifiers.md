@@ -11,7 +11,17 @@ class Classifier(Protocol):
     def classify(self, trajectory: Trajectory, task: str) -> FailureType: ...
 ```
 
-`classify()` is **synchronous** — it must not be `async def`. triage runs it via `anyio.to_thread.run_sync()` inside the async recovery loop, keeping the event loop unblocked even for the LLM-backed classifier.
+`classify()` is **synchronous** — it must not be `async def`. triage runs it via `anyio.to_thread.run_sync()` inside the async recovery loop, keeping the event loop unblocked even for classifiers that make a blocking HTTP call.
+
+### Optional: aclassify() for native-async classification
+
+Classifiers that talk to an LLM API may additionally define:
+
+```python
+async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType: ...
+```
+
+This is not part of the `Classifier` protocol itself — it's duck-typed. When present, `agent.py` awaits it directly instead of dispatching `classify()` to a thread, skipping that hop entirely. `LLMClassifier` and `HybridClassifier` both define `aclassify()` using the native async Anthropic/OpenAI client; `RulesClassifier` has no I/O and doesn't need one. You get this automatically — no configuration required, just use `LLMClassifier`/`HybridClassifier` as your `classifier=`.
 
 ---
 
@@ -156,7 +166,11 @@ Explicit constructor arguments take precedence over environment variables.
 
 ### Fallback behavior
 
-`LLMClassifier` returns `FailureType.UNKNOWN` silently on any error — network failure, rate limit, parse error. This means a degraded LLM classifier degrades gracefully to your `UNKNOWN` strategy rather than crashing the recovery loop.
+`LLMClassifier` returns `FailureType.UNKNOWN` silently on any error — network failure, rate limit, parse error. This means a degraded LLM classifier degrades gracefully to your `UNKNOWN` strategy rather than crashing the recovery loop. Both `classify()` and `aclassify()` share this fallback.
+
+### Native async via aclassify()
+
+`LLMClassifier` defines `async def aclassify(trajectory, task) -> FailureType`, backed by `AsyncAnthropic`/`AsyncOpenAI` instead of the sync client. `agent.py` detects and awaits this directly, avoiding the `anyio.to_thread.run_sync()` hop that `classify()` still needs. The sync and async clients are built and cached independently — calling both `classify()` and `aclassify()` on the same `LLMClassifier` instance creates one of each, not a shared client.
 
 ---
 
@@ -170,6 +184,8 @@ from triage.classifier.llm import LLMClassifier
 
 classifier = HybridClassifier(llm=LLMClassifier())
 ```
+
+`HybridClassifier` also defines `aclassify()`: it runs `RulesClassifier` synchronously (as before), and on `UNKNOWN` calls `self._llm.aclassify()` if the wrapped LLM classifier defines one — falling back to `self._llm.classify()` otherwise. No extra config needed; passing `HybridClassifier(llm=LLMClassifier())` as `classifier=` gets the async path automatically.
 
 This is the recommended production configuration:
 
@@ -213,4 +229,16 @@ class MyClassifier:
         return FailureType.UNKNOWN
 
 agent = triage.Agent(my_agent, policy=policy, classifier=MyClassifier())
+```
+
+If your custom classifier makes an async API call, add an optional `aclassify()` method — `agent.py` will detect and await it directly instead of running `classify()` in a thread:
+
+```python
+class MyAsyncClassifier:
+    def classify(self, trajectory: Trajectory, task: str) -> FailureType:
+        ...  # sync fallback path, e.g. anyio.from_thread or a blocking client
+
+    async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
+        # inspect trajectory.steps, task, await your async client, return a FailureType
+        ...
 ```

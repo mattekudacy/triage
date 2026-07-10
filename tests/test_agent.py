@@ -431,6 +431,59 @@ async def test_classify_thread_failure_falls_back_to_unknown():
         await ag.run("task")
 
 
+async def test_aclassify_preferred_over_thread_classify_when_present():
+    """When a classifier defines aclassify(), agent.py awaits it directly and
+    never runs classify() in a thread."""
+    import threading
+
+    calls: dict[str, list] = {"aclassify": [], "classify": []}
+
+    class AsyncCapableClassifier:
+        def classify(self, trajectory, task):
+            calls["classify"].append(threading.get_ident())
+            return FailureType.UNKNOWN
+
+        async def aclassify(self, trajectory, task):
+            calls["aclassify"].append(threading.get_ident())
+            return FailureType.UNKNOWN
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        raise RuntimeError("fail")
+
+    policy = FailurePolicy(UNKNOWN=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy, classifier=AsyncCapableClassifier())
+    with pytest.raises(TriageEscalationError):
+        await ag.run("task")
+
+    assert len(calls["aclassify"]) == 1
+    assert len(calls["classify"]) == 0
+    # aclassify ran on the main thread (awaited directly, no to_thread hop)
+    assert calls["aclassify"][0] == threading.main_thread().ident
+
+
+async def test_classify_thread_fallback_when_no_aclassify():
+    """Classifiers without aclassify() keep using the anyio.to_thread path."""
+    import threading
+
+    calls: dict[str, list] = {"classify": []}
+
+    class SyncOnlyClassifier:
+        def classify(self, trajectory, task):
+            calls["classify"].append(threading.get_ident())
+            return FailureType.UNKNOWN
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        raise RuntimeError("fail")
+
+    policy = FailurePolicy(UNKNOWN=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy, classifier=SyncOnlyClassifier())
+    with pytest.raises(TriageEscalationError):
+        await ag.run("task")
+
+    assert len(calls["classify"]) == 1
+    assert calls["classify"][0] != threading.main_thread().ident
+
+
 # ---------------------------------------------------------------------------
 # Fix 2: agent state in checkpoints — update_state / _triage_state
 # ---------------------------------------------------------------------------
@@ -1367,3 +1420,97 @@ async def test_risk_scorer_exception_is_sandboxed():
     ag = Agent(agent_fn, policy, risk_scorer=buggy_scorer)
     result = await ag.run("task")
     assert result == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Concurrent run() calls on a single Agent instance
+# ---------------------------------------------------------------------------
+
+async def test_concurrent_runs_do_not_share_trajectory():
+    """Two run() calls in flight at once on the same Agent must not see each
+    other's steps — trajectory is isolated per concurrent task, not per Agent.
+    """
+    import anyio
+
+    results: dict[str, list[str]] = {}
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action=f"start-{task}"))
+        await anyio.sleep(0.02 if task == "slow" else 0.0)
+        record_step(Step(index=1, action=f"end-{task}"))
+        return task
+
+    policy = FailurePolicy()
+    ag = Agent(agent_fn, policy)
+
+    async def run_and_capture(task: str) -> None:
+        await ag.run(task)
+        results[task] = [s.action for s in ag._trajectory.steps]
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(run_and_capture, "slow")
+        tg.start_soon(run_and_capture, "fast")
+
+    assert results["slow"] == ["start-slow", "end-slow"]
+    assert results["fast"] == ["start-fast", "end-fast"]
+
+
+async def test_concurrent_runs_do_not_share_current_state():
+    import anyio
+
+    captured: dict[str, dict] = {}
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        update_state({"task": task})
+        await anyio.sleep(0.02 if task == "slow" else 0.0)
+        return task
+
+    policy = FailurePolicy()
+    ag = Agent(agent_fn, policy)
+
+    async def run_and_capture(task: str) -> None:
+        await ag.run(task)
+        captured[task] = dict(ag._current_state)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(run_and_capture, "slow")
+        tg.start_soon(run_and_capture, "fast")
+
+    assert captured["slow"] == {"task": "slow"}
+    assert captured["fast"] == {"task": "fast"}
+
+
+async def test_concurrent_runs_recover_independently():
+    """A failure + recovery in one concurrent run() must not affect another's
+    attempt_history or trajectory.
+    """
+    import anyio
+
+    call_counts = {"slow": 0, "fast": 0}
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        call_counts[task] += 1
+        record_step(Step(index=0, action="step", error="tool foo not found"))
+        if task == "slow":
+            await anyio.sleep(0.02)
+        if call_counts[task] == 1:
+            raise RuntimeError("tool foo not found")
+        return task
+
+    async def retry_strategy(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy(WRONG_TOOL_CALLED=retry_strategy)
+    ag = Agent(agent_fn, policy)
+
+    results: dict[str, str] = {}
+
+    async def run_and_capture(task: str) -> None:
+        results[task] = await ag.run(task)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(run_and_capture, "slow")
+        tg.start_soon(run_and_capture, "fast")
+
+    assert results == {"slow": "slow", "fast": "fast"}
+    assert call_counts == {"slow": 2, "fast": 2}

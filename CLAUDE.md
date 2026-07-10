@@ -56,8 +56,9 @@ The venv uses Python 3.13 (`/opt/homebrew/bin/python3.13`). Install deps with:
 .venv/bin/pip install anyio pydantic pytest pytest-asyncio anthropic aiosqlite fakeredis
 ```
 
-Note: `pip install -e .` fails due to a hatchling shadow issue in the local env.
-Use `PYTHONPATH=.` instead of editable install until resolved.
+`pip install -e .` now works cleanly (verified 2026-07-11 with pip 26.0.1) — the
+hatchling shadow issue that previously blocked it is resolved. `PYTHONPATH=.` still
+works too and remains the faster path for quick iteration without reinstalling.
 
 ## Key design rules
 
@@ -249,6 +250,37 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
 
 - **Per-framework error pattern tables on `RulesClassifier`** — `RulesClassifier(framework="openai"|"anthropic"|"langgraph")` activates supplemental per-SDK patterns for WRONG_TOOL_CALLED, SCHEMA_MISMATCH, and EXTERNAL_FAULT; generic patterns unchanged; unknown framework values silently ignored (generic still applies); no protocol or agent.py changes.
 - **Step risk scoring** — `RulesRiskScorer` scores each step as it's recorded; `Agent(risk_scorer=..., risk_threshold=0.9)` raises `TriageAbortError` before the agent executes a step scoring >= threshold; `RulesRiskScorer` detects destructive patterns (email, payment, DELETE, DROP TABLE) with zero API calls; `StepRiskScorer` protocol and `RiskScore` dataclass are the public extension points.
+
+## v0.10 changes (shipped)
+
+- **Concurrency-safe `Agent`** — per-run state (`_trajectory`, `_current_state`,
+  `_pending_checkpoints`, `_last_checkpoint_id`, `_last_ctx`) moved off plain instance
+  attributes onto a `_RunState` dataclass held behind a per-instance `ContextVar`
+  (`self._run_state_var`), exposed via property getters/setters so every existing
+  `self._trajectory = ...`-style call site in `agent.py` is unchanged. Because
+  `asyncio`/`anyio` copy the current `contextvars.Context` on `Task` spawn, two
+  concurrent `run()` calls on the *same* `Agent` instance now get independent
+  trajectory/state/checkpoint bookkeeping instead of clobbering a shared attribute.
+  `Agent.clone()` is unchanged and still recommended when you want independent
+  lifecycle hooks or checkpoint stores — it's just no longer required purely for
+  concurrency safety. See `tests/test_agent.py::test_concurrent_runs_*`.
+- **`pip install -e .` confirmed fixed** — the hatchling shadow issue previously
+  documented was already resolved upstream (pip 26.0.1); verified clean install +
+  full test pass with no `PYTHONPATH` from an unrelated working directory. `CLAUDE.md`
+  "Running tests" section updated to drop the workaround note (`PYTHONPATH=.` still
+  works and remains the faster iteration path).
+- **Native-async classification** — `LLMClassifier` and `HybridClassifier` gained an
+  optional `async def aclassify(trajectory, task) -> FailureType` method using the
+  native async Anthropic/OpenAI SDK client (`AsyncAnthropic`/`AsyncOpenAI`, built and
+  cached separately from the sync client via `_build_async_client()`/`_get_async_client()`
+  behind an `anyio.Lock`). `Classifier.classify()` stays required and synchronous per
+  core.md Rule 5 — `aclassify` is purely additive and duck-typed, not part of the
+  `Classifier` Protocol. `Agent._run_loop` checks `getattr(self._classifier, "aclassify", None)`
+  and awaits it directly when present, skipping the `anyio.to_thread.run_sync()` hop;
+  classifiers without `aclassify` (e.g. `RulesClassifier`) are unaffected and keep using
+  the thread-based path. `HybridClassifier.aclassify()` runs rules first (unchanged) and,
+  on UNKNOWN, calls `self._llm.aclassify()` if the wrapped LLM classifier defines it,
+  else falls back to `self._llm.classify()`.
 
 ## v0.9 ideas (not committed)
 

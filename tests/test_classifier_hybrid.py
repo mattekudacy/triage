@@ -6,7 +6,7 @@ Tests for HybridClassifier — rules first, LLM fallback on UNKNOWN.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -175,3 +175,45 @@ def test_hybrid_satisfies_classifier_protocol():
     llm = _mock_llm(FailureType.UNKNOWN)
     clf = HybridClassifier(llm=llm)
     assert isinstance(clf, Classifier)
+
+
+# ---------------------------------------------------------------------------
+# aclassify() — async counterpart, prefers llm.aclassify() when present
+# ---------------------------------------------------------------------------
+
+async def test_aclassify_rules_result_returned_without_calling_llm():
+    llm = MagicMock()
+    llm.aclassify = AsyncMock(return_value=FailureType.PLAN_INCOMPLETE)
+    clf = HybridClassifier(llm=llm)
+
+    step = make_step(0, error="no tool named 'missing_tool'")
+    result = await clf.aclassify(traj(step), "task")
+
+    assert result == FailureType.WRONG_TOOL_CALLED
+    llm.aclassify.assert_not_called()
+
+
+async def test_aclassify_uses_llm_aclassify_when_available():
+    llm = MagicMock()
+    llm.aclassify = AsyncMock(return_value=FailureType.CONTEXT_OVERFLOW)
+    clf = HybridClassifier(llm=llm)
+
+    step = make_step(0, error="ambiguous")
+    result = await clf.aclassify(traj(step), "task")
+
+    assert result == FailureType.CONTEXT_OVERFLOW
+    llm.aclassify.assert_called_once()
+    llm.classify.assert_not_called()
+
+
+async def test_aclassify_falls_back_to_sync_classify_when_llm_has_no_aclassify():
+    """LLM object without an aclassify() method — hybrid falls back to classify()."""
+    llm = MagicMock(spec=["classify"])
+    llm.classify.return_value = FailureType.EXTERNAL_FAULT
+    clf = HybridClassifier(llm=llm)
+
+    step = make_step(0, error="ambiguous")
+    result = await clf.aclassify(traj(step), "task")
+
+    assert result == FailureType.EXTERNAL_FAULT
+    llm.classify.assert_called_once()

@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
 if TYPE_CHECKING:
@@ -83,6 +84,23 @@ def get_state_updater() -> Callable[[dict[str, Any]], None]:
             "get_state_updater() called outside a triage Agent.run() context."
         )
     return fn
+
+
+@dataclass
+class _RunState:
+    """Per-task run-state for one Agent instance.
+
+    Held behind a ContextVar (not a plain instance attribute) so that
+    concurrent ``run()`` calls on the same Agent — each executing in its own
+    asyncio Task, hence its own copy-on-write context — never see each
+    other's trajectory, state, or checkpoint bookkeeping.
+    """
+
+    trajectory: Trajectory = field(default_factory=Trajectory)
+    current_state: dict[str, Any] = field(default_factory=dict)
+    last_checkpoint_id: str | None = None
+    pending_checkpoints: list[Coroutine[Any, Any, None]] = field(default_factory=list)
+    last_ctx: FailureContext | None = None
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
@@ -182,12 +200,63 @@ class Agent:
         self._risk_scorer = risk_scorer
         self._risk_threshold = risk_threshold
 
-        # mutable run-state (reset on each run() call)
-        self._trajectory: Trajectory = Trajectory()
-        self._current_state: dict[str, Any] = {}
-        self._last_checkpoint_id: str | None = None
-        self._pending_checkpoints: list[Coroutine[Any, Any, None]] = []
-        self._last_ctx: FailureContext | None = None
+        # Per-task run-state, isolated via a ContextVar. asyncio/anyio copy the
+        # current Context when spawning a Task, so concurrent run() calls on
+        # this same Agent instance — each in its own Task — get independent
+        # trajectory/state/checkpoint bookkeeping instead of clobbering a
+        # shared instance attribute. See _RunState and the _run_state property.
+        self._run_state_var: contextvars.ContextVar[_RunState] = contextvars.ContextVar(
+            f"triage_run_state_{id(self)}"
+        )
+
+    @property
+    def _run_state(self) -> _RunState:
+        try:
+            return self._run_state_var.get()
+        except LookupError:
+            state = _RunState()
+            self._run_state_var.set(state)
+            return state
+
+    @property
+    def _trajectory(self) -> Trajectory:
+        return self._run_state.trajectory
+
+    @_trajectory.setter
+    def _trajectory(self, value: Trajectory) -> None:
+        self._run_state.trajectory = value
+
+    @property
+    def _current_state(self) -> dict[str, Any]:
+        return self._run_state.current_state
+
+    @_current_state.setter
+    def _current_state(self, value: dict[str, Any]) -> None:
+        self._run_state.current_state = value
+
+    @property
+    def _last_checkpoint_id(self) -> str | None:
+        return self._run_state.last_checkpoint_id
+
+    @_last_checkpoint_id.setter
+    def _last_checkpoint_id(self, value: str | None) -> None:
+        self._run_state.last_checkpoint_id = value
+
+    @property
+    def _pending_checkpoints(self) -> list[Coroutine[Any, Any, None]]:
+        return self._run_state.pending_checkpoints
+
+    @_pending_checkpoints.setter
+    def _pending_checkpoints(self, value: list[Coroutine[Any, Any, None]]) -> None:
+        self._run_state.pending_checkpoints = value
+
+    @property
+    def _last_ctx(self) -> FailureContext | None:
+        return self._run_state.last_ctx
+
+    @_last_ctx.setter
+    def _last_ctx(self, value: FailureContext | None) -> None:
+        self._run_state.last_ctx = value
 
     def clone(self) -> "Agent":
         """Return a new Agent sharing the same policy, classifier, and checkpoint
@@ -285,10 +354,17 @@ class Agent:
                 if child_escalation is not None and child_escalation.context is not None:
                     failure_type = child_escalation.context.failure_type
                 else:
-                    # Run classify() in a thread — LLMClassifier blocks ~100-400ms.
-                    failure_type = await anyio.to_thread.run_sync(
-                        self._classifier.classify, self._trajectory, task
-                    )
+                    aclassify = getattr(self._classifier, "aclassify", None)
+                    if aclassify is not None:
+                        # Native async path — e.g. LLMClassifier/HybridClassifier
+                        # awaiting an async SDK client directly, no thread hop.
+                        failure_type = await aclassify(self._trajectory, task)
+                    else:
+                        # Run classify() in a thread — sync clients can block
+                        # ~100-400ms and must never freeze the event loop.
+                        failure_type = await anyio.to_thread.run_sync(
+                            self._classifier.classify, self._trajectory, task
+                        )
 
                 ctx = FailureContext(
                     failure_type=failure_type,

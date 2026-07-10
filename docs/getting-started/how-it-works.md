@@ -12,7 +12,7 @@ except HTTPError as e:
         retry()
 ```
 
-With an LLM agent, the same `RuntimeError("something went wrong")` can mean ten different things depending on what the agent was doing, what it called, and what it said before failing. The failure lives in the **trajectory**, not the exception:
+With an LLM agent, the same `RuntimeError("something went wrong")` can mean nine different things depending on what the agent was doing, what it called, and what it said before failing. The failure lives in the **trajectory**, not the exception:
 
 - A loop isn't an exception — it's three identical steps
 - A hallucination isn't an exception — it's the LLM asserting something the tools didn't return
@@ -49,7 +49,7 @@ Your agent calls `record_step(Step(...))` for each observable action. triage inj
 
 ### Step 2 — Classify the failure
 
-When your agent raises, triage runs the classifier over the recorded trajectory (in a thread, so the event loop is never blocked) and returns one `FailureType` from 10 possible values.
+When your agent raises, triage runs the classifier over the recorded trajectory and returns one `FailureType` from 9 possible values. If the classifier defines an `aclassify()` method (e.g. `LLMClassifier`, `HybridClassifier`), triage awaits it directly; otherwise it runs the synchronous `classify()` in a thread — either way, the event loop is never blocked.
 
 The default `RulesClassifier` is pattern-based and makes zero API calls. For ambiguous failures, `LLMClassifier` or `HybridClassifier` can be used.
 
@@ -74,5 +74,5 @@ triage executes the action and re-runs your agent with injected context:
 
 - **Strategies declare intent** — a `RecoveryAction.ROLLBACK` tells the agent to roll back, it doesn't do it
 - **`agent.py` executes it** — all state mutation, checkpoint loading, and kwargs injection happens in one place
-- **Classifiers are synchronous** — `classify()` is a plain `def`, not `async def`. It runs in a thread when called from the async loop
+- **Classifiers are synchronous** — `classify()` is a plain `def`, not `async def`. It runs in a thread when called from the async loop, unless the classifier also defines an optional `aclassify()`, which triage awaits directly
 - **No framework imports in core** — `triage/` only imports `anyio`, `pydantic`, and stdlib. Adapters live in `triage/adapters/`

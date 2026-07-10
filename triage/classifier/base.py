@@ -16,7 +16,17 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class Classifier(Protocol):
-    """Synchronous failure classifier. Must not make any API calls."""
+    """Synchronous failure classifier. Must not make any API calls.
+
+    ``classify()`` remains the required, synchronous contract (``agent.py``
+    calls it via ``anyio.to_thread.run_sync`` on the failure path). Classifiers
+    that talk to an LLM API may additionally define an optional
+    ``async def aclassify(self, trajectory, task) -> FailureType`` method — when
+    present, ``agent.py`` awaits it directly instead of running ``classify()``
+    in a thread, avoiding that hop. This is not part of the ``Classifier``
+    protocol itself (kept structural/duck-typed) since most classifiers, like
+    ``RulesClassifier``, have no I/O to make async.
+    """
 
     def classify(self, trajectory: "Trajectory", task: str) -> FailureType:
         ...

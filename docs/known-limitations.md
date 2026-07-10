@@ -18,9 +18,11 @@ These types return `UNKNOWN` from `RulesClassifier`. If your agent produces them
 - Map `UNKNOWN` to an appropriate recovery strategy as a catch-all
 - Use `HybridClassifier(llm=LLMClassifier())` to get semantic detection at low cost (LLM is only called when rules return `UNKNOWN`)
 
-### LLMClassifier blocks the event loop ~100–400ms
+### LLMClassifier blocks the event loop ~100–400ms — unless you use aclassify()
 
-`LLMClassifier.classify()` is synchronous. triage runs it via `anyio.to_thread.run_sync()` to avoid freezing the event loop, but the classification still adds ~100–400ms latency on the failure path. This is acceptable for most agents since classification only happens after a failure, not on every step. A fully async classifier is planned for v0.4.
+`LLMClassifier.classify()` is synchronous — required by the `Classifier` protocol (see `core.md` Rule 5) — so triage runs it via `anyio.to_thread.run_sync()` on the failure path, adding ~100–400ms of thread-hop latency.
+
+As of v0.10, `LLMClassifier` (and `HybridClassifier`, when wrapping one) also defines `async def aclassify(trajectory, task)`, using the native async Anthropic/OpenAI client. `agent.py` detects `aclassify` via `getattr` and awaits it directly instead of dispatching to a thread — no protocol change required, since most classifiers (e.g. `RulesClassifier`) have no I/O and don't need it. This is automatic: pass `LLMClassifier()` or `HybridClassifier(llm=LLMClassifier())` to `Agent(classifier=...)` and the async path is used whenever available.
 
 ### No benchmarks yet
 
@@ -117,31 +119,39 @@ Recovery hints injected as `_triage_hint` are unstructured strings. They are des
 
 ## Concurrency
 
-### A single Agent instance is not safe for concurrent run() calls
+### Concurrent run() calls on a single Agent instance
 
-`Agent` holds mutable run-state (`_trajectory`, `_current_state`, `_pending_checkpoints`) that is reset at the start of each `run()` call. Calling `run()` concurrently on the same instance will corrupt this state.
-
-For parallel task dispatch, create one `Agent` instance per concurrent task:
+As of v0.10, `Agent` isolates per-run state (`_trajectory`, `_current_state`,
+`_pending_checkpoints`, `_last_checkpoint_id`, `_last_ctx`) behind a `ContextVar`
+rather than plain instance attributes. Because `asyncio`/`anyio` copy the current
+`contextvars.Context` when spawning a new `Task`, two concurrent `run()` calls on
+the *same* `Agent` instance — each in its own task — no longer see or corrupt
+each other's trajectory or state:
 
 ```python
-import asyncio
+import anyio
 import triage
 
+agent = triage.Agent(my_agent, policy=policy)
+
 async def run_parallel(tasks: list[str]) -> list:
-    agents = [triage.Agent(my_agent, policy=policy) for _ in tasks]
-    return await asyncio.gather(*[ag.run(t) for ag, t in zip(agents, tasks)])
+    results = {}
+    async def go(t):
+        results[t] = await agent.run(t)
+    async with anyio.create_task_group() as tg:
+        for t in tasks:
+            tg.start_soon(go, t)
+    return results
 ```
 
-Or use a factory function:
+`Agent.clone()` still exists and remains the right tool when you want fully
+independent lifecycle hooks or per-task classifier/checkpoint-store instances —
+but it is no longer required just to make concurrent `run()` calls safe.
 
-```python
-def make_agent() -> triage.Agent:
-    return triage.Agent(my_agent, policy=policy, checkpoint_store=shared_store)
-
-results = await asyncio.gather(*[make_agent().run(t) for t in tasks])
-```
-
-Shared `CheckpointStore` instances are safe to share across agents — `InMemoryCheckpointStore` has no concurrency protection (last-write-wins), but `SQLiteCheckpointStore` and `RedisCheckpointStore` use atomic operations.
+Shared `CheckpointStore` instances are safe to share across agents —
+`InMemoryCheckpointStore` has no concurrency protection on its own storage dict
+(last-write-wins on the same checkpoint id), but `SQLiteCheckpointStore` and
+`RedisCheckpointStore` use atomic operations.
 
 ---
 

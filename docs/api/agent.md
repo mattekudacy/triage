@@ -41,13 +41,32 @@ agent = triage.Agent(
 )
 ```
 
+## Concurrent run() calls
+
+A single `Agent` instance can safely handle multiple `run()` calls in flight at once — each call's trajectory, state, and checkpoint bookkeeping is isolated per-task via `contextvars`:
+
+```python
+import anyio
+
+agent = triage.Agent(my_agent, policy=policy)
+
+async def run_all(tasks: list[str]) -> dict[str, Any]:
+    results = {}
+    async def go(t: str) -> None:
+        results[t] = await agent.run(t)
+    async with anyio.create_task_group() as tg:
+        for t in tasks:
+            tg.start_soon(go, t)
+    return results
+```
+
 ## clone()
 
 ```python
 def clone(self) -> Agent
 ```
 
-Returns a new `Agent` sharing the same `fn`, `policy`, `classifier`, and `checkpoint_store` but with fresh per-run state. Use this for concurrent task dispatch — a single instance is not safe for concurrent `run()` calls:
+Returns a new `Agent` sharing the same `fn`, `policy`, `classifier`, and `checkpoint_store` but with fresh per-run state, independent lifecycle hooks, and its own `_last_ctx`. Concurrency is no longer the reason to reach for `clone()` — use it when you want a task to have its own hooks or a dedicated checkpoint store:
 
 ```python
 import asyncio

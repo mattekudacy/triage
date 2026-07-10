@@ -7,7 +7,7 @@ No real API calls are made; both clients are patched.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -56,6 +56,12 @@ def _anthropic_client(response_text: str) -> MagicMock:
     return client
 
 
+def _anthropic_async_client(response_text: str) -> MagicMock:
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=_anthropic_response(response_text))
+    return client
+
+
 # ── OpenAI-compatible mock helpers ───────────────────────────────────────────
 
 def _openai_response(text: str) -> MagicMock:
@@ -69,6 +75,12 @@ def _openai_response(text: str) -> MagicMock:
 def _openai_client(response_text: str) -> MagicMock:
     client = MagicMock()
     client.chat.completions.create.return_value = _openai_response(response_text)
+    return client
+
+
+def _openai_async_client(response_text: str) -> MagicMock:
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(return_value=_openai_response(response_text))
     return client
 
 
@@ -137,6 +149,60 @@ def test_anthropic_classify_is_case_insensitive():
         MockAnthropic.return_value = _anthropic_client("  LOOP_DETECTED  ")
         result = clf.classify(traj(make_step(0)), "task")
     assert result == FailureType.LOOP_DETECTED
+
+
+# ── Anthropic backend: aclassify() (native async client) ──────────────────────
+
+@pytest.mark.parametrize("ft", list(FailureType))
+async def test_anthropic_aclassify_classifies_each_failure_type(ft):
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+        MockAsyncAnthropic.return_value = _anthropic_async_client(ft.value)
+        result = await clf.aclassify(traj(make_step(0)), "task")
+    assert result == ft
+
+
+async def test_anthropic_aclassify_returns_unknown_on_api_exception():
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+        client = MagicMock()
+        client.messages.create = AsyncMock(side_effect=Exception("network error"))
+        MockAsyncAnthropic.return_value = client
+        result = await clf.aclassify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+
+
+async def test_anthropic_aclassify_uses_async_client_not_sync():
+    """aclassify() must build/use AsyncAnthropic, never the sync Anthropic client."""
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic, \
+         patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        MockAsyncAnthropic.return_value = _anthropic_async_client("unknown")
+        await clf.aclassify(traj(make_step(0)), "task")
+    MockAsyncAnthropic.assert_called_once()
+    MockAnthropic.assert_not_called()
+
+
+async def test_anthropic_aclassify_async_client_created_once_and_reused():
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+        MockAsyncAnthropic.return_value = _anthropic_async_client("unknown")
+        await clf.aclassify(traj(make_step(0)), "task")
+        await clf.aclassify(traj(make_step(0)), "task")
+    MockAsyncAnthropic.assert_called_once()
+
+
+async def test_sync_and_async_clients_are_independent():
+    """Calling both classify() and aclassify() builds separate sync/async clients."""
+    clf = LLMClassifier()
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic, \
+         patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+        MockAnthropic.return_value = _anthropic_client("unknown")
+        MockAsyncAnthropic.return_value = _anthropic_async_client("unknown")
+        clf.classify(traj(make_step(0)), "task")
+        await clf.aclassify(traj(make_step(0)), "task")
+    MockAnthropic.assert_called_once()
+    MockAsyncAnthropic.assert_called_once()
 
 
 # ── OpenAI-compatible backend ─────────────────────────────────────────────────
@@ -224,6 +290,39 @@ def test_openai_compat_no_api_key_defaults_to_placeholder():
         MockOpenAI.return_value = _openai_client("unknown")
         clf.classify(traj(make_step(0)), "task")
     assert MockOpenAI.call_args[1]["api_key"] == "no-key"
+
+
+# ── OpenAI-compatible backend: aclassify() (native async client) ──────────────
+
+_ASYNC_OPENAI_PATCH = "openai.AsyncOpenAI"
+
+
+@pytest.mark.parametrize("ft", list(FailureType))
+async def test_openai_compat_aclassify_classifies_each_failure_type(ft):
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_ASYNC_OPENAI_PATCH) as MockAsyncOpenAI:
+        MockAsyncOpenAI.return_value = _openai_async_client(ft.value)
+        result = await clf.aclassify(traj(make_step(0)), "task")
+    assert result == ft
+
+
+async def test_openai_compat_aclassify_returns_unknown_on_exception():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_ASYNC_OPENAI_PATCH) as MockAsyncOpenAI:
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(side_effect=Exception("connection refused"))
+        MockAsyncOpenAI.return_value = client
+        result = await clf.aclassify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN
+
+
+async def test_openai_compat_aclassify_uses_async_client_not_sync():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_ASYNC_OPENAI_PATCH) as MockAsyncOpenAI, patch(_OPENAI_PATCH) as MockOpenAI:
+        MockAsyncOpenAI.return_value = _openai_async_client("unknown")
+        await clf.aclassify(traj(make_step(0)), "task")
+    MockAsyncOpenAI.assert_called_once()
+    MockOpenAI.assert_not_called()
 
 
 # ── Shared: prompt construction ───────────────────────────────────────────────

@@ -44,3 +44,16 @@ class HybridClassifier:
         if result is FailureType.UNKNOWN:
             return self._llm.classify(trajectory, task)  # type: ignore[union-attr]
         return result
+
+    async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
+        """Async counterpart to ``classify()``. Uses ``self._llm.aclassify()``
+        when the configured LLM classifier defines one (e.g. ``LLMClassifier``),
+        avoiding the sync-client-in-a-thread hop on the failure path.
+        """
+        result = self._rules.classify(trajectory, task)
+        if result is not FailureType.UNKNOWN:
+            return result
+        aclassify = getattr(self._llm, "aclassify", None)
+        if aclassify is not None:
+            return await aclassify(trajectory, task)
+        return self._llm.classify(trajectory, task)  # type: ignore[union-attr]
