@@ -384,10 +384,6 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
 
 ## v0.14 ideas (not committed)
 
-### Classifier accuracy benchmarks
-- Publish false-positive / false-negative table in docs for `RulesClassifier` and
-  `HybridClassifier` using the synthetic suite in `examples/benchmark.py`.
-
-### examples/policy_sequence.py
-- Demonstration of `FailurePolicy.sequence()` (shipped v0.13): retry → replan → rollback
-  → escalate pattern mirroring `examples/policy_chain.py`.
+### HybridClassifier accuracy benchmarks
+- Add LLMClassifier numbers to the accuracy table in `docs/concepts/classifiers.md`
+  once a labeled corpus beyond the synthetic suite is available.

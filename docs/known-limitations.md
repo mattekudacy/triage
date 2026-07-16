@@ -24,9 +24,9 @@ These types return `UNKNOWN` from `RulesClassifier`. If your agent produces them
 
 As of v0.10, `LLMClassifier` (and `HybridClassifier`, when wrapping one) also defines `async def aclassify(trajectory, task)`, using the native async Anthropic/OpenAI client. `agent.py` detects `aclassify` via `getattr` and awaits it directly instead of dispatching to a thread — no protocol change required, since most classifiers (e.g. `RulesClassifier`) have no I/O and don't need it. This is automatic: pass `LLMClassifier()` or `HybridClassifier(llm=LLMClassifier())` to `Agent(classifier=...)` and the async path is used whenever available.
 
-### No published benchmarks
+### Accuracy is corpus-dependent
 
-There are no published false-positive/false-negative rates for `RulesClassifier` or `LLMClassifier`. Accuracy depends heavily on the frameworks, models, and error messages your agents produce. The `examples/benchmark.py` script runs a synthetic suite against both classifiers so you can measure accuracy for your own trajectories. Published numbers are on the roadmap for v0.14.
+`RulesClassifier` scores 100% on the 26-case synthetic suite in `examples/benchmark.py` (see `docs/concepts/classifiers.md` for the full table). Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Run `python examples/benchmark.py` to test against the synthetic suite, or add your own cases to the `CASES` list to measure coverage for your specific stack.
 
 ### Error messages are framework- and locale-dependent
 

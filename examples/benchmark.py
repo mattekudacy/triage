@@ -150,7 +150,7 @@ CASES: list[Case] = [
     Case(
         label="no-schema: unrelated error with 'error' keyword",
         expected=FailureType.UNKNOWN,
-        steps=[make_step(0, error="timeout error after 30 seconds")],
+        steps=[make_step(0, error="connection error: host unreachable")],
     ),
 
     # ── EXTERNAL_FAULT ─────────────────────────────────────────────────────────

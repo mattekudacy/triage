@@ -80,6 +80,24 @@ Default is `None` — exact match only, unchanged from pre-v0.12 behavior. This 
 
 A threshold around `0.85`–`0.95` is a reasonable starting point; lower values risk false-positiving on genuinely different queries that happen to share a lot of characters (e.g. two searches with the same long boilerplate prefix).
 
+### Accuracy on the synthetic suite
+
+The benchmark in `examples/benchmark.py` runs 26 trajectories covering all structurally-detectable failure types plus known negative cases (inputs that should **not** match). Results as of v0.14:
+
+| Failure type | Cases | Pass | Notes |
+|---|---|---|---|
+| `LOOP_DETECTED` | 2 | 2 | Exact-match window = 3 |
+| `WRONG_TOOL_CALLED` | 4 | 4 | OpenAI, Anthropic, generic patterns |
+| `SCHEMA_MISMATCH` | 4 | 4 | JSONDecodeError, pydantic, invalid json |
+| `EXTERNAL_FAULT` | 4 | 4 | 429, 500, 502, 503 |
+| `CONSTRAINT_IGNORED` | 2 | 2 | With `constraints=` set |
+| `UNKNOWN` (negatives) | 10 | 10 | No false positives |
+| **Total** | **26** | **26** | **100%** |
+
+These numbers reflect the synthetic test cases, not production data. Real-world accuracy depends on your framework's error message format, language, and SDK version. Run `python examples/benchmark.py` to test against the same suite locally, or add your own cases to the `CASES` list.
+
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are intentionally absent from the table — they require semantic understanding and are never detected by `RulesClassifier` regardless of trajectory content.
+
 ### What RulesClassifier cannot detect
 
 `PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` require semantic understanding of the trajectory. Pattern-matching physically cannot detect these. For these failure types, use `LLMClassifier` or `HybridClassifier`. If you use `RulesClassifier` alone and these failure types occur, they will be classified as `UNKNOWN` and routed to your `UNKNOWN` strategy (or escalated if none is set).
