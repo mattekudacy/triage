@@ -22,6 +22,15 @@ import anyio
 from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore, make_checkpoint
 from triage.classifier.base import Classifier
 from triage.classifier.rules import RulesClassifier
+from triage.observability.otel import (
+    classify_span,
+    dispatch_span,
+    resolve_tracer,
+    run_span,
+    set_span_classify_result,
+    set_span_dispatch_result,
+    set_span_run_outcome,
+)
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import FailureContext, Step, TriageContext
 from triage.trajectory import Trajectory
@@ -168,6 +177,14 @@ class Agent:
         in the trajectory has ``idempotent=False``. Default ``False``.
         Use this when your agent has steps that send emails, charge cards, or
         perform other non-reversible side effects.
+    tracer:
+        Optional OpenTelemetry ``Tracer`` instance. When provided, triage emits
+        ``triage.run``, ``triage.classify``, and ``triage.dispatch`` spans for
+        every ``run()`` call. When ``None`` (default), triage auto-detects: if
+        ``opentelemetry-sdk`` is installed *and* a real tracer provider has been
+        configured via ``trace.set_tracer_provider(...)``, the global tracer is
+        used automatically. If OTel is not installed or no provider is configured,
+        tracing is a silent no-op with zero overhead.
     """
 
     def __init__(
@@ -186,6 +203,7 @@ class Agent:
         strict_idempotency: bool = False,
         risk_scorer: "StepRiskScorer | None" = None,
         risk_threshold: float = 0.9,
+        tracer: Any = None,
     ) -> None:
         self._fn = fn
         self._policy = policy
@@ -201,6 +219,9 @@ class Agent:
         self._strict_idempotency = strict_idempotency
         self._risk_scorer = risk_scorer
         self._risk_threshold = risk_threshold
+        # resolve_tracer() returns explicit tracer if provided, else auto-detects
+        # an active OTel provider, else None (no-op path).
+        self._tracer = resolve_tracer(tracer)
 
         # Per-task run-state, isolated via a ContextVar. asyncio/anyio copy the
         # current Context when spawning a Task, so concurrent run() calls on
@@ -296,6 +317,7 @@ class Agent:
             strict_idempotency=self._strict_idempotency,
             risk_scorer=self._risk_scorer,
             risk_threshold=self._risk_threshold,
+            tracer=self._tracer,
         )
 
     async def run(self, task: str, **kwargs: Any) -> Any:
@@ -318,7 +340,14 @@ class Agent:
         rec_token = _record_step_var.set(self._record_step)
         upd_token = _update_state_var.set(self._update_state)
         try:
-            return await self._run_loop(task, attempt, attempt_history, kwargs)
+            async with run_span(self._tracer, self._run_id, task) as _root_span:
+                try:
+                    result = await self._run_loop(task, attempt, attempt_history, kwargs)
+                    set_span_run_outcome(_root_span)
+                    return result
+                except Exception as exc:
+                    set_span_run_outcome(_root_span, error=exc)
+                    raise
         finally:
             _record_step_var.reset(rec_token)
             _update_state_var.reset(upd_token)
@@ -378,17 +407,19 @@ class Agent:
                 if child_escalation is not None and child_escalation.context is not None:
                     failure_type = child_escalation.context.failure_type
                 else:
-                    aclassify = getattr(self._classifier, "aclassify", None)
-                    if aclassify is not None:
-                        # Native async path — e.g. LLMClassifier/HybridClassifier
-                        # awaiting an async SDK client directly, no thread hop.
-                        failure_type = await aclassify(self._trajectory, task)
-                    else:
-                        # Run classify() in a thread — sync clients can block
-                        # ~100-400ms and must never freeze the event loop.
-                        failure_type = await anyio.to_thread.run_sync(
-                            self._classifier.classify, self._trajectory, task
-                        )
+                    with classify_span(self._tracer, self._run_id) as _classify_span:
+                        aclassify = getattr(self._classifier, "aclassify", None)
+                        if aclassify is not None:
+                            # Native async path — e.g. LLMClassifier/HybridClassifier
+                            # awaiting an async SDK client directly, no thread hop.
+                            failure_type = await aclassify(self._trajectory, task)
+                        else:
+                            # Run classify() in a thread — sync clients can block
+                            # ~100-400ms and must never freeze the event loop.
+                            failure_type = await anyio.to_thread.run_sync(
+                                self._classifier.classify, self._trajectory, task
+                            )
+                        set_span_classify_result(_classify_span, failure_type.value)
 
                 ctx = FailureContext(
                     failure_type=failure_type,
@@ -442,7 +473,9 @@ class Agent:
                             ctx,
                         ) from exc
 
-                action = await self._policy.dispatch(ctx)
+                with dispatch_span(self._tracer, self._run_id, attempt) as _dispatch_span:
+                    action = await self._policy.dispatch(ctx)
+                    set_span_dispatch_result(_dispatch_span, action.kind, failure_type.value)
                 logger.info(
                     "[triage] action dispatched",
                     extra={

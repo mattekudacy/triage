@@ -14,6 +14,7 @@ Agent(
     max_recovery_attempts: int = 3,
     max_total_attempts: int | None = None,
     auto_checkpoint: bool = False,
+    tracer: Any = None,
 )
 ```
 
@@ -26,6 +27,7 @@ Agent(
 | `max_recovery_attempts` | `3` | Hard cap on recovery loop iterations per `run()` call |
 | `max_total_attempts` | `None` | Global cap on `len(attempt_history)` across all failure types; `None` disables |
 | `auto_checkpoint` | `False` | If `True`, saves a checkpoint after every `record_step()` call |
+| `tracer` | `None` | OTel `Tracer` override; `None` = auto-detect (see [Observability](#observability)) |
 
 ### max_total_attempts vs max_recovery_attempts
 
@@ -150,6 +152,49 @@ class TriageAbortError(Exception):
 ```
 
 Raised when a strategy returns `ABORT`. Hard stop — no further recovery.
+
+## Observability
+
+Install the optional extra to enable OpenTelemetry spans:
+
+```bash
+pip install triage-agent[otel]
+```
+
+### Auto-detection
+
+When `opentelemetry-sdk` is installed and you've configured a real tracer provider, triage automatically emits spans — no code change required:
+
+```python
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry import trace
+
+trace.set_tracer_provider(TracerProvider())  # configure your exporter here
+agent = triage.Agent(my_agent, policy=policy)  # no tracer= arg needed
+```
+
+### Explicit tracer
+
+Pass `tracer=` to override auto-detection:
+
+```python
+import opentelemetry.trace as otel_trace
+
+tracer = otel_trace.get_tracer("my-app")
+agent = triage.Agent(my_agent, policy=policy, tracer=tracer)
+```
+
+### Spans emitted
+
+| Span name | When | Key attributes |
+|-----------|------|----------------|
+| `triage.run` | Wraps the entire `run()` call, including retries | `triage.run_id`, `triage.task` |
+| `triage.classify` | Wraps each failure classification | `triage.run_id`, `triage.failure_type` |
+| `triage.dispatch` | Wraps each strategy dispatch | `triage.run_id`, `triage.attempt`, `triage.action_kind`, `triage.failure_type` |
+
+All spans from one `run()` call share the same `trace_id` and `triage.run_id` (the UUID assigned per run, also used to scope rollback checkpoints). Escalate and abort actions set the `triage.dispatch` span status to `ERROR`.
+
+Spans are **additive** — the six existing structured log events (`failure_classified`, `action_dispatched`, etc.) continue to emit regardless of whether OTel is configured.
 
 ## Example
 

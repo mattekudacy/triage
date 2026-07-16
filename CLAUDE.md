@@ -35,6 +35,8 @@ triage/                   — importable package
   adapters/
     langgraph.py          — wrap_langgraph() — wraps a compiled LangGraph StateGraph
     langchain.py          — wrap_langchain() — wraps a LangChain AgentExecutor
+  observability/
+    otel.py               — resolve_tracer(), run_span/classify_span/dispatch_span context managers (lazy OTel import)
   bench.py                — run_benchmark(), BenchReport, BenchResult — eval harness with baseline comparison
   feedback.py             — Correction, record_correction(), load_corrections() — misclassification feedback loop
   scorer/
@@ -359,8 +361,33 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
   had shipped in v0.4 (`get_recorder()`/`get_state_updater()`, `TriageContext`, `max_total_attempts`).
   Concurrency and chaining sections updated to reflect v0.13 state.
 
-## v0.9 ideas (not committed)
+## v0.14 changes (shipped)
 
-### Observability
-- **OpenTelemetry spans** — optional `triage-agent[otel]` extra that wraps `run()`,
-  classify, and each strategy dispatch in spans
+- **OpenTelemetry spans** — new `triage/observability/otel.py` module (new package,
+  follows the adapter pattern). All OTel imports are lazy behind `try/except ImportError`
+  so the module is importable regardless of whether `opentelemetry-sdk` is installed.
+  `resolve_tracer(explicit)` implements priority: explicit `tracer=` arg → auto-detect
+  real provider via `get_tracer_provider()` (returns `None` for `ProxyTracerProvider`/
+  `NoOpTracerProvider`) → `None` (no-op). `Agent.__init__` gains `tracer=None` param;
+  `clone()` copies it. Three scopes emitted per `run()` call:
+  - `triage.run` — root span, attributes `triage.run_id` (UUID from v0.13) + `triage.task`
+  - `triage.classify` — wraps each classification; attribute `triage.failure_type`
+  - `triage.dispatch` — wraps each strategy dispatch; attributes `triage.action_kind`,
+    `triage.failure_type`, `triage.attempt`; escalate/abort set span status = `ERROR`
+  All spans from one `run()` share the same OTel `trace_id` and `triage.run_id`.
+  Spans are **additive** — the 6 existing `triage_event` structured log calls are unchanged.
+  `agent.py` does not import OTel directly — it imports from `triage.observability.otel`,
+  keeping core.md Rule 1 intact (`triage/observability/` is the OTel boundary).
+  Install via `pip install triage-agent[otel]` (extra was already declared in `pyproject.toml`).
+  Tests in `tests/test_observability_otel.py` (5 tests skipped without `opentelemetry-sdk`,
+  7 tests always run to verify the no-op path).
+
+## v0.14 ideas (not committed)
+
+### Classifier accuracy benchmarks
+- Publish false-positive / false-negative table in docs for `RulesClassifier` and
+  `HybridClassifier` using the synthetic suite in `examples/benchmark.py`.
+
+### examples/policy_sequence.py
+- Demonstration of `FailurePolicy.sequence()` (shipped v0.13): retry → replan → rollback
+  → escalate pattern mirroring `examples/policy_chain.py`.
