@@ -592,12 +592,15 @@ class Agent:
         if self._auto_checkpoint:
             # Snapshot trajectory eagerly so each queued checkpoint captures
             # the steps recorded so far, not the final trajectory at drain time.
-            # State is captured as an empty dict here; _update_state() patches
-            # the latest pending checkpoint so the state produced by this step
-            # is attached before drain without breaking the record_step /
-            # update_state ordering documented in the public API.
+            # State is seeded with the current (carried-forward) state so a step
+            # with no following update_state() still records the state as it
+            # stood; _update_state() then patches this checkpoint if an
+            # update_state() call follows, preserving the documented
+            # record_step(...); update_state(...) ordering. make_checkpoint()
+            # deep-copies state, so later mutation of _current_state can't
+            # retroactively alter an already-queued checkpoint.
             checkpoint = make_checkpoint(
-                state={},
+                state=self._current_state,
                 trajectory_steps=self._trajectory.steps,
             )
             self._pending_checkpoints.append(checkpoint)

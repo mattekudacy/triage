@@ -183,6 +183,46 @@ async def test_auto_checkpoint_snapshots_per_step_not_final_state():
     assert states == [{"phase": 1}, {"phase": 2}], f"expected per-step states, got {states}"
 
 
+async def test_auto_checkpoint_carries_state_forward_when_no_update():
+    """A step with no following update_state() must record the last-known
+    state (carried forward), not an empty dict."""
+    store = InMemoryCheckpointStore()
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        update_state({"phase": 1})
+        record_step(Step(index=0, action="phase-1"))   # state set BEFORE record_step
+        record_step(Step(index=1, action="phase-2"))   # no update_state after — carry forward
+        return "ok"
+
+    ag = Agent(agent_fn, FailurePolicy(), checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("demo")
+
+    checkpoints = sorted(store._store.values(), key=lambda c: c.timestamp)
+    states = [cp.state for cp in checkpoints]
+    assert states == [{"phase": 1}, {"phase": 1}], f"state not carried forward: {states}"
+
+
+async def test_auto_checkpoint_state_snapshot_isolated_from_later_mutation():
+    """An earlier checkpoint's state must not be mutated by a later
+    update_state() call."""
+    store = InMemoryCheckpointStore()
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="phase-1"))
+        update_state({"phase": 1})
+        record_step(Step(index=1, action="phase-2"))
+        update_state({"phase": 2})
+        return "ok"
+
+    ag = Agent(agent_fn, FailurePolicy(), checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("demo")
+
+    checkpoints = sorted(store._store.values(), key=lambda c: c.timestamp)
+    # First checkpoint must still be phase 1 even though phase 2 was set later.
+    assert checkpoints[0].state == {"phase": 1}
+    assert checkpoints[1].state == {"phase": 2}
+
+
 # ---------------------------------------------------------------------------
 # Recovery — RETRY
 # ---------------------------------------------------------------------------
