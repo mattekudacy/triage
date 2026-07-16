@@ -41,14 +41,16 @@ class Trajectory:
             )
         self._steps.append(step)
 
-    def replay_from(self, index: int) -> "Trajectory":
+    def replay_from(self, index: int) -> Trajectory:
         """Return a new Trajectory pre-populated with steps[index:].
 
         Does not mutate self. Raises IndexError if index is out of range
         for a non-empty trajectory.
         """
         if self._steps and not (0 <= index <= len(self._steps)):
-            raise IndexError(f"index {index} out of range for trajectory of length {len(self._steps)}")
+            raise IndexError(
+                f"index {index} out of range for trajectory of length {len(self._steps)}"
+            )
         return Trajectory(steps=self._steps[index:])
 
     def last_n_steps(self, n: int) -> list[Step]:
@@ -57,7 +59,7 @@ class Trajectory:
         return self._steps[-n:]
 
     @classmethod
-    def from_steps(cls, steps: list[Step]) -> "Trajectory":
+    def from_steps(cls, steps: list[Step]) -> Trajectory:
         return cls(steps=steps)
 
     def __len__(self) -> int:

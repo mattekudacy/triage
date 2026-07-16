@@ -9,7 +9,6 @@ Install: pip install triage-agent[redis]
 from __future__ import annotations
 
 import json
-from typing import Any
 
 try:
     from redis.asyncio import Redis
@@ -48,7 +47,7 @@ class RedisCheckpointStore:
     in a single pipeline transaction.
     """
 
-    def __init__(self, redis: "Redis") -> None:
+    def __init__(self, redis: Redis) -> None:
         self._redis = redis
 
     async def save(self, checkpoint: Checkpoint) -> None:

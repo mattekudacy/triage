@@ -11,8 +11,8 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from langchain_core.callbacks import BaseCallbackHandler
     from langchain.agents import AgentExecutor
+    from langchain_core.callbacks import BaseCallbackHandler
 except ImportError as exc:
     raise ImportError(
         "LangChain adapter requires 'langchain' and 'langchain-core'. "
@@ -25,7 +25,7 @@ from triage.taxonomy import Step
 
 
 def wrap_langchain(
-    executor: "AgentExecutor",
+    executor: AgentExecutor,
     policy: FailurePolicy,
     **kwargs: Any,
 ) -> Agent:

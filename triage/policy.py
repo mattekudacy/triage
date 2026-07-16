@@ -7,8 +7,9 @@ strategy callables. The policy is the user-facing configuration object.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from triage.taxonomy import FailureContext, FailureType
 
@@ -26,32 +27,32 @@ class RecoveryAction:
         hint: str | None = None,
         inject: dict[str, Any] | None = None,
         delay: float = 0.0,
-    ) -> "RecoveryAction":
+    ) -> RecoveryAction:
         """Re-run from the critical step, optionally injecting context."""
         return cls("retry", hint=hint, inject=inject, delay=delay if delay else None)
 
     @classmethod
-    def REPLAN(cls, hint: str | None = None) -> "RecoveryAction":
+    def REPLAN(cls, hint: str | None = None) -> RecoveryAction:
         """Abort the current plan branch and generate a new plan from scratch."""
         return cls("replan", hint=hint)
 
     @classmethod
-    def ROLLBACK(cls, checkpoint_id: str | None = None) -> "RecoveryAction":
+    def ROLLBACK(cls, checkpoint_id: str | None = None) -> RecoveryAction:
         """Restore state to a named checkpoint and re-run from there."""
         return cls("rollback", checkpoint_id=checkpoint_id)
 
     @classmethod
-    def RESUME(cls, from_subgoal: str | None = None) -> "RecoveryAction":
+    def RESUME(cls, from_subgoal: str | None = None) -> RecoveryAction:
         """Continue execution from an incomplete sub-goal."""
         return cls("resume", from_subgoal=from_subgoal)
 
     @classmethod
-    def ESCALATE(cls, message: str | None = None) -> "RecoveryAction":
+    def ESCALATE(cls, message: str | None = None) -> RecoveryAction:
         """Surface to a human. Halt autonomous execution."""
         return cls("escalate", message=message)
 
     @classmethod
-    def ABORT(cls, reason: str | None = None) -> "RecoveryAction":
+    def ABORT(cls, reason: str | None = None) -> RecoveryAction:
         """Hard stop. No recovery attempted."""
         return cls("abort", reason=reason)
 
@@ -127,7 +128,10 @@ class FailurePolicy:
         strategy = self.resolve(ctx.failure_type)
         if strategy is None:
             return RecoveryAction.ESCALATE(
-                message=f"No strategy registered for {ctx.failure_type.value}. Manual review required."
+                message=(
+                    f"No strategy registered for {ctx.failure_type.value}."
+                    " Manual review required."
+                )
             )
         return await strategy(ctx)
 
@@ -175,12 +179,19 @@ class FailurePolicy:
             if prior < len(strategies):
                 return await strategies[prior](ctx)
             return RecoveryAction.ESCALATE(
-                message=f"All {len(strategies)} strategies in sequence exhausted for {ctx.failure_type.value}."
+                message=(
+                    f"All {len(strategies)} strategies in sequence exhausted"
+                    f" for {ctx.failure_type.value}."
+                )
             )
         return _sequenced
 
     @staticmethod
-    def chain(primary: StrategyFn, fallback: StrategyFn, after_kinds: tuple[str, ...] = ("escalate",)) -> StrategyFn:
+    def chain(
+        primary: StrategyFn,
+        fallback: StrategyFn,
+        after_kinds: tuple[str, ...] = ("escalate",),
+    ) -> StrategyFn:
         """Return a strategy that tries ``primary`` and falls through to ``fallback``
         when ``primary`` returns an action whose kind is in ``after_kinds``.
 
@@ -222,7 +233,10 @@ class FailurePolicy:
         """Default strategy: always escalate to human."""
         async def _escalate(ctx: FailureContext) -> RecoveryAction:
             return RecoveryAction.ESCALATE(
-                message=f"Unhandled failure: {ctx.failure_type.value} at step {ctx.critical_step_index}"
+                message=(
+                    f"Unhandled failure: {ctx.failure_type.value}"
+                    f" at step {ctx.critical_step_index}"
+                )
             )
         return _escalate
 
@@ -239,7 +253,7 @@ class FailurePolicy:
         strategies: dict[FailureType, StrategyFn],
         *,
         default: StrategyFn | None = None,
-    ) -> "FailurePolicy":
+    ) -> FailurePolicy:
         """Build a ``FailurePolicy`` from a ``{FailureType: strategy}`` mapping.
 
         Useful when constructing policies dynamically (e.g. from a config dict,
@@ -269,8 +283,8 @@ class FailurePolicy:
         cls,
         path: str,
         *,
-        strategy_registry: "dict[str, Any] | None" = None,
-    ) -> "FailurePolicy":
+        strategy_registry: dict[str, Any] | None = None,
+    ) -> FailurePolicy:
         """Load a ``FailurePolicy`` from a TOML or YAML config file.
 
         File format is determined by extension:
@@ -343,14 +357,14 @@ class FailurePolicy:
     @classmethod
     def _from_raw_config(
         cls,
-        raw: "dict[str, Any]",
+        raw: dict[str, Any],
         *,
-        strategy_registry: "dict[str, Any] | None" = None,
-    ) -> "FailurePolicy":
+        strategy_registry: dict[str, Any] | None = None,
+    ) -> FailurePolicy:
         """Build a FailurePolicy from a parsed config dict (internal)."""
         # Lazy import strategies here to avoid circular imports at module level
-        from triage.strategies.retry import backoff_and_retry, retry_with_tool_manifest
         from triage.strategies.replan import replan, resume_from_subgoal
+        from triage.strategies.retry import backoff_and_retry, retry_with_tool_manifest
         from triage.strategies.rollback import rollback_to_checkpoint
 
         _builtin: dict[str, Any] = {

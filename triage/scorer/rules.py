@@ -48,7 +48,7 @@ class RulesRiskScorer:
             if extra_med else _MEDIUM_RISK_RE
         )
 
-    def __call__(self, step: "Step", trajectory: "Trajectory") -> RiskScore:
+    def __call__(self, step: Step, trajectory: Trajectory) -> RiskScore:
         text = " ".join(filter(None, [step.action, step.tool_called]))
 
         if self._high_re.search(text):

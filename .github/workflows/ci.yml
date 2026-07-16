@@ -21,10 +21,64 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Install package and dev dependencies
         run: |
-          pip install anyio pydantic pytest pytest-asyncio anthropic aiosqlite fakeredis openai
+          pip install -e ".[dev,langgraph,langchain,sqlite,redis]"
 
       - name: Run tests
         run: |
-          PYTHONPATH=. pytest tests/ -x --tb=short
+          pytest tests/ -x --tb=short
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check triage/
+
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install package and dev dependencies
+        run: pip install -e ".[dev,langgraph,langchain,sqlite,redis]"
+
+      - name: Run tests with coverage
+        run: pytest tests/ --cov=triage --cov-report=term-missing --cov-fail-under=80
+
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build
+        run: python -m build
+
+      - name: Check distribution
+        run: twine check dist/*

@@ -28,5 +28,5 @@ class Classifier(Protocol):
     ``RulesClassifier``, have no I/O to make async.
     """
 
-    def classify(self, trajectory: "Trajectory", task: str) -> FailureType:
+    def classify(self, trajectory: Trajectory, task: str) -> FailureType:
         ...

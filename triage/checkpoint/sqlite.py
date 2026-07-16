@@ -9,7 +9,6 @@ Install: pip install triage-agent[sqlite]
 from __future__ import annotations
 
 import json
-from typing import Any
 
 try:
     import aiosqlite
@@ -53,7 +52,7 @@ class SQLiteCheckpointStore:
         self._db_path = db_path
         self._table_created = False
 
-    async def _ensure_table(self, db: "aiosqlite.Connection") -> None:
+    async def _ensure_table(self, db: aiosqlite.Connection) -> None:
         if not self._table_created:
             await db.execute(_CREATE_TABLE)
             # Migrate existing tables that predate the run_id column

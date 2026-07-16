@@ -23,5 +23,5 @@ class RiskScore:
 class StepRiskScorer(Protocol):
     """Synchronous per-step risk scorer. Must not make API calls."""
 
-    def __call__(self, step: "Step", trajectory: "Trajectory") -> RiskScore:
+    def __call__(self, step: Step, trajectory: Trajectory) -> RiskScore:
         ...

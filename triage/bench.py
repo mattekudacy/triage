@@ -26,8 +26,9 @@ Usage::
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from triage.agent import Agent, TriageAbortError, TriageEscalationError
 from triage.policy import FailurePolicy, RecoveryAction
@@ -118,10 +119,12 @@ class BenchReport:
         bl = self.baseline_label.ljust(w)
         tr = self.label.ljust(w)
 
+        bsr = f"{self._baseline_success_rate:.1%}"
+        bml = f"{self._baseline_mean_latency_s:.3f}s"
         lines = [
             f"{'':20}  {bl}  {tr}",
-            f"{'success_rate:':<20}  {self._baseline_success_rate:.1%}{'':<{w - 4}}  {self.success_rate:.1%}",
-            f"{'mean_latency_s:':<20}  {self._baseline_mean_latency_s:.3f}s{'':<{w - 6}}  {self.mean_latency_s:.3f}s",
+            f"{'success_rate:':<20}  {bsr}{'':<{w - 4}}  {self.success_rate:.1%}",
+            f"{'mean_latency_s:':<20}  {bml}{'':<{w - 6}}  {self.mean_latency_s:.3f}s",
             f"{'recoveries:':<20}  {'—':<{w}}  {self.total_recoveries}",
         ]
         return "\n".join(lines)
@@ -165,7 +168,8 @@ async def run_benchmark(
     Parameters
     ----------
     agent_fn:
-        Async callable with signature ``(task: str, *, record_step, update_state, **kwargs) -> Any``.
+        Async callable with signature
+        ``(task: str, *, record_step, update_state, **kwargs) -> Any``.
     tasks:
         List of task strings to run.
     policy:
@@ -198,10 +202,14 @@ async def run_benchmark(
             recoveries = 0
             failure_types: list[str] = []
 
-            def on_recovery(ctx: FailureContext, action: RecoveryAction) -> None:
+            def on_recovery(
+                ctx: FailureContext,
+                action: RecoveryAction,
+                _ft: list[str] = failure_types,
+            ) -> None:
                 nonlocal recoveries
                 recoveries += 1
-                failure_types.append(ctx.failure_type.value)
+                _ft.append(ctx.failure_type.value)
 
             agent_kwargs: dict[str, Any] = dict(
                 max_recovery_attempts=max_recovery_attempts,

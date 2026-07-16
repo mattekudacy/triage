@@ -11,8 +11,9 @@ import contextvars
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from triage.scorer.base import StepRiskScorer
@@ -201,7 +202,7 @@ class Agent:
         on_failure: Callable[[FailureContext], None] | None = None,
         on_recovery: Callable[[FailureContext, RecoveryAction], None] | None = None,
         strict_idempotency: bool = False,
-        risk_scorer: "StepRiskScorer | None" = None,
+        risk_scorer: StepRiskScorer | None = None,
         risk_threshold: float = 0.9,
         tracer: Any = None,
     ) -> None:
@@ -289,7 +290,7 @@ class Agent:
     def _run_id(self, value: str | None) -> None:
         self._run_state.run_id = value
 
-    def clone(self) -> "Agent":
+    def clone(self) -> Agent:
         """Return a new Agent sharing the same policy, classifier, and checkpoint
         store but with fresh per-run state, independent lifecycle hooks, and its
         own ``_last_ctx``.
@@ -398,9 +399,10 @@ class Agent:
 
                 # If a child triage agent already classified this failure, reuse
                 # its context type rather than re-classifying.
+                _triage_exc = (TriageEscalationError, TriageAbortError)
                 child_escalation = (
-                    exc.__cause__ if isinstance(exc.__cause__, (TriageEscalationError, TriageAbortError))
-                    else exc.__context__ if isinstance(exc.__context__, (TriageEscalationError, TriageAbortError))
+                    exc.__cause__ if isinstance(exc.__cause__, _triage_exc)
+                    else exc.__context__ if isinstance(exc.__context__, _triage_exc)
                     else None
                 )
 
@@ -588,7 +590,7 @@ class Agent:
 
     def report_misclassification(
         self,
-        expected_type: "FailureType",  # noqa: F821 — avoid circular at module level
+        expected_type: FailureType,  # noqa: F821 — avoid circular at module level
         *,
         store_path: str = "corrections.jsonl",
     ) -> None:

@@ -184,7 +184,7 @@ class RulesClassifier:
         self.loop_similarity_threshold = loop_similarity_threshold
         self._framework: str | None = framework.lower() if framework else None
 
-    def _fw_match(self, error: str, table: dict[str, "re.Pattern[str]"]) -> bool:
+    def _fw_match(self, error: str, table: dict[str, re.Pattern[str]]) -> bool:
         """Return True if a framework-specific pattern matches the error string."""
         if self._framework is None:
             return False
@@ -262,9 +262,10 @@ class RulesClassifier:
         Does not modify the classifier's rules or thresholds — purely diagnostic.
         """
         import logging as _logging
+
         from triage.feedback import load_corrections
-        from triage.trajectory import Trajectory
         from triage.taxonomy import Step
+        from triage.trajectory import Trajectory
 
         log = _logging.getLogger("triage")
         corrections = load_corrections(corrections_path)

@@ -16,9 +16,9 @@ Usage in agent.py::
 
 from __future__ import annotations
 
-import contextlib
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
