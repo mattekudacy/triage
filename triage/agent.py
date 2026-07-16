@@ -11,14 +11,14 @@ import contextvars
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:
     from triage.scorer.base import StepRiskScorer
 
 import anyio
 
-from triage.checkpoint import CheckpointStore, InMemoryCheckpointStore, make_checkpoint
+from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore, make_checkpoint
 from triage.classifier.base import Classifier
 from triage.classifier.rules import RulesClassifier
 from triage.policy import FailurePolicy, RecoveryAction
@@ -99,7 +99,7 @@ class _RunState:
     trajectory: Trajectory = field(default_factory=Trajectory)
     current_state: dict[str, Any] = field(default_factory=dict)
     last_checkpoint_id: str | None = None
-    pending_checkpoints: list[Coroutine[Any, Any, None]] = field(default_factory=list)
+    pending_checkpoints: list[Checkpoint] = field(default_factory=list)
     last_ctx: FailureContext | None = None
 
 
@@ -243,11 +243,11 @@ class Agent:
         self._run_state.last_checkpoint_id = value
 
     @property
-    def _pending_checkpoints(self) -> list[Coroutine[Any, Any, None]]:
+    def _pending_checkpoints(self) -> list[Checkpoint]:
         return self._run_state.pending_checkpoints
 
     @_pending_checkpoints.setter
-    def _pending_checkpoints(self, value: list[Coroutine[Any, Any, None]]) -> None:
+    def _pending_checkpoints(self, value: list[Checkpoint]) -> None:
         self._run_state.pending_checkpoints = value
 
     @property
@@ -590,26 +590,33 @@ class Agent:
                         None,
                     )
         if self._auto_checkpoint:
-            self._pending_checkpoints.append(self._save_auto_checkpoint())
+            # Snapshot trajectory eagerly so each queued checkpoint captures
+            # the steps recorded so far, not the final trajectory at drain time.
+            # State is captured as an empty dict here; _update_state() patches
+            # the latest pending checkpoint so the state produced by this step
+            # is attached before drain without breaking the record_step /
+            # update_state ordering documented in the public API.
+            checkpoint = make_checkpoint(
+                state={},
+                trajectory_steps=self._trajectory.steps,
+            )
+            self._pending_checkpoints.append(checkpoint)
 
     def _update_state(self, state: dict[str, Any]) -> None:
         self._current_state = dict(state)
+        # Patch the most-recent pending checkpoint so its state reflects the
+        # update_state() call that follows record_step() in the same step block.
+        if self._pending_checkpoints:
+            self._pending_checkpoints[-1].state = dict(state)
 
     async def _drain_checkpoints(self) -> None:
         pending, self._pending_checkpoints = self._pending_checkpoints, []
-        for coro in pending:
+        for checkpoint in pending:
             try:
-                await coro
+                await self._checkpoint_store.save(checkpoint)
+                self._last_checkpoint_id = checkpoint.id
             except Exception as exc:
                 logger.warning("[triage] auto_checkpoint failed: %s", exc)
-
-    async def _save_auto_checkpoint(self) -> None:
-        checkpoint = make_checkpoint(
-            state=self._current_state,
-            trajectory_steps=self._trajectory.steps,
-        )
-        await self._checkpoint_store.save(checkpoint)
-        self._last_checkpoint_id = checkpoint.id
 
     async def __call__(self, task: str, **kwargs: Any) -> Any:
         return await self.run(task, **kwargs)

@@ -158,6 +158,31 @@ async def test_no_checkpoint_saved_when_auto_checkpoint_disabled():
     assert cp is None
 
 
+async def test_auto_checkpoint_snapshots_per_step_not_final_state():
+    """Each checkpoint must capture the trajectory length and state at the time
+    record_step() was called, not the collapsed final values at drain time."""
+    store = InMemoryCheckpointStore()
+
+    async def two_phase(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        record_step(Step(index=0, action="phase-1"))
+        update_state({"phase": 1})
+        record_step(Step(index=1, action="phase-2"))
+        update_state({"phase": 2})
+        return "ok"
+
+    ag = Agent(two_phase, FailurePolicy(), checkpoint_store=store, auto_checkpoint=True)
+    await ag.run("demo")
+
+    checkpoints = sorted(store._store.values(), key=lambda c: c.timestamp)
+    assert len(checkpoints) == 2
+
+    traj_lengths = [len(cp.trajectory_snapshot) for cp in checkpoints]
+    states = [cp.state for cp in checkpoints]
+
+    assert traj_lengths == [1, 2], f"expected [1, 2], got {traj_lengths}"
+    assert states == [{"phase": 1}, {"phase": 2}], f"expected per-step states, got {states}"
+
+
 # ---------------------------------------------------------------------------
 # Recovery — RETRY
 # ---------------------------------------------------------------------------
