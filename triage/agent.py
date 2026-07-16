@@ -597,8 +597,9 @@ class Agent:
             # stood; _update_state() then patches this checkpoint if an
             # update_state() call follows, preserving the documented
             # record_step(...); update_state(...) ordering. make_checkpoint()
-            # deep-copies state, so later mutation of _current_state can't
-            # retroactively alter an already-queued checkpoint.
+            # shallow-copies state (dict(state)), so top-level rebinding of
+            # _current_state can't retroactively alter an already-queued
+            # checkpoint; nested mutable values are not protected.
             checkpoint = make_checkpoint(
                 state=self._current_state,
                 trajectory_steps=self._trajectory.steps,
