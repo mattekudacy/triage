@@ -338,6 +338,27 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
   shared by both the exact and fuzzy paths. See `tests/test_classifier_rules.py`'s
   "Fuzzy loop detection" section.
 
+## v0.13 changes (shipped)
+
+- **Run-scoped checkpoints** — `Checkpoint` gains a `run_id: str | None = None` field.
+  `Agent.run()` generates a UUID once per call and stores it in `_RunState`; all
+  `auto_checkpoint` saves carry that ID. The rollback path calls `latest(run_id=self._run_id)`
+  so each run rolls back only to its own most-recent checkpoint rather than the global newest.
+  `CheckpointStore.latest()` signature updated to `latest(run_id=None)` — `None` preserves
+  existing global behavior. All three stores (`InMemoryCheckpointStore`, `SQLiteCheckpointStore`,
+  `RedisCheckpointStore`) implement scoped filtering; SQLite adds a migration guard for existing
+  tables. Closes the concurrency footgun documented in `known-limitations.md` since v0.10.
+- **`FailurePolicy.sequence(*strategies)`** — steps through an ordered list of strategies across
+  successive failures of the same type. Position is derived from `ctx.attempt_history` (count of
+  prior attempts matching `ctx.failure_type`) so no external state is needed and the sequence is
+  safe to share across concurrent runs. Escalates with an informative message once all strategies
+  are exhausted. Requires at least one strategy (raises `ValueError` otherwise). Replaces the
+  multi-step `attempt_history`-inspection boilerplate documented as a workaround in
+  `known-limitations.md`. `FailurePolicy.chain()` (v0.4, two-strategy case) is unchanged.
+- **`known-limitations.md` doc cleanup** — removed three stale "planned for v0.4" entries that
+  had shipped in v0.4 (`get_recorder()`/`get_state_updater()`, `TriageContext`, `max_total_attempts`).
+  Concurrency and chaining sections updated to reflect v0.13 state.
+
 ## v0.9 ideas (not committed)
 
 ### Observability

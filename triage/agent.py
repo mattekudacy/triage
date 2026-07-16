@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -101,6 +102,7 @@ class _RunState:
     last_checkpoint_id: str | None = None
     pending_checkpoints: list[Checkpoint] = field(default_factory=list)
     last_ctx: FailureContext | None = None
+    run_id: str | None = None
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
@@ -258,6 +260,14 @@ class Agent:
     def _last_ctx(self, value: FailureContext | None) -> None:
         self._run_state.last_ctx = value
 
+    @property
+    def _run_id(self) -> str | None:
+        return self._run_state.run_id
+
+    @_run_id.setter
+    def _run_id(self, value: str | None) -> None:
+        self._run_state.run_id = value
+
     def clone(self) -> "Agent":
         """Return a new Agent sharing the same policy, classifier, and checkpoint
         store but with fresh per-run state, independent lifecycle hooks, and its
@@ -292,6 +302,11 @@ class Agent:
         """Run the wrapped agent, recovering from failures per the policy."""
         attempt = 0
         attempt_history: list[tuple[Any, str]] = []
+
+        # Assign a stable run ID once per run() call so all auto-checkpoints
+        # from this run (including across recovery retries) share the same ID.
+        # Stored in _RunState so concurrent run() calls get independent IDs.
+        self._run_id = str(uuid.uuid4())
 
         # Reset any per-run budget the classifier tracks (e.g. HybridClassifier's
         # max_llm_calls_per_run). Duck-typed — most classifiers don't define this.
@@ -491,7 +506,7 @@ class Agent:
             if checkpoint_id:
                 checkpoint = await self._checkpoint_store.load(checkpoint_id)
             else:
-                checkpoint = await self._checkpoint_store.latest()
+                checkpoint = await self._checkpoint_store.latest(self._run_id)
             if checkpoint is None:
                 raise TriageEscalationError(
                     "ROLLBACK requested but no checkpoint is available.", ctx
@@ -603,6 +618,7 @@ class Agent:
             checkpoint = make_checkpoint(
                 state=self._current_state,
                 trajectory_steps=self._trajectory.steps,
+                run_id=self._run_id,
             )
             self._pending_checkpoints.append(checkpoint)
 

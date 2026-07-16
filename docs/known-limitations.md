@@ -1,6 +1,6 @@
 # Known Limitations
 
-This page documents the current limitations of triage honestly. Some are design tradeoffs, some are planned for v0.4, and some are fundamental constraints of the approach.
+This page documents the current limitations of triage honestly. Some are design tradeoffs, some are on the roadmap, and some are fundamental constraints of the approach.
 
 ---
 
@@ -53,11 +53,9 @@ triage has no way to intercept what your agent does internally. If your agent ra
 
 The implication: the more faithfully your agent calls `record_step()` for each observable action, the more accurate the classifier will be. A trajectory with one sentinel step will almost always classify as `UNKNOWN`.
 
-### No global attempt cap across failure types
+### Global attempt cap
 
-`max_recovery_attempts` (default 3) counts total attempts per `run()` call. However, each strategy also has its own `max_attempts` parameter. An agent that alternates between two failure types could cycle up to `max_recovery_attempts` times regardless of per-strategy limits.
-
-Workaround: use `attempt_history` in a custom strategy to count total attempts across all types:
+`max_recovery_attempts` (default 3) counts total attempts per `run()` call across all failure types. For a hard cross-type cap, pass `max_total_attempts=N` to `Agent.__init__` (shipped v0.4). For custom logic, inspect `ctx.attempt_history` in a strategy:
 
 ```python
 async def bounded_recovery(ctx: FailureContext) -> RecoveryAction:
@@ -66,9 +64,14 @@ async def bounded_recovery(ctx: FailureContext) -> RecoveryAction:
     return RecoveryAction.RETRY()
 ```
 
-### Strategies are not composable (yet)
+### Strategy composition
 
-A `FailurePolicy` maps each `FailureType` to exactly one strategy. There is no built-in way to say "try replan first, then rollback if replan fails." The workaround is a custom strategy that checks `attempt_history`:
+Two built-in factories cover most cases:
+
+- `FailurePolicy.sequence(s1, s2, s3)` (v0.13) — steps through strategies in order across successive failures of the same type. Escalates once all are exhausted.
+- `FailurePolicy.chain(primary, fallback, after_kinds)` (v0.4) — falls through to `fallback` when `primary` returns an action whose `kind` is in `after_kinds` (default `"escalate"`).
+
+For logic that doesn't fit either, inspect `ctx.attempt_history` in a custom strategy:
 
 ```python
 async def replan_then_rollback(ctx: FailureContext) -> RecoveryAction:
@@ -77,8 +80,6 @@ async def replan_then_rollback(ctx: FailureContext) -> RecoveryAction:
         return RecoveryAction.ROLLBACK()
     return RecoveryAction.REPLAN(hint="Previous plan failed. Try a different approach.")
 ```
-
-Strategy chaining (`FailurePolicy.chain(primary, fallback)`) is planned for v0.4.
 
 ---
 
@@ -107,13 +108,9 @@ agent = triage.Agent(async_wrapper, policy=policy)
 
 The step-recording model assumes your agent produces observable, discrete actions. Streaming token-by-token output has no natural step boundary. triage works with streaming agents if you call `record_step()` at meaningful boundaries — tool call starts/ends, message completions, or plan transitions — rather than per token.
 
-### record_step requires a signature change
-
-The wrapped agent function must accept `record_step` (and optionally `update_state`) as keyword arguments. Wrapping an existing agent function without modifying its signature requires either an adapter closure or — planned for v0.4 — a `contextvars`-based approach where `record_step` is accessible without being in the signature.
-
 ### _triage_hint is a plain string
 
-Recovery hints injected as `_triage_hint` are unstructured strings. They are designed to be passed directly into an LLM prompt. There is no type-safe schema for what a hint means, which limits programmatic interpretation. A structured `_triage_context` object is planned for v0.4.
+Recovery hints injected as `_triage_hint` are unstructured strings designed to be passed directly into an LLM prompt. For programmatic use, prefer `_triage_context` (a typed `TriageContext` object injected alongside `_triage_hint` on every recovery attempt since v0.4) or `triage.get_recorder()` / `triage.get_state_updater()` to avoid signature changes entirely.
 
 ---
 
@@ -151,11 +148,12 @@ but it is no longer required just to make concurrent `run()` calls safe.
 Shared `CheckpointStore` instances are safe to share across agents. As of v0.11,
 `InMemoryCheckpointStore` guards its storage dict with an `anyio.Lock`, so
 concurrent `save()`/`load()`/`latest()` calls no longer race on the same dict.
-`SQLiteCheckpointStore` and `RedisCheckpointStore` use atomic operations. Note
-that lock-protected storage access is not the same as coordinated recovery —
-if two concurrent runs both call `latest()` expecting to roll back to "their"
-checkpoint, whichever checkpoint has the highest `timestamp` wins for both;
-`triage` does not scope checkpoints per run.
+`SQLiteCheckpointStore` and `RedisCheckpointStore` use atomic operations.
+
+As of v0.13, checkpoints are tagged with a `run_id` generated once per `Agent.run()`
+call. The rollback path calls `latest(run_id=...)` so each run rolls back to its own
+most-recent checkpoint rather than the global newest. `CheckpointStore.latest()` still
+accepts no argument and returns the global latest for callers that don't need scoping.
 
 ---
 

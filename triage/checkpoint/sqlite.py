@@ -31,9 +31,12 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     id        TEXT PRIMARY KEY,
     timestamp REAL NOT NULL,
     state     TEXT NOT NULL,
-    trajectory TEXT NOT NULL
+    trajectory TEXT NOT NULL,
+    run_id    TEXT
 )
 """
+
+_MIGRATE_ADD_RUN_ID = "ALTER TABLE checkpoints ADD COLUMN run_id TEXT"
 
 
 class SQLiteCheckpointStore:
@@ -53,6 +56,11 @@ class SQLiteCheckpointStore:
     async def _ensure_table(self, db: "aiosqlite.Connection") -> None:
         if not self._table_created:
             await db.execute(_CREATE_TABLE)
+            # Migrate existing tables that predate the run_id column
+            try:
+                await db.execute(_MIGRATE_ADD_RUN_ID)
+            except Exception:
+                pass  # column already exists
             await db.commit()
             self._table_created = True
 
@@ -62,9 +70,9 @@ class SQLiteCheckpointStore:
         async with aiosqlite.connect(self._db_path) as db:
             await self._ensure_table(db)
             await db.execute(
-                "INSERT OR REPLACE INTO checkpoints (id, timestamp, state, trajectory) "
-                "VALUES (?, ?, ?, ?)",
-                (checkpoint.id, checkpoint.timestamp, state_json, traj_json),
+                "INSERT OR REPLACE INTO checkpoints (id, timestamp, state, trajectory, run_id) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (checkpoint.id, checkpoint.timestamp, state_json, traj_json, checkpoint.run_id),
             )
             await db.commit()
 
@@ -72,7 +80,7 @@ class SQLiteCheckpointStore:
         async with aiosqlite.connect(self._db_path) as db:
             await self._ensure_table(db)
             async with db.execute(
-                "SELECT id, timestamp, state, trajectory FROM checkpoints WHERE id = ?",
+                "SELECT id, timestamp, state, trajectory, run_id FROM checkpoints WHERE id = ?",
                 (id,),
             ) as cursor:
                 row = await cursor.fetchone()
@@ -83,16 +91,25 @@ class SQLiteCheckpointStore:
             timestamp=row[1],
             state=json.loads(row[2]),
             trajectory_snapshot=[_dict_to_step(d) for d in json.loads(row[3])],
+            run_id=row[4],
         )
 
-    async def latest(self) -> Checkpoint | None:
+    async def latest(self, run_id: str | None = None) -> Checkpoint | None:
         async with aiosqlite.connect(self._db_path) as db:
             await self._ensure_table(db)
-            async with db.execute(
-                "SELECT id, timestamp, state, trajectory "
-                "FROM checkpoints ORDER BY timestamp DESC LIMIT 1"
-            ) as cursor:
-                row = await cursor.fetchone()
+            if run_id is not None:
+                async with db.execute(
+                    "SELECT id, timestamp, state, trajectory, run_id "
+                    "FROM checkpoints WHERE run_id = ? ORDER BY timestamp DESC LIMIT 1",
+                    (run_id,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+            else:
+                async with db.execute(
+                    "SELECT id, timestamp, state, trajectory, run_id "
+                    "FROM checkpoints ORDER BY timestamp DESC LIMIT 1"
+                ) as cursor:
+                    row = await cursor.fetchone()
         if row is None:
             return None
         return Checkpoint(
@@ -100,4 +117,5 @@ class SQLiteCheckpointStore:
             timestamp=row[1],
             state=json.loads(row[2]),
             trajectory_snapshot=[_dict_to_step(d) for d in json.loads(row[3])],
+            run_id=row[4],
         )

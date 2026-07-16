@@ -132,6 +132,54 @@ class FailurePolicy:
         return await strategy(ctx)
 
     @staticmethod
+    def sequence(*strategies: StrategyFn) -> StrategyFn:
+        """Return a strategy that steps through ``strategies`` in order across
+        successive failures of the same type.
+
+        On the first failure, ``strategies[0]`` is called. On the second
+        failure of the same type, ``strategies[1]``, and so on. Once all
+        strategies are exhausted, returns ``RecoveryAction.ESCALATE``.
+
+        The current position is derived from ``ctx.attempt_history`` — the
+        number of prior attempts that share ``ctx.failure_type`` — so no
+        external state is needed and the sequence is safe to share across
+        concurrent runs.
+
+        Example — replan once, then rollback, then escalate::
+
+            from triage.strategies.replan import replan
+            from triage.strategies.rollback import rollback_to_checkpoint
+
+            policy = FailurePolicy(
+                LOOP_DETECTED=FailurePolicy.sequence(
+                    replan(hint="Try a different approach."),
+                    rollback_to_checkpoint(),
+                ),
+            )
+
+        Example — retry twice, then replan, then escalate::
+
+            policy = FailurePolicy(
+                EXTERNAL_FAULT=FailurePolicy.sequence(
+                    backoff_and_retry(),
+                    backoff_and_retry(),
+                    replan(hint="External service may be down."),
+                ),
+            )
+        """
+        if not strategies:
+            raise ValueError("sequence() requires at least one strategy")
+
+        async def _sequenced(ctx: FailureContext) -> RecoveryAction:
+            prior = sum(1 for ft, _ in ctx.attempt_history if ft == ctx.failure_type)
+            if prior < len(strategies):
+                return await strategies[prior](ctx)
+            return RecoveryAction.ESCALATE(
+                message=f"All {len(strategies)} strategies in sequence exhausted for {ctx.failure_type.value}."
+            )
+        return _sequenced
+
+    @staticmethod
     def chain(primary: StrategyFn, fallback: StrategyFn, after_kinds: tuple[str, ...] = ("escalate",)) -> StrategyFn:
         """Return a strategy that tries ``primary`` and falls through to ``fallback``
         when ``primary`` returns an action whose kind is in ``after_kinds``.

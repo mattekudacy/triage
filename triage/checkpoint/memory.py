@@ -34,6 +34,7 @@ class InMemoryCheckpointStore:
             timestamp=checkpoint.timestamp,
             state=dict(checkpoint.state),
             trajectory_snapshot=list(checkpoint.trajectory_snapshot),
+            run_id=checkpoint.run_id,
         )
         async with self._lock:
             self._store[safe.id] = safe
@@ -44,8 +45,13 @@ class InMemoryCheckpointStore:
                 raise KeyError(f"No checkpoint with id {id!r}")
             return self._store[id]
 
-    async def latest(self) -> Checkpoint | None:
+    async def latest(self, run_id: str | None = None) -> Checkpoint | None:
         async with self._lock:
-            if not self._store:
+            candidates = (
+                [c for c in self._store.values() if c.run_id == run_id]
+                if run_id is not None
+                else list(self._store.values())
+            )
+            if not candidates:
                 return None
-            return max(self._store.values(), key=lambda c: c.timestamp)
+            return max(candidates, key=lambda c: c.timestamp)

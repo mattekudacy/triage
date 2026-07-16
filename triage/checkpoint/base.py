@@ -26,19 +26,21 @@ class Checkpoint:
     timestamp: float
     state: dict[str, Any]
     trajectory_snapshot: list[Step]
+    run_id: str | None = None
 
 
 @runtime_checkable
 class CheckpointStore(Protocol):
     async def save(self, checkpoint: Checkpoint) -> None: ...
     async def load(self, id: str) -> Checkpoint: ...
-    async def latest(self) -> Checkpoint | None: ...
+    async def latest(self, run_id: str | None = None) -> Checkpoint | None: ...
 
 
 def make_checkpoint(
     state: dict[str, Any],
     trajectory_steps: list[Step],
     id: str | None = None,
+    run_id: str | None = None,
 ) -> Checkpoint:
     """Convenience constructor. Generates a UUID id if not supplied."""
     return Checkpoint(
@@ -46,6 +48,7 @@ def make_checkpoint(
         timestamp=time.time(),
         state=dict(state),
         trajectory_snapshot=list(trajectory_steps),
+        run_id=run_id,
     )
 
 

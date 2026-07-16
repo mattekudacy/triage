@@ -1,10 +1,13 @@
 """Tests for triage.checkpoint — Checkpoint, InMemoryCheckpointStore, make_checkpoint."""
 
 import time
+from typing import Any
 
 import pytest
 
+from triage.agent import Agent
 from triage.checkpoint import Checkpoint, InMemoryCheckpointStore, make_checkpoint
+from triage.policy import FailurePolicy
 from triage.taxonomy import Step
 
 
@@ -131,3 +134,70 @@ async def test_concurrent_save_and_latest_do_not_raise():
     for r in results:
         if r is not None:
             assert r.id.startswith("cp-")
+
+
+# ── run-scoped latest() ───────────────────────────────────────────────────────
+
+async def test_latest_scoped_to_run_id():
+    """latest(run_id=X) must return only checkpoints tagged with that run_id."""
+    store = InMemoryCheckpointStore()
+    cp_a = Checkpoint(id="a", timestamp=1000.0, state={}, trajectory_snapshot=[], run_id="run-1")
+    cp_b = Checkpoint(id="b", timestamp=2000.0, state={}, trajectory_snapshot=[], run_id="run-2")
+    await store.save(cp_a)
+    await store.save(cp_b)
+
+    assert (await store.latest(run_id="run-1")).id == "a"
+    assert (await store.latest(run_id="run-2")).id == "b"
+
+
+async def test_latest_scoped_returns_none_when_no_match():
+    store = InMemoryCheckpointStore()
+    cp = Checkpoint(id="a", timestamp=1000.0, state={}, trajectory_snapshot=[], run_id="run-1")
+    await store.save(cp)
+    assert await store.latest(run_id="run-2") is None
+
+
+async def test_latest_unscoped_returns_global_latest():
+    """latest() with no run_id still returns the newest checkpoint overall."""
+    store = InMemoryCheckpointStore()
+    cp_a = Checkpoint(id="a", timestamp=1000.0, state={}, trajectory_snapshot=[], run_id="run-1")
+    cp_b = Checkpoint(id="b", timestamp=9000.0, state={}, trajectory_snapshot=[], run_id="run-2")
+    await store.save(cp_a)
+    await store.save(cp_b)
+    assert (await store.latest()).id == "b"
+
+
+async def test_concurrent_runs_rollback_to_own_checkpoints():
+    """Two concurrent Agent.run() calls sharing a store must each roll back to
+    their own checkpoint, not the other run's."""
+    import anyio
+
+    store = InMemoryCheckpointStore()
+    results: dict[str, str] = {}
+
+    async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
+        call_key = f"{task}-{kw.get('_attempt', 0)}"
+        record_step(Step(index=0, action=f"step-{task}"))
+        update_state({"owner": task})
+        if "_triage_hint" not in kw:
+            raise RuntimeError("first attempt fails")
+        return kw["_triage_hint"]
+
+    from triage.strategies.rollback import rollback_to_checkpoint
+    policy = FailurePolicy(UNKNOWN=rollback_to_checkpoint())
+
+    async def run_one(task: str) -> None:
+        ag = Agent(agent_fn, policy, checkpoint_store=store, auto_checkpoint=True)
+        results[task] = await ag.run(task)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(run_one, "task-A")
+        tg.start_soon(run_one, "task-B")
+
+    # Each run rolled back to its own checkpoint — hint contains its own id
+    assert "Rolled back" in results["task-A"]
+    assert "Rolled back" in results["task-B"]
+    # The restored state must reflect each run's own step, not the other's
+    checkpoints = list(store._store.values())
+    run_ids = {cp.run_id for cp in checkpoints}
+    assert len(run_ids) == 2  # two distinct run IDs, not mixed

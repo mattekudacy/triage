@@ -214,6 +214,99 @@ async def test_chain_does_not_call_fallback_on_replan():
     assert calls == []
 
 
+# ── FailurePolicy.sequence ───────────────────────────────────────────────────
+
+async def test_sequence_first_strategy_on_first_failure():
+    async def s1(ctx): return RecoveryAction.RETRY(hint="s1")
+    async def s2(ctx): return RecoveryAction.REPLAN(hint="s2")
+
+    seq = FailurePolicy.sequence(s1, s2)
+    ctx = make_ctx(FailureType.UNKNOWN)  # no prior attempts
+    action = await seq(ctx)
+    assert action.kind == "retry"
+    assert action.params["hint"] == "s1"
+
+
+async def test_sequence_second_strategy_on_second_failure():
+    async def s1(ctx): return RecoveryAction.RETRY(hint="s1")
+    async def s2(ctx): return RecoveryAction.REPLAN(hint="s2")
+
+    seq = FailurePolicy.sequence(s1, s2)
+    ctx = FailureContext(
+        failure_type=FailureType.UNKNOWN,
+        trajectory=[Step(index=0, action="step")],
+        critical_step_index=0,
+        original_task="task",
+        attempt_history=[(FailureType.UNKNOWN, "retry")],  # one prior attempt
+    )
+    action = await seq(ctx)
+    assert action.kind == "replan"
+    assert action.params["hint"] == "s2"
+
+
+async def test_sequence_escalates_after_exhaustion():
+    async def s1(ctx): return RecoveryAction.RETRY()
+
+    seq = FailurePolicy.sequence(s1)
+    ctx = FailureContext(
+        failure_type=FailureType.UNKNOWN,
+        trajectory=[Step(index=0, action="step")],
+        critical_step_index=0,
+        original_task="task",
+        attempt_history=[(FailureType.UNKNOWN, "retry")],  # s1 already used
+    )
+    action = await seq(ctx)
+    assert action.kind == "escalate"
+    assert "exhausted" in action.params.get("message", "")
+
+
+async def test_sequence_counts_only_matching_failure_type():
+    """Prior attempts of a different failure type must not advance the index."""
+    async def s1(ctx): return RecoveryAction.RETRY(hint="s1")
+    async def s2(ctx): return RecoveryAction.REPLAN(hint="s2")
+
+    seq = FailurePolicy.sequence(s1, s2)
+    ctx = FailureContext(
+        failure_type=FailureType.UNKNOWN,
+        trajectory=[Step(index=0, action="step")],
+        critical_step_index=0,
+        original_task="task",
+        # prior attempt was for a DIFFERENT type — should not count
+        attempt_history=[(FailureType.EXTERNAL_FAULT, "retry")],
+    )
+    action = await seq(ctx)
+    assert action.kind == "retry"
+    assert action.params["hint"] == "s1"
+
+
+async def test_sequence_three_strategies_in_order():
+    results = []
+
+    async def s1(ctx): results.append("s1"); return RecoveryAction.RETRY()
+    async def s2(ctx): results.append("s2"); return RecoveryAction.REPLAN()
+    async def s3(ctx): results.append("s3"); return RecoveryAction.ROLLBACK()
+
+    seq = FailurePolicy.sequence(s1, s2, s3)
+    ft = FailureType.UNKNOWN
+
+    for i in range(3):
+        ctx = FailureContext(
+            failure_type=ft,
+            trajectory=[Step(index=0, action="step")],
+            critical_step_index=0,
+            original_task="task",
+            attempt_history=[(ft, "x")] * i,
+        )
+        await seq(ctx)
+
+    assert results == ["s1", "s2", "s3"]
+
+
+def test_sequence_requires_at_least_one_strategy():
+    with pytest.raises(ValueError, match="at least one"):
+        FailurePolicy.sequence()
+
+
 # ── TIMEOUT field ─────────────────────────────────────────────────────────────
 
 async def test_timeout_field_resolves_strategy():
