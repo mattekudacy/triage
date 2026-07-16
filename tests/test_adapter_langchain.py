@@ -11,14 +11,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 pytest.importorskip("langchain_core")
+pytest.importorskip("langchain")
+# Guard against langchain versions that have moved or removed AgentExecutor
+try:
+    from langchain.agents import AgentExecutor as _AgentExecutor  # noqa: F401
+except ImportError:
+    pytest.skip("langchain.agents.AgentExecutor not available in this version", allow_module_level=True)
 
 from triage.adapters.langchain import wrap_langchain
 from triage.policy import FailurePolicy
 
 
 def _make_executor(output: str = "executor result") -> MagicMock:
-    from langchain.agents import AgentExecutor
-    executor = MagicMock(spec=AgentExecutor)
+    executor = MagicMock()
     executor.ainvoke = AsyncMock(return_value={"output": output})
     return executor
 

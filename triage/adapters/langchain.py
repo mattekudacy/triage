@@ -8,16 +8,10 @@ Install: pip install triage-agent[langchain]
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-try:
+if TYPE_CHECKING:
     from langchain.agents import AgentExecutor
-    from langchain_core.callbacks import BaseCallbackHandler
-except ImportError as exc:
-    raise ImportError(
-        "LangChain adapter requires 'langchain' and 'langchain-core'. "
-        "Install them with: pip install triage-agent[langchain]"
-    ) from exc
 
 from triage.agent import Agent
 from triage.policy import FailurePolicy
@@ -25,7 +19,7 @@ from triage.taxonomy import Step
 
 
 def wrap_langchain(
-    executor: AgentExecutor,
+    executor: Any,
     policy: FailurePolicy,
     **kwargs: Any,
 ) -> Agent:
@@ -35,6 +29,14 @@ def wrap_langchain(
     tool ends, tool errors, and LLM completions as triage Steps.
     """
     async def wrapped_fn(task: str, *, record_step: Any, **kw: Any) -> Any:
+        try:
+            from langchain_core.callbacks import BaseCallbackHandler
+        except ImportError as exc:
+            raise ImportError(
+                "LangChain adapter requires 'langchain' and 'langchain-core'. "
+                "Install them with: pip install triage-agent[langchain]"
+            ) from exc
+
         step_index = 0
 
         class TriageCallbackHandler(BaseCallbackHandler):
