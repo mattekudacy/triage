@@ -323,12 +323,22 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
   file starts. Pass `max_lines=None` to disable rotation and grow unbounded, matching
   pre-v0.11 behavior.
 
-## v0.9 ideas (not committed)
+## v0.12 changes (shipped)
 
-### Classifier improvements
-- **Fuzzy loop detection** — catch loops where `tool_input` varies slightly (e.g. minor
-  query rewrites) using string similarity rather than exact equality; configurable
-  `loop_similarity_threshold` on RulesClassifier
+- **Fuzzy loop detection on `RulesClassifier`** — new `loop_similarity_threshold: float | None = None`
+  constructor param (range `(0.0, 1.0]`, raises `ValueError` outside that range). Default
+  `None` preserves exact-match-only behavior (no change on upgrade). When set, the
+  `LOOP_DETECTED` rule additionally matches steps whose canonical `tool_input` JSON strings
+  are similar — not just identical — via stdlib `difflib.SequenceMatcher.ratio()` (no new
+  dependency, per core.md Rule 1). Comparison is **consecutive** (each step vs. the previous
+  step in the window), not all-vs-first, so a query that drifts gradually across the window
+  is still caught even if the first and last steps have drifted far apart from each other.
+  `tool_called` still must match exactly across the whole window — only `tool_input` gets the
+  fuzzy comparison. Implemented via a new `_is_loop_window()` helper in `triage/classifier/rules.py`
+  shared by both the exact and fuzzy paths. See `tests/test_classifier_rules.py`'s
+  "Fuzzy loop detection" section.
+
+## v0.9 ideas (not committed)
 
 ### Observability
 - **OpenTelemetry spans** — optional `triage-agent[otel]` extra that wraps `run()`,

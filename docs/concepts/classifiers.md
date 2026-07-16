@@ -66,6 +66,20 @@ clf = RulesClassifier(loop_window=5)
 
 A loop is only declared when `loop_window` consecutive steps share **both** the same `tool_called` **and** the same canonical `tool_input`. Steps with `tool_called=None` are never matched.
 
+### Fuzzy loop detection
+
+By default, `tool_input` must match **exactly** across the window. Real agents often rework a query slightly on each retry — `{"q": "revenue Q1"}` then `{"q": "revenue for Q1"}` — which the exact-match rule misses even though it's still a loop. Set `loop_similarity_threshold` (in `(0.0, 1.0]`) to catch these:
+
+```python
+clf = RulesClassifier(loop_similarity_threshold=0.9)
+```
+
+Similarity is computed with `difflib.SequenceMatcher.ratio()` on the canonical JSON string form of `tool_input`, comparing each step **against the previous step** in the window (not all steps against the first) — so a query that drifts gradually across the window is still caught, even if the first and last steps have drifted far apart from each other. `tool_called` must still match exactly across the whole window; only `tool_input` gets the fuzzy comparison.
+
+Default is `None` — exact match only, unchanged from pre-v0.12 behavior. This is opt-in: existing code that doesn't pass `loop_similarity_threshold` sees no behavior change.
+
+A threshold around `0.85`–`0.95` is a reasonable starting point; lower values risk false-positiving on genuinely different queries that happen to share a lot of characters (e.g. two searches with the same long boilerplate prefix).
+
 ### What RulesClassifier cannot detect
 
 `PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` require semantic understanding of the trajectory. Pattern-matching physically cannot detect these. For these failure types, use `LLMClassifier` or `HybridClassifier`. If you use `RulesClassifier` alone and these failure types occur, they will be classified as `UNKNOWN` and routed to your `UNKNOWN` strategy (or escalated if none is set).

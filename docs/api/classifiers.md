@@ -24,11 +24,12 @@ Pattern-based, zero API calls, microseconds per call.
 ```python
 clf = RulesClassifier()
 clf = RulesClassifier(constraints=["must return JSON", "no markdown"])
+clf = RulesClassifier(loop_similarity_threshold=0.9)  # fuzzy loop detection
 ```
 
 **Rules (priority order):**
 
-1. `LOOP_DETECTED` — last 3 steps: same `tool_called` + identical canonical `tool_input`
+1. `LOOP_DETECTED` — last 3 steps: same `tool_called` + identical canonical `tool_input` (or, with `loop_similarity_threshold` set, consecutively similar `tool_input` per `difflib.SequenceMatcher.ratio()`)
 2. `WRONG_TOOL_CALLED` — error matches `tool.{0,30}not found|no tool named`
 3. `SCHEMA_MISMATCH` — error matches `validation error|json.*parse|jsondecodeerror`
 4. `EXTERNAL_FAULT` — error contains `"429"`, `"500"`, `"502"`, or `"503"`

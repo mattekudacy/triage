@@ -68,6 +68,127 @@ def test_loop_window_below_2_raises():
         RulesClassifier(loop_window=1)
 
 
+# ── Fuzzy loop detection (loop_similarity_threshold) ────────────────────────────
+
+def test_fuzzy_loop_detected_on_reworded_query():
+    clf = RulesClassifier(loop_similarity_threshold=0.9)
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "revenue Q1 report"}),
+        make_step(1, tool_called="search", tool_input={"q": "revenue Q1 reports"}),
+        make_step(2, tool_called="search", tool_input={"q": "revenue Q1 reports."}),
+    )
+    assert clf.classify(t, "task") == FailureType.LOOP_DETECTED
+
+
+def test_fuzzy_loop_not_detected_below_threshold():
+    """Queries about genuinely different topics must not trigger a loop."""
+    clf = RulesClassifier(loop_similarity_threshold=0.9)
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "revenue Q1"}),
+        make_step(1, tool_called="search", tool_input={"q": "completely different topic"}),
+        make_step(2, tool_called="search", tool_input={"q": "another unrelated subject"}),
+    )
+    assert clf.classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_fuzzy_loop_still_requires_matching_tool_called():
+    """Similar tool_input across different tools must not trigger a loop."""
+    clf = RulesClassifier(loop_similarity_threshold=0.9)
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "revenue Q1"}),
+        make_step(1, tool_called="lookup", tool_input={"q": "revenue Q1"}),
+        make_step(2, tool_called="search", tool_input={"q": "revenue Q1"}),
+    )
+    assert clf.classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_fuzzy_loop_default_none_preserves_exact_match_only():
+    """Without loop_similarity_threshold, a reworded query must NOT trigger a
+    loop — this is the pre-v0.12 behavior and must not change by default."""
+    clf = RulesClassifier()  # loop_similarity_threshold=None (default)
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "revenue Q1"}),
+        make_step(1, tool_called="search", tool_input={"q": "revenue for Q1"}),
+        make_step(2, tool_called="search", tool_input={"q": "revenue in Q1"}),
+    )
+    assert clf.classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_fuzzy_loop_exact_match_still_detected_with_threshold_set():
+    """Setting a threshold must not break exact-match loop detection."""
+    clf = RulesClassifier(loop_similarity_threshold=0.9)
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "same query"}),
+        make_step(1, tool_called="search", tool_input={"q": "same query"}),
+        make_step(2, tool_called="search", tool_input={"q": "same query"}),
+    )
+    assert clf.classify(t, "task") == FailureType.LOOP_DETECTED
+
+
+def test_fuzzy_loop_catches_gradual_drift_consecutively():
+    """A loop where the query drifts a little each step is still caught, even
+    if the first and last steps have drifted far apart from each other —
+    comparison is consecutive (step vs. previous step), not all-vs-first."""
+    clf = RulesClassifier(loop_similarity_threshold=0.85)
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "find sales report Q1 2024"}),
+        make_step(1, tool_called="search", tool_input={"q": "find sales report Q1 2025"}),
+        make_step(2, tool_called="search", tool_input={"q": "find sales reports Q1 2025"}),
+    )
+    assert clf.classify(t, "task") == FailureType.LOOP_DETECTED
+
+
+def test_fuzzy_loop_none_tool_input_not_falsely_matched():
+    clf = RulesClassifier(loop_similarity_threshold=0.9)
+    t = traj(
+        make_step(0, tool_called="search", tool_input=None),
+        make_step(1, tool_called="search", tool_input=None),
+        make_step(2, tool_called="search", tool_input=None),
+    )
+    assert clf.classify(t, "task") == FailureType.LOOP_DETECTED  # identical (both "None")
+
+
+def test_loop_similarity_threshold_zero_raises():
+    import pytest
+    with pytest.raises(ValueError, match="loop_similarity_threshold"):
+        RulesClassifier(loop_similarity_threshold=0.0)
+
+
+def test_loop_similarity_threshold_above_one_raises():
+    import pytest
+    with pytest.raises(ValueError, match="loop_similarity_threshold"):
+        RulesClassifier(loop_similarity_threshold=1.5)
+
+
+def test_loop_similarity_threshold_negative_raises():
+    import pytest
+    with pytest.raises(ValueError, match="loop_similarity_threshold"):
+        RulesClassifier(loop_similarity_threshold=-0.1)
+
+
+def test_loop_similarity_threshold_one_is_valid():
+    """Upper bound 1.0 is inclusive — equivalent to requiring exact match."""
+    clf = RulesClassifier(loop_similarity_threshold=1.0)
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "same"}),
+        make_step(1, tool_called="search", tool_input={"q": "same"}),
+        make_step(2, tool_called="search", tool_input={"q": "same"}),
+    )
+    assert clf.classify(t, "task") == FailureType.LOOP_DETECTED
+
+
+def test_fuzzy_loop_respects_loop_window():
+    """Fuzzy matching still only looks at the last loop_window steps."""
+    clf = RulesClassifier(loop_window=4, loop_similarity_threshold=0.9)
+    # Only 3 similar steps — below the configured window of 4
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "revenue Q1"}),
+        make_step(1, tool_called="search", tool_input={"q": "revenue for Q1"}),
+        make_step(2, tool_called="search", tool_input={"q": "revenue in Q1"}),
+    )
+    assert clf.classify(t, "task") == FailureType.UNKNOWN
+
+
 def test_loop_not_detected_different_inputs():
     t = traj(
         make_step(0, tool_called="search", tool_input={"q": "hello"}),

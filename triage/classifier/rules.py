@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+from difflib import SequenceMatcher
 
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
@@ -94,6 +95,31 @@ def _tool_input_key(tool_input: object) -> str:
     return str(tool_input)
 
 
+def _is_loop_window(steps: list, threshold: float | None) -> bool:
+    """True if every step in ``steps`` shares the same ``tool_called`` and
+    their canonical ``tool_input`` strings are either identical (default) or,
+    when ``threshold`` is set, similar enough consecutively (each step vs. the
+    one before it) per ``difflib.SequenceMatcher.ratio()``.
+
+    Consecutive comparison (not all-vs-first) so a loop where the query drifts
+    gradually across the window is still caught — e.g. step 1 vs step 2 close,
+    step 2 vs step 3 close, even if step 1 vs step 3 has drifted further apart.
+    """
+    if steps[0].tool_called is None:
+        return False
+    if not all(s.tool_called == steps[0].tool_called for s in steps):
+        return False
+
+    keys = [_tool_input_key(s.tool_input) for s in steps]
+    if threshold is None:
+        return all(k == keys[0] for k in keys)
+
+    return all(
+        keys[i] == keys[i - 1] or SequenceMatcher(None, keys[i - 1], keys[i]).ratio() >= threshold
+        for i in range(1, len(keys))
+    )
+
+
 class RulesClassifier:
     """Pattern-based classifier. Instantiate with optional constraint strings.
 
@@ -116,9 +142,23 @@ class RulesClassifier:
             RulesClassifier(constraints=["no markdown allowed"])
 
     loop_window:
-        Number of consecutive identical steps required to declare a loop.
-        Default 3. Set higher (e.g. 4–5) if your agent legitimately repeats
-        the same tool call twice in a row.
+        Number of consecutive steps required to declare a loop. Default 3.
+        Set higher (e.g. 4–5) if your agent legitimately repeats the same
+        tool call twice in a row.
+
+    loop_similarity_threshold:
+        If set (e.g. ``0.9``), loop detection additionally matches steps whose
+        canonical ``tool_input`` strings are *similar* rather than identical —
+        catching loops where the agent reworded a query slightly on each retry
+        (e.g. ``{"q": "revenue Q1"}`` vs ``{"q": "revenue for Q1"}``).
+        Similarity is computed with ``difflib.SequenceMatcher.ratio()`` on the
+        canonical JSON string form of ``tool_input``, compared consecutively
+        within the window (each step vs. the previous one) rather than all
+        pairs against the first — this matches loops that drift gradually,
+        not just loops identical to the very first step. ``tool_called`` must
+        still match exactly across the whole window; only ``tool_input`` gets
+        the fuzzy comparison. Default ``None`` disables fuzzy matching —
+        behavior is unchanged from pre-v0.12 (exact match only).
 
     framework:
         Optional SDK/framework name. When set, per-framework error patterns
@@ -132,12 +172,16 @@ class RulesClassifier:
         self,
         constraints: list[str] | None = None,
         loop_window: int = 3,
+        loop_similarity_threshold: float | None = None,
         framework: str | None = None,
     ) -> None:
         self.constraints: list[str] = constraints or []
         if loop_window < 2:
             raise ValueError("loop_window must be >= 2")
         self.loop_window = loop_window
+        if loop_similarity_threshold is not None and not (0.0 < loop_similarity_threshold <= 1.0):
+            raise ValueError("loop_similarity_threshold must be in (0.0, 1.0]")
+        self.loop_similarity_threshold = loop_similarity_threshold
         self._framework: str | None = framework.lower() if framework else None
 
     def _fw_match(self, error: str, table: dict[str, "re.Pattern[str]"]) -> bool:
@@ -150,17 +194,12 @@ class RulesClassifier:
     def classify(self, trajectory: Trajectory, task: str) -> FailureType:  # noqa: ARG002
         steps = trajectory.steps
 
-        # 1. LOOP_DETECTED — last loop_window steps share identical tool_called + tool_input
+        # 1. LOOP_DETECTED — last loop_window steps share identical tool_called,
+        # and either identical (default) or fuzzy-similar (loop_similarity_threshold)
+        # tool_input.
         if len(steps) >= self.loop_window:
             window = steps[-self.loop_window:]
-            if (
-                window[0].tool_called is not None
-                and all(s.tool_called == window[0].tool_called for s in window)
-                and all(
-                    _tool_input_key(s.tool_input) == _tool_input_key(window[0].tool_input)
-                    for s in window
-                )
-            ):
+            if _is_loop_window(window, self.loop_similarity_threshold):
                 return FailureType.LOOP_DETECTED
 
         # 2. WRONG_TOOL_CALLED
