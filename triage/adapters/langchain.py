@@ -8,10 +8,7 @@ Install: pip install triage-agent[langchain]
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from langchain.agents import AgentExecutor
+from typing import Any
 
 from triage.agent import Agent
 from triage.policy import FailurePolicy
