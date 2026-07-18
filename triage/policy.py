@@ -115,7 +115,7 @@ class FailurePolicy:
         """Return the strategy for a given failure type, falling back to default."""
         field_name = self._FIELD_MAP.get(failure_type)
         if field_name:
-            strategy = getattr(self, field_name, None)
+            strategy: StrategyFn | None = getattr(self, field_name, None)
             if strategy is not None:
                 return strategy
         return self.default
@@ -332,14 +332,14 @@ class FailurePolicy:
         ext = os.path.splitext(path)[1].lower()
         if ext == ".toml":
             try:
-                import tomllib  # stdlib 3.11+
+                import tomllib  # type: ignore[import-untyped]  # stdlib 3.11+
             except ImportError:
-                import tomli as tomllib  # type: ignore[no-reuse-decl]
+                import tomli as tomllib  # type: ignore[import-not-found]
             with open(path, "rb") as f:
                 raw = tomllib.load(f)
         elif ext in (".yaml", ".yml"):
             try:
-                import yaml  # type: ignore[import]
+                import yaml  # type: ignore[import-untyped]
             except ImportError as e:
                 raise ImportError(
                     "pyyaml is required for YAML config files. "

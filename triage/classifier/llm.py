@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from typing import Any
 
 import anyio
 
@@ -117,12 +118,12 @@ class LLMClassifier:
         # top of an agent that's already failing.
         self._max_retries = max_retries
         self._retry_backoff_base = retry_backoff_base
-        self._client: object | None = None
-        self._async_client: object | None = None
+        self._client: Any = None
+        self._async_client: Any = None
         self._lock = threading.Lock()
         self._async_lock = anyio.Lock()
 
-    def _get_client(self) -> object:
+    def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
         with self._lock:
@@ -130,7 +131,7 @@ class LLMClassifier:
                 self._client = self._build_client()
         return self._client
 
-    async def _get_async_client(self) -> object:
+    async def _get_async_client(self) -> Any:
         if self._async_client is not None:
             return self._async_client
         async with self._async_lock:
@@ -138,7 +139,7 @@ class LLMClassifier:
                 self._async_client = self._build_async_client()
         return self._async_client
 
-    def _build_client(self) -> object:
+    def _build_client(self) -> Any:
         if self._base_url is not None:
             try:
                 import openai as _oi
@@ -158,7 +159,7 @@ class LLMClassifier:
             )
         return _anthropic.Anthropic(api_key=self._api_key)
 
-    def _build_async_client(self) -> object:
+    def _build_async_client(self) -> Any:
         if self._base_url is not None:
             try:
                 import openai as _oi
@@ -203,7 +204,7 @@ class LLMClassifier:
     def _call_sync(self, prompt: str) -> str:
         client = self._get_client()
         if self._base_url is not None:
-            response = client.chat.completions.create(  # type: ignore[union-attr]
+            response = client.chat.completions.create(
                 model=self._model,
                 max_tokens=32,
                 messages=[
@@ -211,19 +212,19 @@ class LLMClassifier:
                     {"role": "user", "content": prompt},
                 ],
             )
-            return response.choices[0].message.content or ""
-        message = client.messages.create(  # type: ignore[union-attr]
+            return str(response.choices[0].message.content or "")
+        message = client.messages.create(
             model=self._model,
             max_tokens=32,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text
+        return str(message.content[0].text)
 
     async def _call_async(self, prompt: str) -> str:
         client = await self._get_async_client()
         if self._base_url is not None:
-            response = await client.chat.completions.create(  # type: ignore[union-attr]
+            response = await client.chat.completions.create(
                 model=self._model,
                 max_tokens=32,
                 messages=[
@@ -231,14 +232,14 @@ class LLMClassifier:
                     {"role": "user", "content": prompt},
                 ],
             )
-            return response.choices[0].message.content or ""
-        message = await client.messages.create(  # type: ignore[union-attr]
+            return str(response.choices[0].message.content or "")
+        message = await client.messages.create(
             model=self._model,
             max_tokens=32,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text
+        return str(message.content[0].text)
 
     def classify(self, trajectory: Trajectory, task: str) -> FailureType:
         prompt = self._build_prompt(trajectory, task)

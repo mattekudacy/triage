@@ -18,25 +18,28 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 # ── lazy OTel import ──────────────────────────────────────────────────────────
 
 try:
-    from opentelemetry import trace as _otel_trace
-    from opentelemetry.trace import NonRecordingSpan, Span, Status, StatusCode, Tracer
+    from opentelemetry import trace as _otel_trace  # type: ignore[import-not-found]
+    from opentelemetry.trace import (  # type: ignore[import-not-found]
+        NonRecordingSpan,
+        Span,
+        Status,
+        StatusCode,
+        Tracer,
+    )
     _OTEL_AVAILABLE = True
 except ImportError:
     _OTEL_AVAILABLE = False
-    _otel_trace = None  # type: ignore[assignment]
-    Tracer = Any  # type: ignore[assignment,misc]
-    Span = Any  # type: ignore[assignment,misc]
-    Status = None  # type: ignore[assignment]
-    StatusCode = None  # type: ignore[assignment]
-    NonRecordingSpan = None  # type: ignore[assignment]
+    _otel_trace = None
+    Tracer = Any
+    Span = Any
+    Status = None
+    StatusCode = None
+    NonRecordingSpan = None
 
 
 def resolve_tracer(explicit: Any = None) -> Any:

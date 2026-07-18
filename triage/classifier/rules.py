@@ -16,7 +16,7 @@ import json
 import re
 from difflib import SequenceMatcher
 
-from triage.taxonomy import FailureType
+from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
 
 # Compiled patterns for speed (called on every failure).
@@ -95,7 +95,7 @@ def _tool_input_key(tool_input: object) -> str:
     return str(tool_input)
 
 
-def _is_loop_window(steps: list, threshold: float | None) -> bool:
+def _is_loop_window(steps: list[Step], threshold: float | None) -> bool:
     """True if every step in ``steps`` shares the same ``tool_called`` and
     their canonical ``tool_input`` strings are either identical (default) or,
     when ``threshold`` is set, similar enough consecutively (each step vs. the

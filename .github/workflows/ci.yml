@@ -40,11 +40,14 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install ruff and mypy
+        run: pip install ruff mypy
 
       - name: Lint
         run: ruff check triage/
+
+      - name: Type check
+        run: mypy triage/ --strict
 
   coverage:
     runs-on: ubuntu-latest

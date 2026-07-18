@@ -26,6 +26,7 @@ typically < 20% of failures in practice.
 from __future__ import annotations
 
 import threading
+from typing import Any, cast
 
 from triage.classifier.rules import RulesClassifier
 from triage.taxonomy import FailureType
@@ -67,7 +68,7 @@ class HybridClassifier:
     counter) per concurrent task if you need a precise, independent budget.
     """
 
-    def __init__(self, llm: object, max_llm_calls_per_run: int | None = None) -> None:
+    def __init__(self, llm: Any, max_llm_calls_per_run: int | None = None) -> None:
         self._rules = RulesClassifier()
         self._llm = llm
         self._max_llm_calls_per_run = max_llm_calls_per_run
@@ -99,7 +100,7 @@ class HybridClassifier:
             return result
         if not self._consume_call_budget():
             return FailureType.UNKNOWN
-        return self._llm.classify(trajectory, task)  # type: ignore[union-attr]
+        return cast(FailureType, self._llm.classify(trajectory, task))
 
     async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
         """Async counterpart to ``classify()``. Uses ``self._llm.aclassify()``
@@ -113,5 +114,5 @@ class HybridClassifier:
             return FailureType.UNKNOWN
         aclassify = getattr(self._llm, "aclassify", None)
         if aclassify is not None:
-            return await aclassify(trajectory, task)
-        return self._llm.classify(trajectory, task)  # type: ignore[union-attr]
+            return cast(FailureType, await aclassify(trajectory, task))
+        return cast(FailureType, self._llm.classify(trajectory, task))

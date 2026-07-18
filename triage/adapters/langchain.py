@@ -27,7 +27,9 @@ def wrap_langchain(
     """
     async def wrapped_fn(task: str, *, record_step: Any, **kw: Any) -> Any:
         try:
-            from langchain_core.callbacks import BaseCallbackHandler
+            from langchain_core.callbacks import (
+                BaseCallbackHandler,  # type: ignore[import-not-found]
+            )
         except ImportError as exc:
             raise ImportError(
                 "LangChain adapter requires 'langchain' and 'langchain-core'. "
@@ -36,7 +38,7 @@ def wrap_langchain(
 
         step_index = 0
 
-        class TriageCallbackHandler(BaseCallbackHandler):
+        class TriageCallbackHandler(BaseCallbackHandler):  # type: ignore[misc]
             def on_tool_start(
                 self, serialized: dict[str, Any], input_str: str, **cb_kw: Any
             ) -> None:

@@ -33,7 +33,7 @@ from triage.observability.otel import (
     set_span_run_outcome,
 )
 from triage.policy import FailurePolicy, RecoveryAction
-from triage.taxonomy import FailureContext, Step, TriageContext
+from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.trajectory import Trajectory
 
 
@@ -538,14 +538,16 @@ class Agent:
 
         elif action.kind == "rollback":
             checkpoint_id = action.params.get("checkpoint_id")
+            loaded: Checkpoint | None
             if checkpoint_id:
-                checkpoint = await self._checkpoint_store.load(checkpoint_id)
+                loaded = await self._checkpoint_store.load(checkpoint_id)
             else:
-                checkpoint = await self._checkpoint_store.latest(self._run_id)
-            if checkpoint is None:
+                loaded = await self._checkpoint_store.latest(self._run_id)
+            if loaded is None:
                 raise TriageEscalationError(
                     "ROLLBACK requested but no checkpoint is available.", ctx
                 )
+            checkpoint = loaded
             self._trajectory = Trajectory.from_steps(checkpoint.trajectory_snapshot)
             self._last_checkpoint_id = checkpoint.id
             self._current_state = dict(checkpoint.state)
@@ -590,7 +592,7 @@ class Agent:
 
     def report_misclassification(
         self,
-        expected_type: FailureType,  # noqa: F821 — avoid circular at module level
+        expected_type: FailureType,
         *,
         store_path: str = "corrections.jsonl",
     ) -> None:
@@ -677,7 +679,7 @@ class Agent:
         return await self.run(task, **kwargs)
 
 
-def agent(policy: FailurePolicy, **kwargs: Any) -> Callable[[Callable[..., Awaitable[Any]], Agent]]:
+def agent(policy: FailurePolicy, **kwargs: Any) -> Callable[[Callable[..., Awaitable[Any]]], Agent]:
     """Decorator factory. Wraps an async function with triage recovery.
 
     Usage::

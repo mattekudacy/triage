@@ -7,6 +7,7 @@ Ordered, appendable record of agent steps with replay support.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 
 from triage.taxonomy import Step
 
@@ -65,10 +66,10 @@ class Trajectory:
     def __len__(self) -> int:
         return len(self._steps)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Step]:
         return iter(self._steps)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Step:
         return self._steps[index]
 
     def __repr__(self) -> str:
