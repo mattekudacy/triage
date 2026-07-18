@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from langgraph.graph.state import CompiledStateGraph  # type: ignore[import-not-found]
+    from langgraph.graph.state import CompiledStateGraph
 except ImportError as exc:
     raise ImportError(
         "LangGraph adapter requires 'langgraph'. "

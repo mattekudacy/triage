@@ -23,8 +23,8 @@ from typing import Any
 # ── lazy OTel import ──────────────────────────────────────────────────────────
 
 try:
-    from opentelemetry import trace as _otel_trace  # type: ignore[import-not-found]
-    from opentelemetry.trace import (  # type: ignore[import-not-found]
+    from opentelemetry import trace as _otel_trace
+    from opentelemetry.trace import (
         NonRecordingSpan,
         Span,
         Status,

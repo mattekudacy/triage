@@ -40,8 +40,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install ruff and mypy
-        run: pip install ruff mypy
+      - name: Install ruff, mypy, and core deps
+        run: pip install ruff mypy anyio pydantic
 
       - name: Lint
         run: ruff check triage/

@@ -84,3 +84,27 @@ fail_under = 80
 [tool.mypy]
 python_version = "3.10"
 strict = true
+
+[[tool.mypy.overrides]]
+module = [
+    "anthropic",
+    "anthropic.*",
+    "openai",
+    "openai.*",
+    "aiosqlite",
+    "redis",
+    "redis.*",
+    "langgraph",
+    "langgraph.*",
+    "langchain",
+    "langchain.*",
+    "langchain_core",
+    "langchain_core.*",
+    "opentelemetry",
+    "opentelemetry.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["triage.policy"]
+warn_unused_ignores = false

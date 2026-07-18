@@ -334,7 +334,7 @@ class FailurePolicy:
             try:
                 import tomllib  # type: ignore[import-untyped]  # stdlib 3.11+
             except ImportError:
-                import tomli as tomllib  # type: ignore[import-not-found]
+                import tomli as tomllib  # type: ignore[import-untyped,import-not-found,no-redef]
             with open(path, "rb") as f:
                 raw = tomllib.load(f)
         elif ext in (".yaml", ".yml"):

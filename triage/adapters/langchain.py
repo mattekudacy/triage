@@ -27,9 +27,7 @@ def wrap_langchain(
     """
     async def wrapped_fn(task: str, *, record_step: Any, **kw: Any) -> Any:
         try:
-            from langchain_core.callbacks import (
-                BaseCallbackHandler,  # type: ignore[import-not-found]
-            )
+            from langchain_core.callbacks import BaseCallbackHandler
         except ImportError as exc:
             raise ImportError(
                 "LangChain adapter requires 'langchain' and 'langchain-core'. "
