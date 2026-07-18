@@ -102,9 +102,10 @@ module = [
     "langchain_core.*",
     "opentelemetry",
     "opentelemetry.*",
+    "tomllib",
 ]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["triage.policy"]
+module = ["triage.policy", "triage.classifier.llm"]
 warn_unused_ignores = false

@@ -332,7 +332,7 @@ class FailurePolicy:
         ext = os.path.splitext(path)[1].lower()
         if ext == ".toml":
             try:
-                import tomllib  # type: ignore[import-untyped]  # stdlib 3.11+
+                import tomllib  # stdlib 3.11+
             except ImportError:
                 import tomli as tomllib  # type: ignore[import-untyped,import-not-found,no-redef]
             with open(path, "rb") as f:
