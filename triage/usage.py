@@ -25,7 +25,7 @@ Or accept ``record_usage`` directly as a keyword argument::
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

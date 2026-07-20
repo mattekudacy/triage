@@ -23,7 +23,6 @@ import anyio
 from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore, make_checkpoint
 from triage.classifier.base import Classifier
 from triage.classifier.rules import RulesClassifier
-from triage.usage import Usage, UsageMeter
 from triage.observability.otel import (
     classify_span,
     dispatch_span,
@@ -36,6 +35,7 @@ from triage.observability.otel import (
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.trajectory import Trajectory
+from triage.usage import Usage, UsageMeter
 
 
 def _safe_hook(fn: Callable[..., None], *args: Any) -> None:
