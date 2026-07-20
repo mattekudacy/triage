@@ -361,6 +361,24 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
   had shipped in v0.4 (`get_recorder()`/`get_state_updater()`, `TriageContext`, `max_total_attempts`).
   Concurrency and chaining sections updated to reflect v0.13 state.
 
+## v0.16 changes (shipped)
+
+- **Circuit breaker** — new `triage/breaker.py`: `CircuitBreaker(failure_threshold, window_seconds,
+  cooldown_seconds)` dataclass with CLOSED/OPEN/HALF_OPEN states and a sliding failure window.
+  State is **shared across runs** via a plain `threading.Lock`-guarded object (deliberately *not* a
+  `ContextVar` — a ContextVar mutated inside `anyio.to_thread.run_sync` is invisible to the caller).
+  `record_failure()` / `record_success()` accept a `_now` injectable float for deterministic testing.
+  Transitions: CLOSED → OPEN when `failure_count >= failure_threshold` within `window_seconds`;
+  OPEN → HALF_OPEN after `cooldown_seconds`; HALF_OPEN → CLOSED on `record_success()`;
+  HALF_OPEN → OPEN on `record_failure()`.
+- **`circuit_breaker()` strategy** — `triage/strategies/circuit_breaker.py`:
+  `circuit_breaker(breaker, inner, open_action="escalate")` wraps any existing strategy.
+  While OPEN: returns `ESCALATE`/`ABORT` immediately (no inner call). While CLOSED/HALF_OPEN:
+  calls `breaker.record_failure()` then delegates to `inner`. No new `RecoveryAction` kinds.
+- **GitHub Release notes extracted from CHANGELOG.md** — `release.yml` now uses `awk` to extract the
+  section for the tagged version and sets it as the GitHub Release body via `body_path`.
+- `CircuitBreaker`, `BreakerState` exported from `triage.__all__`.
+
 ## v0.15 changes (shipped)
 
 - **Cost/token budgets** — new `triage/usage.py` module: `Usage` dataclass

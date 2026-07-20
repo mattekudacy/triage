@@ -5,6 +5,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.16.0] - 2026-07-21
+
+### Added
+- **Circuit breaker** — new `triage/breaker.py`: `CircuitBreaker` with CLOSED → OPEN → HALF_OPEN states, a sliding failure-count window (`window_seconds`), and a cooldown period (`cooldown_seconds`). State is shared across runs (plain `threading.Lock`-guarded, not a `ContextVar` — deliberate, since cross-run state is the point). `record_failure()` and `record_success()` are injectable with a `_now` parameter for deterministic testing without real-clock dependency.
+- **`circuit_breaker()` strategy** — new `triage/strategies/circuit_breaker.py`: `circuit_breaker(breaker, inner, open_action="escalate")` factory. When the breaker is OPEN, returns `ESCALATE` (or `ABORT` if `open_action="abort"`) immediately without calling the inner strategy. When CLOSED or HALF_OPEN, records the failure and delegates to the inner strategy. Composes with all existing strategies — no new `RecoveryAction` kinds needed.
+- `CircuitBreaker`, `BreakerState` added to `triage.__all__`.
+
+### Fixed
+- **GitHub Release notes** — `release.yml` now extracts the relevant `CHANGELOG.md` section for the tagged version and uses it as the release body, instead of a static "See CHANGELOG.md" placeholder.
+
+---
+
+## [0.15.1] - 2026-07-21
+
+### Fixed
+- Patch release to validate the automated release pipeline (autotag → release → PyPI publish). No functional changes from 0.15.0.
+
+---
+
+## [0.15.0] - 2026-07-21
+
+### Added
+- **Cost/token budgets** — new `triage/usage.py`: `Usage` dataclass (`input_tokens`, `output_tokens`, `cost_usd`, `calls`) and a thread-safe `UsageMeter`. `Agent.__init__` gains `max_tokens: int | None` and `max_cost_usd: float | None`; when exceeded, triage raises `TriageEscalationError` before the next recovery attempt (same pattern as `max_recovery_seconds`). Meter resets at the start of every `run()` and is isolated per concurrent run via `_RunState`.
+- **`record_usage` injection** — injected into the wrapped fn alongside `record_step`/`update_state`; `triage.get_usage_recorder()` provides the same callback via `ContextVar` for agents that avoid signature changes.
+- **`LLMClassifier` auto-reports usage** — `_call_sync()` and `_call_async()` duck-type `.usage` on the API response and push token counts to the run meter automatically. Covers Anthropic (`input_tokens`/`output_tokens`) and OpenAI-compatible (`prompt_tokens`/`completion_tokens`) backends. Silently skipped for backends that don't expose `.usage`.
+- **HybridClassifier accuracy benchmarks** — `examples/benchmark.py` gains `SEMANTIC_CASES` (3× `PLAN_INCOMPLETE` + 2× `CONTEXT_OVERFLOW`) and `--hybrid` flag. `print_summary` bug fixed (previously always re-ran `RulesClassifier` regardless of which classifier was under test). `docs/concepts/classifiers.md` updated with accuracy tables for `LLMClassifier` and `HybridClassifier`.
+- `Usage`, `UsageMeter`, `get_usage_recorder` added to `triage.__all__`.
+
+---
+
 ## [0.14.0] - 2026-07-16
 
 ### Added

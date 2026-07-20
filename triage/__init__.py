@@ -16,6 +16,7 @@ from triage.agent import (
     get_usage_recorder,
 )
 from triage.bench import BenchReport, BenchResult, run_benchmark
+from triage.breaker import BreakerState, CircuitBreaker
 from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore
 from triage.feedback import Correction, coverage_report, record_correction
 from triage.policy import FailurePolicy, RecoveryAction
@@ -55,6 +56,9 @@ __all__ = [
     "RecordingAgent",
     "assert_classifies_as",
     "make_step",
+    # circuit breaker
+    "BreakerState",
+    "CircuitBreaker",
     # usage accounting
     "Usage",
     "UsageMeter",
@@ -65,7 +69,7 @@ __all__ = [
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.15.1"
+__version__ = "0.16.0"
 
 
 def __getattr__(name: str) -> object:
