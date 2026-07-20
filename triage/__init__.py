@@ -13,6 +13,7 @@ from triage.agent import (
     agent,
     get_recorder,
     get_state_updater,
+    get_usage_recorder,
 )
 from triage.bench import BenchReport, BenchResult, run_benchmark
 from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore
@@ -22,6 +23,7 @@ from triage.scorer.base import RiskScore, StepRiskScorer
 from triage.scorer.rules import RulesRiskScorer
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.testing import RecordingAgent, assert_classifies_as, make_step
+from triage.usage import Usage, UsageMeter
 
 __all__ = [
     "Agent",
@@ -43,6 +45,7 @@ __all__ = [
     "agent",
     "get_recorder",
     "get_state_updater",
+    "get_usage_recorder",
     "record_correction",
     "run_benchmark",
     "RiskScore",
@@ -52,6 +55,9 @@ __all__ = [
     "RecordingAgent",
     "assert_classifies_as",
     "make_step",
+    # usage accounting
+    "Usage",
+    "UsageMeter",
     # v0.2+ extras (require optional dependencies)
     "LLMClassifier",
     "HybridClassifier",
@@ -59,7 +65,7 @@ __all__ = [
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 
 def __getattr__(name: str) -> object:

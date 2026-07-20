@@ -361,6 +361,26 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
   had shipped in v0.4 (`get_recorder()`/`get_state_updater()`, `TriageContext`, `max_total_attempts`).
   Concurrency and chaining sections updated to reflect v0.13 state.
 
+## v0.15 changes (shipped)
+
+- **Cost/token budgets** — new `triage/usage.py` module: `Usage` dataclass
+  (`input_tokens`, `output_tokens`, `cost_usd`, `calls`) and a thread-safe `UsageMeter`
+  that accumulates usage across all LLM calls in a run.
+  `Agent.__init__` gains `max_tokens: int | None` and `max_cost_usd: float | None` params
+  (both default `None`; copied by `clone()`). When exceeded, triage raises
+  `TriageEscalationError` before the next recovery attempt — same pattern as the existing
+  `max_recovery_seconds` wall-clock cap. The meter resets at the start of every `run()`.
+  **Injection:** `record_usage` is injected into the wrapped fn as a keyword argument
+  (alongside `record_step` / `update_state`); `triage.get_usage_recorder()` provides the
+  same callback via a `ContextVar` for agents that avoid signature changes.
+  **`LLMClassifier` auto-reporting:** `_call_sync()` and `_call_async()` now duck-type
+  `.usage` on the response object and push `Usage(input_tokens=..., output_tokens=...)`
+  to the run meter automatically, covering both Anthropic
+  (`response.usage.input_tokens / output_tokens`) and OpenAI-compatible
+  (`response.usage.prompt_tokens / completion_tokens`) backends. Backends that don't expose
+  `.usage` are silently skipped (best-effort, never breaks classification).
+  **Exports:** `Usage`, `UsageMeter`, `get_usage_recorder` added to `triage.__all__`.
+
 ## v0.14 changes (shipped)
 
 - **OpenTelemetry spans** — new `triage/observability/otel.py` module (new package,
@@ -382,8 +402,3 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
   Tests in `tests/test_observability_otel.py` (5 tests skipped without `opentelemetry-sdk`,
   7 tests always run to verify the no-op path).
 
-## v0.14 ideas (not committed)
-
-### HybridClassifier accuracy benchmarks
-- Add LLMClassifier numbers to the accuracy table in `docs/concepts/classifiers.md`
-  once a labeled corpus beyond the synthetic suite is available.

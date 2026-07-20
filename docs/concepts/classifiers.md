@@ -82,7 +82,7 @@ A threshold around `0.85`–`0.95` is a reasonable starting point; lower values 
 
 ### Accuracy on the synthetic suite
 
-The benchmark in `examples/benchmark.py` runs 26 trajectories covering all structurally-detectable failure types plus known negative cases (inputs that should **not** match). Results as of v0.14:
+The benchmark in `examples/benchmark.py` runs trajectories covering all structurally-detectable failure types plus known negative cases (inputs that should **not** match). Results as of v0.14:
 
 | Failure type | Cases | Pass | Notes |
 |---|---|---|---|
@@ -217,6 +217,34 @@ Keep this budget small — classification runs on the failure path, and every re
 
 `LLMClassifier` defines `async def aclassify(trajectory, task) -> FailureType`, backed by `AsyncAnthropic`/`AsyncOpenAI` instead of the sync client. `agent.py` detects and awaits this directly, avoiding the `anyio.to_thread.run_sync()` hop that `classify()` still needs. The sync and async clients are built and cached independently — calling both `classify()` and `aclassify()` on the same `LLMClassifier` instance creates one of each, not a shared client.
 
+### Accuracy on the synthetic suite
+
+`LLMClassifier` is tested against two case sets in `examples/benchmark.py`:
+
+- `CASES` (26 cases) — the same structural suite as `RulesClassifier`
+- `SEMANTIC_CASES` (5 cases) — `PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` trajectories that rules cannot detect
+
+Run both at once:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... python examples/benchmark.py --llm
+```
+
+Expected results on `claude-haiku-4-5-20251001` (structural + semantic, 31 cases total):
+
+| Failure type | Cases | Notes |
+|---|---|---|
+| `LOOP_DETECTED` | 2 | Structural — LLM matches rules |
+| `WRONG_TOOL_CALLED` | 4 | Structural — LLM matches rules |
+| `SCHEMA_MISMATCH` | 4 | Structural — LLM matches rules |
+| `EXTERNAL_FAULT` | 4 | Structural — LLM matches rules |
+| `CONSTRAINT_IGNORED` | 2 | Semantic — LLM reads llm_output |
+| `PLAN_INCOMPLETE` | 3 | Semantic — LLM detects missing sub-goals |
+| `CONTEXT_OVERFLOW` | 2 | Semantic — LLM detects forgotten context |
+| `UNKNOWN` (negatives) | 10 | No false positives expected |
+
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are the two types that meaningfully differentiate `LLMClassifier` from `RulesClassifier`. These cases are intentionally designed with clear semantic signals (task stated two goals, agent reported only one; constraint stated at step 0, violated at the last step) to reflect the category accurately. The LLM may still return `UNKNOWN` on edge cases — use `HybridClassifier` in production to bound API cost while covering these types.
+
 ---
 
 ## HybridClassifier
@@ -258,15 +286,33 @@ agent = triage.Agent(
 )
 ```
 
+### Accuracy on the synthetic suite
+
+`HybridClassifier` is tested against the same `CASES + SEMANTIC_CASES` (31 cases) as `LLMClassifier`:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... python examples/benchmark.py --hybrid
+```
+
+Because `HybridClassifier` runs `RulesClassifier` first and only calls the LLM on `UNKNOWN`, it should match `RulesClassifier` exactly on the 26 structural cases (zero API calls) and match `LLMClassifier` on the 5 semantic cases (one LLM call each). The LLM call budget for the benchmark is unlimited by default — pass `max_llm_calls_per_run=N` to `HybridClassifier` if you want to measure the effect of capping it.
+
+Run both classifiers together to compare side by side:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... python examples/benchmark.py --llm --hybrid
+```
+
 ---
 
 ## Choosing a classifier
 
-| Classifier | Cost | Accuracy | Use when |
+| Classifier | Cost | Types covered | Use when |
 |---|---|---|---|
-| `RulesClassifier` | Free | Catches ~60% of failures | Default; production with mostly structural failures |
-| `LLMClassifier` | API calls on every failure | Handles all 10 types | Agents with complex reasoning failures |
-| `HybridClassifier` | API calls only for `UNKNOWN` | Best of both | Most production agents |
+| `RulesClassifier` | Free | 7 of 9 (structural only) | Default; production with mostly structural failures |
+| `LLMClassifier` | API call on every failure | All 9 | Agents with complex reasoning failures |
+| `HybridClassifier` | API call only for `UNKNOWN` | All 9 | Most production agents — best cost/coverage tradeoff |
+
+`RulesClassifier` cannot detect `PLAN_INCOMPLETE` or `CONTEXT_OVERFLOW` — these always return `UNKNOWN`. If your agents produce these failure types, use `LLMClassifier` or `HybridClassifier`. Run `python examples/benchmark.py --hybrid` to measure accuracy on the synthetic suite (including semantic cases) before deploying.
 
 ---
 

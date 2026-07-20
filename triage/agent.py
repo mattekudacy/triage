@@ -23,6 +23,7 @@ import anyio
 from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore, make_checkpoint
 from triage.classifier.base import Classifier
 from triage.classifier.rules import RulesClassifier
+from triage.usage import Usage, UsageMeter
 from triage.observability.otel import (
     classify_span,
     dispatch_span,
@@ -56,6 +57,9 @@ _record_step_var: contextvars.ContextVar[Callable[[Step], None] | None] = \
 
 _update_state_var: contextvars.ContextVar[Callable[[dict[str, Any]], None] | None] = \
     contextvars.ContextVar("triage_update_state", default=None)
+
+_record_usage_var: contextvars.ContextVar[Callable[[Usage], None] | None] = \
+    contextvars.ContextVar("triage_record_usage", default=None)
 
 
 def get_recorder() -> Callable[[Step], None]:
@@ -97,6 +101,32 @@ def get_state_updater() -> Callable[[dict[str, Any]], None]:
     return fn
 
 
+def get_usage_recorder() -> Callable[[Usage], None]:
+    """Return the ``record_usage`` callback for the current triage run.
+
+    Call this inside a wrapped agent to report token and cost usage::
+
+        from triage.agent import get_usage_recorder
+        from triage.usage import Usage
+
+        async def my_agent(task: str, *, record_step, **kwargs) -> str:
+            result = await call_llm(prompt)
+            get_usage_recorder()(Usage(
+                input_tokens=result.usage.input_tokens,
+                output_tokens=result.usage.output_tokens,
+            ))
+            return result.content
+
+    Raises ``RuntimeError`` if called outside a triage ``Agent.run()`` context.
+    """
+    fn = _record_usage_var.get()
+    if fn is None:
+        raise RuntimeError(
+            "get_usage_recorder() called outside a triage Agent.run() context."
+        )
+    return fn
+
+
 @dataclass
 class _RunState:
     """Per-task run-state for one Agent instance.
@@ -113,6 +143,7 @@ class _RunState:
     pending_checkpoints: list[Checkpoint] = field(default_factory=list)
     last_ctx: FailureContext | None = None
     run_id: str | None = None
+    meter: UsageMeter = field(default_factory=UsageMeter)
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
@@ -186,6 +217,16 @@ class Agent:
         configured via ``trace.set_tracer_provider(...)``, the global tracer is
         used automatically. If OTel is not installed or no provider is configured,
         tracing is a silent no-op with zero overhead.
+    max_tokens:
+        Maximum total tokens (input + output) allowed per ``run()`` call across
+        all LLM calls recorded via ``record_usage()``. When exceeded, triage
+        raises ``TriageEscalationError`` before the next recovery attempt.
+        ``None`` (default) disables this cap.
+    max_cost_usd:
+        Maximum total cost in USD allowed per ``run()`` call. When exceeded,
+        triage raises ``TriageEscalationError``. ``None`` (default) disables
+        this cap. Use alongside ``record_usage(Usage(cost_usd=...))`` calls in
+        the agent body or via the ``LLMClassifier`` auto-reporting.
     """
 
     def __init__(
@@ -205,6 +246,8 @@ class Agent:
         risk_scorer: StepRiskScorer | None = None,
         risk_threshold: float = 0.9,
         tracer: Any = None,
+        max_tokens: int | None = None,
+        max_cost_usd: float | None = None,
     ) -> None:
         self._fn = fn
         self._policy = policy
@@ -223,6 +266,8 @@ class Agent:
         # resolve_tracer() returns explicit tracer if provided, else auto-detects
         # an active OTel provider, else None (no-op path).
         self._tracer = resolve_tracer(tracer)
+        self._max_tokens = max_tokens
+        self._max_cost_usd = max_cost_usd
 
         # Per-task run-state, isolated via a ContextVar. asyncio/anyio copy the
         # current Context when spawning a Task, so concurrent run() calls on
@@ -290,6 +335,10 @@ class Agent:
     def _run_id(self, value: str | None) -> None:
         self._run_state.run_id = value
 
+    @property
+    def _meter(self) -> UsageMeter:
+        return self._run_state.meter
+
     def clone(self) -> Agent:
         """Return a new Agent sharing the same policy, classifier, and checkpoint
         store but with fresh per-run state, independent lifecycle hooks, and its
@@ -319,6 +368,8 @@ class Agent:
             risk_scorer=self._risk_scorer,
             risk_threshold=self._risk_threshold,
             tracer=self._tracer,
+            max_tokens=self._max_tokens,
+            max_cost_usd=self._max_cost_usd,
         )
 
     async def run(self, task: str, **kwargs: Any) -> Any:
@@ -331,15 +382,20 @@ class Agent:
         # Stored in _RunState so concurrent run() calls get independent IDs.
         self._run_id = str(uuid.uuid4())
 
+        # Reset usage meter so each run() starts with a clean slate.
+        self._meter.reset()
+
         # Reset any per-run budget the classifier tracks (e.g. HybridClassifier's
         # max_llm_calls_per_run). Duck-typed — most classifiers don't define this.
         reset_call_count = getattr(self._classifier, "reset_call_count", None)
         if reset_call_count is not None:
             reset_call_count()
 
-        # Set contextvars so get_recorder() / get_state_updater() work inside fn
+        # Set contextvars so get_recorder() / get_state_updater() / get_usage_recorder()
+        # work inside fn without requiring signature changes.
         rec_token = _record_step_var.set(self._record_step)
         upd_token = _update_state_var.set(self._update_state)
+        usg_token = _record_usage_var.set(self._record_usage)
         try:
             async with run_span(self._tracer, self._run_id, task) as _root_span:
                 try:
@@ -352,6 +408,7 @@ class Agent:
         finally:
             _record_step_var.reset(rec_token)
             _update_state_var.reset(upd_token)
+            _record_usage_var.reset(usg_token)
 
     async def _run_loop(
         self,
@@ -372,6 +429,7 @@ class Agent:
                     task,
                     record_step=self._record_step,
                     update_state=self._update_state,
+                    record_usage=self._record_usage,
                     **kwargs,
                 )
                 await self._drain_checkpoints()
@@ -472,6 +530,26 @@ class Agent:
                     elif (time.monotonic() - _recovery_start) >= self._max_recovery_seconds:
                         raise TriageEscalationError(
                             f"max_recovery_seconds ({self._max_recovery_seconds}s) exceeded.",
+                            ctx,
+                        ) from exc
+
+                # Token and cost budgets — checked once per failure, after the
+                # first failure so the agent gets at least one attempt.
+                if self._max_tokens is not None:
+                    used = self._meter.total_tokens
+                    if used >= self._max_tokens:
+                        raise TriageEscalationError(
+                            f"max_tokens ({self._max_tokens}) exceeded "
+                            f"(used {used} tokens).",
+                            ctx,
+                        ) from exc
+
+                if self._max_cost_usd is not None:
+                    spent = self._meter.cost_usd
+                    if spent >= self._max_cost_usd:
+                        raise TriageEscalationError(
+                            f"max_cost_usd ({self._max_cost_usd:.6f}) exceeded "
+                            f"(spent ${spent:.6f}).",
                             ctx,
                         ) from exc
 
@@ -665,6 +743,9 @@ class Agent:
         # update_state() call that follows record_step() in the same step block.
         if self._pending_checkpoints:
             self._pending_checkpoints[-1].state = dict(state)
+
+    def _record_usage(self, usage: Usage) -> None:
+        self._meter.record(usage)
 
     async def _drain_checkpoints(self) -> None:
         pending, self._pending_checkpoints = self._pending_checkpoints, []

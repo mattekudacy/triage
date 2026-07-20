@@ -36,6 +36,7 @@ import anyio
 
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
+from triage.usage import Usage
 
 # Exception "shapes" worth retrying — checked by attribute/name rather than by
 # importing anthropic/openai's exception classes directly, so this works for
@@ -194,6 +195,29 @@ class LLMClassifier:
         lines.append("Classify the failure type:")
         return "\n".join(lines)
 
+    def _report_usage(self, response: object) -> None:
+        """Push token/cost usage from a sync or async response to the run meter.
+
+        Duck-typed so backends that don't expose `.usage` are silently skipped.
+        The usage recorder is read from the contextvar set by Agent.run() — if
+        called outside a triage run (e.g. standalone benchmark), this is a no-op.
+        """
+        try:
+            from triage.agent import _record_usage_var  # lazy to avoid circular import
+            record_fn = _record_usage_var.get()
+            if record_fn is None:
+                return
+            u = getattr(response, "usage", None)
+            if u is None:
+                return
+            # Anthropic: .input_tokens / .output_tokens
+            # OpenAI:    .prompt_tokens / .completion_tokens
+            input_t = getattr(u, "input_tokens", None) or getattr(u, "prompt_tokens", 0) or 0
+            output_t = getattr(u, "output_tokens", None) or getattr(u, "completion_tokens", 0) or 0
+            record_fn(Usage(input_tokens=int(input_t), output_tokens=int(output_t)))
+        except Exception:
+            pass  # usage reporting is best-effort; never break classification
+
     def _parse_response(self, raw: str) -> FailureType:
         raw = raw.strip().lower()
         for ft in FailureType:
@@ -212,6 +236,7 @@ class LLMClassifier:
                     {"role": "user", "content": prompt},
                 ],
             )
+            self._report_usage(response)
             return str(response.choices[0].message.content or "")
         message = client.messages.create(
             model=self._model,
@@ -219,6 +244,7 @@ class LLMClassifier:
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
+        self._report_usage(message)
         return str(message.content[0].text)
 
     async def _call_async(self, prompt: str) -> str:
@@ -232,6 +258,7 @@ class LLMClassifier:
                     {"role": "user", "content": prompt},
                 ],
             )
+            self._report_usage(response)
             return str(response.choices[0].message.content or "")
         message = await client.messages.create(
             model=self._model,
@@ -239,6 +266,7 @@ class LLMClassifier:
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
+        self._report_usage(message)
         return str(message.content[0].text)
 
     def classify(self, trajectory: Trajectory, task: str) -> FailureType:
