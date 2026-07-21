@@ -8,7 +8,8 @@ Only the latest release on PyPI receives security fixes.
 
 Please **do not** open a public GitHub issue for security vulnerabilities.
 
-Email **mattekudacy@gmail.com** with:
+Email **hello.cyrusm@gmail.com** with:
+
 - A description of the vulnerability and its potential impact
 - Steps to reproduce or a minimal proof of concept
 - The `triage-agent` version affected
