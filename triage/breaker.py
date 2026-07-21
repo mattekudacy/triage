@@ -78,6 +78,7 @@ class CircuitBreaker:
     _failure_times: list[float] = field(default_factory=list, init=False, repr=False)
     _state: BreakerState = field(default=BreakerState.CLOSED, init=False, repr=False)
     _opened_at: float | None = field(default=None, init=False, repr=False)
+    _probe_in_flight: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.failure_threshold < 1:
@@ -117,6 +118,7 @@ class CircuitBreaker:
         with self._lock:
             self._evict_old_failures(now)
             self._failure_times.append(now)
+            self._probe_in_flight = False
 
             if self._state == BreakerState.HALF_OPEN:
                 # Probe failed — re-open immediately
@@ -135,6 +137,7 @@ class CircuitBreaker:
         ``_now`` is injectable for testing.
         """
         with self._lock:
+            self._probe_in_flight = False
             if self._state == BreakerState.HALF_OPEN:
                 self._state = BreakerState.CLOSED
                 self._failure_times.clear()
@@ -153,13 +156,22 @@ class CircuitBreaker:
     def allow_request(self, *, _now: float | None = None) -> bool:
         """Return True when a call should be allowed through.
 
-        CLOSED  → True (normal operation)
-        OPEN    → False (blocked)
-        HALF_OPEN → True (one probe allowed; caller must call record_success/failure)
+        CLOSED    → True (normal operation)
+        OPEN      → False (blocked)
+        HALF_OPEN → True for exactly one concurrent caller; subsequent callers get
+                    False until the in-flight probe records its outcome. This enforces
+                    a single-probe policy when the breaker is shared across agents.
         """
         now = _now if _now is not None else time.monotonic()
         with self._lock:
-            return self._evaluate_state(now) != BreakerState.OPEN
+            state = self._evaluate_state(now)
+            if state == BreakerState.OPEN:
+                return False
+            if state == BreakerState.HALF_OPEN:
+                if self._probe_in_flight:
+                    return False
+                self._probe_in_flight = True
+            return True
 
     def reset(self) -> None:
         """Fully reset the breaker to CLOSED with no recorded failures."""
@@ -167,6 +179,7 @@ class CircuitBreaker:
             self._state = BreakerState.CLOSED
             self._failure_times.clear()
             self._opened_at = None
+            self._probe_in_flight = False
 
     # ── internals ────────────────────────────────────────────────────────────
 

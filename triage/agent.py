@@ -15,14 +15,20 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from triage.scorer.base import StepRiskScorer
-
 import anyio
+
+if TYPE_CHECKING:
+    from triage.breaker import CircuitBreaker
+    from triage.scorer.base import StepRiskScorer
 
 from triage.checkpoint import Checkpoint, CheckpointStore, InMemoryCheckpointStore, make_checkpoint
 from triage.classifier.base import Classifier
 from triage.classifier.rules import RulesClassifier
+from triage.observability.metrics import record_failure as metrics_record_failure
+from triage.observability.metrics import record_recovery as metrics_record_recovery
+from triage.observability.metrics import record_recovery_end as metrics_record_recovery_end
+from triage.observability.metrics import record_run_end as metrics_record_run_end
+from triage.observability.metrics import resolve_meter
 from triage.observability.otel import (
     classify_span,
     dispatch_span,
@@ -217,16 +223,55 @@ class Agent:
         configured via ``trace.set_tracer_provider(...)``, the global tracer is
         used automatically. If OTel is not installed or no provider is configured,
         tracing is a silent no-op with zero overhead.
+    meter:
+        Optional OpenTelemetry ``Meter`` instance for recording metrics
+        (``triage.runs``, ``triage.failures``, ``triage.recoveries``,
+        ``triage.run.duration``, ``triage.recovery.attempts``). When ``None``
+        (default), triage auto-detects a configured ``MeterProvider`` the same
+        way ``tracer`` auto-detects a ``TracerProvider``. If OTel metrics is not
+        installed or no provider is configured, metrics are a silent no-op.
+    circuit_breakers:
+        Optional list of ``CircuitBreaker`` instances to notify on every
+        successful ``run()`` completion. After a clean return (no failures),
+        triage calls ``breaker.record_success()`` on each breaker in order.
+        This closes any breaker that was in HALF_OPEN state after a probe,
+        without requiring manual success-signalling at the call site. Pass the
+        same breaker instances that are wired into ``circuit_breaker()``
+        strategy wrappers in the policy.
+    on_escalate:
+        Optional async callback invoked just before ``TriageEscalationError``
+        is raised. Signature::
+
+            async def on_escalate(ctx: FailureContext) -> RecoveryAction | None:
+                ...
+
+        Return a ``RecoveryAction`` to override the escalation — triage will
+        execute that action instead of raising. Return ``None`` (or omit a
+        return) to proceed with the escalation as normal. This is the
+        human-in-the-loop hook: pause autonomous execution, notify a human,
+        wait for a decision, and return an action (or ``None`` to surface the
+        error). Exceptions raised inside ``on_escalate`` are propagated directly
+        (unlike lifecycle hooks such as ``on_failure``, which swallow errors).
     max_tokens:
         Maximum total tokens (input + output) allowed per ``run()`` call across
         all LLM calls recorded via ``record_usage()``. When exceeded, triage
         raises ``TriageEscalationError`` before the next recovery attempt.
         ``None`` (default) disables this cap.
+
+        **Important:** enforcement is checked at each failure point, not
+        preemptively. An agent that burns tokens but never raises will complete
+        regardless of this cap. The check fires *after* the first failure —
+        meaning up to one failure's worth of overage is always possible before
+        triage intervenes. This is intentional: triage only intercepts at the
+        failure boundary, so the cap is a "do not keep retrying after I'm
+        already over budget" guard, not a hard token ceiling.
     max_cost_usd:
-        Maximum total cost in USD allowed per ``run()`` call. When exceeded,
-        triage raises ``TriageEscalationError``. ``None`` (default) disables
-        this cap. Use alongside ``record_usage(Usage(cost_usd=...))`` calls in
-        the agent body or via the ``LLMClassifier`` auto-reporting.
+        Maximum total cost in USD allowed per ``run()`` call. Subject to the
+        same failure-point enforcement as ``max_tokens`` above — not a
+        preemptive cap. When exceeded, triage raises ``TriageEscalationError``.
+        ``None`` (default) disables this cap. Use alongside
+        ``record_usage(Usage(cost_usd=...))`` calls in the agent body or via
+        the ``LLMClassifier`` auto-reporting.
     """
 
     def __init__(
@@ -246,6 +291,9 @@ class Agent:
         risk_scorer: StepRiskScorer | None = None,
         risk_threshold: float = 0.9,
         tracer: Any = None,
+        meter: Any = None,
+        circuit_breakers: list[CircuitBreaker] | None = None,
+        on_escalate: Callable[[FailureContext], Awaitable[RecoveryAction | None]] | None = None,
         max_tokens: int | None = None,
         max_cost_usd: float | None = None,
     ) -> None:
@@ -266,6 +314,9 @@ class Agent:
         # resolve_tracer() returns explicit tracer if provided, else auto-detects
         # an active OTel provider, else None (no-op path).
         self._tracer = resolve_tracer(tracer)
+        self._otel_meter = resolve_meter(meter)
+        self._circuit_breakers: list[CircuitBreaker] = list(circuit_breakers or [])
+        self._on_escalate = on_escalate
         self._max_tokens = max_tokens
         self._max_cost_usd = max_cost_usd
 
@@ -368,6 +419,9 @@ class Agent:
             risk_scorer=self._risk_scorer,
             risk_threshold=self._risk_threshold,
             tracer=self._tracer,
+            meter=self._otel_meter,
+            circuit_breakers=list(self._circuit_breakers),
+            on_escalate=self._on_escalate,
             max_tokens=self._max_tokens,
             max_cost_usd=self._max_cost_usd,
         )
@@ -396,14 +450,28 @@ class Agent:
         rec_token = _record_step_var.set(self._record_step)
         upd_token = _update_state_var.set(self._update_state)
         usg_token = _record_usage_var.set(self._record_usage)
+        _run_start = time.monotonic()
         try:
             async with run_span(self._tracer, self._run_id, task) as _root_span:
                 try:
                     result = await self._run_loop(task, attempt, attempt_history, kwargs)
                     set_span_run_outcome(_root_span)
+                    # Notify circuit breakers that this run completed cleanly.
+                    for breaker in self._circuit_breakers:
+                        breaker.record_success()
+                    metrics_record_run_end(
+                        self._otel_meter,
+                        outcome="success",
+                        duration_s=time.monotonic() - _run_start,
+                    )
                     return result
                 except Exception as exc:
                     set_span_run_outcome(_root_span, error=exc)
+                    metrics_record_run_end(
+                        self._otel_meter,
+                        outcome="error",
+                        duration_s=time.monotonic() - _run_start,
+                    )
                     raise
         finally:
             _record_step_var.reset(rec_token)
@@ -503,6 +571,7 @@ class Agent:
                         "task": task,
                     },
                 )
+                metrics_record_failure(self._otel_meter, failure_type=failure_type.value)
                 if self._on_failure:
                     _safe_hook(self._on_failure, ctx)
 
@@ -555,7 +624,25 @@ class Agent:
 
                 with dispatch_span(self._tracer, self._run_id, attempt) as _dispatch_span:
                     action = await self._policy.dispatch(ctx)
+                    # on_escalate: human-in-the-loop hook — called before raising
+                    # TriageEscalationError. May return an override RecoveryAction
+                    # or None to proceed with escalation.
+                    if action.kind == "escalate" and self._on_escalate is not None:
+                        override = await self._on_escalate(ctx)
+                        if override is not None:
+                            action = override
                     set_span_dispatch_result(_dispatch_span, action.kind, failure_type.value)
+                metrics_record_recovery(
+                    self._otel_meter,
+                    failure_type=failure_type.value,
+                    action_kind=action.kind,
+                )
+                # Decrement the in-progress counter when the run exits via
+                # escalate or abort (the loop won't iterate again).
+                if action.kind in ("escalate", "abort"):
+                    metrics_record_recovery_end(
+                        self._otel_meter, failure_type=failure_type.value
+                    )
                 logger.info(
                     "[triage] action dispatched",
                     extra={

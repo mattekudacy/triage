@@ -17,36 +17,34 @@ Usage::
 
 When the breaker is OPEN, the inner strategy is never called — the run is
 immediately escalated with a "circuit open" message. When CLOSED or HALF_OPEN,
-the inner strategy is called normally.
+the inner strategy is called and the result determines the breaker outcome:
 
-The breaker records failures and successes automatically:
-- ``record_failure()`` is called whenever the inner strategy is invoked (i.e.
-  whenever ``Agent`` dispatches a recovery action for this failure type).
-- ``record_success()`` is called via the optional ``on_recovery`` hook wiring
-  described below — or you can call it manually when your agent completes a
-  successful run without failures.
+- Inner returns a recoverable action (retry, replan, rollback, resume):
+  ``record_failure()`` is called — the failure is counted toward the threshold.
+  In HALF_OPEN this re-opens the breaker (probe attempt was not enough to recover).
+- Inner returns escalate or abort:
+  ``record_failure()`` is called — same as above.
 
-Because a strategy is only called *on failure*, successes must be signalled
-separately. The recommended approach::
-
-    from triage.agent import Agent
-
-    agent = Agent(
-        my_fn,
-        policy=policy,
-        on_recovery=lambda ctx, action: None,   # handled by circuit_breaker wrapper
-    )
-
-    # After a successful run, close the breaker:
-    breaker.record_success()
-
-Or wire it into ``on_recovery`` to reset on any non-failure action::
+To close the breaker after a fully successful run (no failures at all), call
+``breaker.record_success()`` after ``agent.run()`` returns. The recommended
+pattern via ``on_recovery``::
 
     def on_recovery(ctx, action):
         if action.kind not in ("escalate", "abort"):
-            breaker.record_success()
+            breaker.record_success()   # recovery action dispatched — probe succeeded
 
     agent = Agent(my_fn, policy=policy, on_recovery=on_recovery)
+
+Or call it unconditionally after a clean ``agent.run()`` if you manage
+success signalling at the call site.
+
+HALF_OPEN single-probe guarantee
+---------------------------------
+``CircuitBreaker.allow_request()`` sets a ``_probe_in_flight`` flag atomically
+when transitioning to HALF_OPEN. Concurrent callers that call ``allow_request()``
+while a probe is in flight receive ``False`` and are blocked, ensuring exactly
+one probe attempt reaches ``inner`` at a time. The flag is cleared by either
+``record_failure()`` or ``record_success()``.
 """
 
 from __future__ import annotations
@@ -89,9 +87,14 @@ def circuit_breaker(
                 return RecoveryAction.ABORT(reason=msg)
             return RecoveryAction.ESCALATE(message=msg)
 
-        # Breaker is CLOSED or HALF_OPEN — record this failure and let the
-        # inner strategy decide the recovery action.
+        # Breaker is CLOSED or HALF_OPEN — call inner and record the outcome.
+        # Every failure that reaches the inner strategy counts against the
+        # threshold (strategies are only ever called after a failure).
+        # record_failure() also clears the _probe_in_flight flag set by
+        # allow_request() in HALF_OPEN, so the next probe slot opens once
+        # the cooldown elapses again.
+        action = await inner(ctx)
         breaker.record_failure()
-        return await inner(ctx)
+        return action
 
     return _strategy

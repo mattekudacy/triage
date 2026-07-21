@@ -1614,3 +1614,217 @@ async def test_concurrent_runs_recover_independently():
 
     assert results == {"slow": "slow", "fast": "fast"}
     assert call_counts == {"slow": 2, "fast": 2}
+
+
+# ---------------------------------------------------------------------------
+# on_escalate — human-in-the-loop hook
+# ---------------------------------------------------------------------------
+
+async def test_on_escalate_receives_failure_context():
+    """on_escalate is called with the FailureContext when policy returns ESCALATE."""
+    received: list[Any] = []
+
+    async def my_escalate(ctx: Any) -> Any:
+        received.append(ctx)
+        return None  # proceed with escalation
+
+    async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0, error="boom"))
+        raise RuntimeError("boom")
+
+    policy = FailurePolicy(default=escalate_strategy())
+    ag = Agent(always_fails, policy, on_escalate=my_escalate)
+
+    with pytest.raises(TriageEscalationError):
+        await ag.run("task")
+
+    assert len(received) == 1
+    assert received[0].original_task == "task"
+
+
+async def test_on_escalate_returning_none_raises():
+    """on_escalate returning None means 'proceed with escalation'."""
+    async def noop_escalate(ctx: Any) -> Any:
+        return None
+
+    async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0, error="down"))
+        raise RuntimeError("down")
+
+    policy = FailurePolicy(default=escalate_strategy())
+    ag = Agent(always_fails, policy, on_escalate=noop_escalate)
+
+    with pytest.raises(TriageEscalationError):
+        await ag.run("task")
+
+
+async def test_on_escalate_returning_retry_overrides_escalation():
+    """on_escalate returning a RecoveryAction replaces the escalation."""
+    calls: list[int] = []
+
+    async def override_escalate(ctx: Any) -> Any:
+        return RecoveryAction.RETRY()
+
+    async def flaky(task: str, *, record_step: Any, **kw: Any) -> str:
+        calls.append(len(calls))
+        record_step(make_step(0, error="down"))
+        if len(calls) == 1:
+            raise RuntimeError("first failure")
+        return "recovered"
+
+    policy = FailurePolicy(default=escalate_strategy())
+    ag = Agent(flaky, policy, on_escalate=override_escalate, max_recovery_attempts=3)
+
+    result = await ag.run("task")
+    assert result == "recovered"
+    assert len(calls) == 2
+
+
+async def test_on_escalate_not_called_on_success():
+    """on_escalate must never be called when the agent succeeds."""
+    called: list[bool] = []
+
+    async def should_not_be_called(ctx: Any) -> Any:
+        called.append(True)
+        return None
+
+    async def ok_agent(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0))
+        return "done"
+
+    ag = Agent(ok_agent, FailurePolicy(), on_escalate=should_not_be_called)
+    result = await ag.run("task")
+    assert result == "done"
+    assert not called
+
+
+async def test_on_escalate_not_called_for_abort():
+    """on_escalate is only for ESCALATE actions, not ABORT."""
+    called: list[bool] = []
+
+    async def should_not_be_called(ctx: Any) -> Any:
+        called.append(True)
+        return None
+
+    async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0, error="boom"))
+        raise RuntimeError("boom")
+
+    policy = FailurePolicy(default=abort_strategy())
+    ag = Agent(always_fails, policy, on_escalate=should_not_be_called)
+
+    with pytest.raises(TriageAbortError):
+        await ag.run("task")
+
+    assert not called
+
+
+async def test_on_escalate_exception_propagates():
+    """Exceptions from on_escalate propagate directly (not swallowed like hooks)."""
+    async def bad_escalate(ctx: Any) -> Any:
+        raise ValueError("escalation handler failed")
+
+    async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0, error="boom"))
+        raise RuntimeError("boom")
+
+    policy = FailurePolicy(default=escalate_strategy())
+    ag = Agent(always_fails, policy, on_escalate=bad_escalate)
+
+    with pytest.raises(ValueError, match="escalation handler failed"):
+        await ag.run("task")
+
+
+async def test_on_escalate_copied_by_clone():
+    """clone() must copy on_escalate to the new Agent."""
+    called: list[bool] = []
+
+    async def my_escalate(ctx: Any) -> Any:
+        called.append(True)
+        return None
+
+    async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0, error="boom"))
+        raise RuntimeError("boom")
+
+    policy = FailurePolicy(default=escalate_strategy())
+    ag = Agent(always_fails, policy, on_escalate=my_escalate).clone()
+
+    with pytest.raises(TriageEscalationError):
+        await ag.run("task")
+
+    assert called
+
+
+# ---------------------------------------------------------------------------
+# circuit_breakers auto-signaling
+# ---------------------------------------------------------------------------
+
+async def test_circuit_breakers_record_success_on_clean_run():
+    """Agent.run() calls record_success() on all registered breakers after a clean return."""
+    from triage.breaker import BreakerState, CircuitBreaker
+
+    b1 = CircuitBreaker(failure_threshold=2, window_seconds=60, cooldown_seconds=30)
+    b2 = CircuitBreaker(failure_threshold=2, window_seconds=60, cooldown_seconds=30)
+    # Put both into HALF_OPEN by tripping then advancing past cooldown
+    b1.record_failure(_now=0.0)
+    b1.record_failure(_now=1.0)
+    b2.record_failure(_now=0.0)
+    b2.record_failure(_now=1.0)
+    # Force HALF_OPEN via allow_request at cooldown boundary
+    b1.allow_request(_now=31.0)
+    b2.allow_request(_now=31.0)
+
+    async def ok_agent(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0))
+        return "done"
+
+    ag = Agent(ok_agent, FailurePolicy(), circuit_breakers=[b1, b2])
+    await ag.run("task")
+
+    assert b1.state() == BreakerState.CLOSED
+    assert b2.state() == BreakerState.CLOSED
+
+
+async def test_circuit_breakers_not_called_on_error():
+    """record_success() must NOT be called when Agent.run() raises."""
+    from triage.breaker import BreakerState, CircuitBreaker
+
+    b = CircuitBreaker(failure_threshold=2, window_seconds=60, cooldown_seconds=30)
+    b.record_failure(_now=0.0)
+    b.record_failure(_now=1.0)
+    b.allow_request(_now=31.0)  # HALF_OPEN, probe in flight
+
+    async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0, error="boom"))
+        raise RuntimeError("boom")
+
+    ag = Agent(
+        always_fails,
+        FailurePolicy(default=escalate_strategy()),
+        circuit_breakers=[b],
+    )
+
+    with pytest.raises(TriageEscalationError):
+        await ag.run("task")
+
+    # Breaker should NOT have been closed
+    assert b.state() != BreakerState.CLOSED
+
+
+async def test_circuit_breakers_copied_by_clone():
+    """clone() must copy the circuit_breakers list."""
+    from triage.breaker import BreakerState, CircuitBreaker
+
+    b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
+    b.record_failure(_now=0.0)
+    b.allow_request(_now=31.0)  # HALF_OPEN
+
+    async def ok_agent(task: str, *, record_step: Any, **kw: Any) -> str:
+        record_step(make_step(0))
+        return "done"
+
+    ag = Agent(ok_agent, FailurePolicy(), circuit_breakers=[b]).clone()
+    await ag.run("task")
+
+    assert b.state() == BreakerState.CLOSED

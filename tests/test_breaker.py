@@ -96,10 +96,46 @@ def test_allow_request_open_returns_false():
     assert not b.allow_request(_now=1.0)
 
 
-def test_allow_request_half_open_returns_true():
+def test_allow_request_half_open_returns_true_first_call():
     b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
     b.record_failure(_now=0.0)
     assert b.allow_request(_now=31.0)  # past cooldown → HALF_OPEN → allowed
+
+
+def test_allow_request_half_open_blocks_second_concurrent_probe():
+    b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
+    b.record_failure(_now=0.0)
+    # First caller claims the probe slot
+    assert b.allow_request(_now=31.0) is True
+    # Second concurrent caller is blocked until the first records an outcome
+    assert b.allow_request(_now=31.0) is False
+
+
+def test_probe_in_flight_cleared_by_record_failure():
+    b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
+    b.record_failure(_now=0.0)
+    b.allow_request(_now=31.0)  # sets _probe_in_flight
+    # Recording a failure clears the flag and re-opens
+    b.record_failure(_now=32.0)
+    assert b._probe_in_flight is False
+    assert b.state(_now=32.0) == BreakerState.OPEN
+
+
+def test_probe_in_flight_cleared_by_record_success():
+    b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
+    b.record_failure(_now=0.0)
+    b.allow_request(_now=31.0)  # sets _probe_in_flight
+    b.record_success(_now=32.0)
+    assert b._probe_in_flight is False
+    assert b.state(_now=32.0) == BreakerState.CLOSED
+
+
+def test_probe_in_flight_cleared_by_reset():
+    b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
+    b.record_failure(_now=0.0)
+    b.allow_request(_now=31.0)  # sets _probe_in_flight
+    b.reset()
+    assert b._probe_in_flight is False
 
 
 def test_reset_clears_all_state():
@@ -214,6 +250,62 @@ def test_circuit_breaker_invalid_open_action_raises():
     b = CircuitBreaker()
     with pytest.raises(ValueError, match="open_action"):
         circuit_breaker(b, _retry_strategy(), open_action="retry")
+
+
+async def test_circuit_breaker_strategy_records_failure_after_inner():
+    """record_failure is called after inner returns, not before."""
+    b = CircuitBreaker(failure_threshold=2, window_seconds=60, cooldown_seconds=10)
+    call_order: list[str] = []
+
+    async def _ordered_inner(ctx: FailureContext) -> RecoveryAction:
+        call_order.append("inner")
+        return RecoveryAction.RETRY()
+
+    strategy = circuit_breaker(b, _ordered_inner)
+    ctx = FailureContext(
+        failure_type=FailureType.EXTERNAL_FAULT,
+        trajectory=[],
+        critical_step_index=0,
+        original_task="t",
+    )
+    action = await strategy(ctx)
+    call_order.append("record_failure_checked")
+
+    assert action.kind == "retry"
+    assert b.failure_count() == 1
+    # inner was called before failure was recorded — order is deterministic
+    assert call_order == ["inner", "record_failure_checked"]
+
+
+async def test_half_open_probe_failure_reopens_breaker():
+    """A failed probe in HALF_OPEN re-opens the breaker."""
+    b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
+    b.record_failure(_now=0.0)
+    # force HALF_OPEN by evaluating state at cooldown boundary
+    assert b.state(_now=31.0) == BreakerState.HALF_OPEN
+
+    strategy = circuit_breaker(b, _retry_strategy())
+    ctx = FailureContext(
+        failure_type=FailureType.EXTERNAL_FAULT,
+        trajectory=[],
+        critical_step_index=0,
+        original_task="t",
+    )
+    # This probe call goes through (HALF_OPEN), inner runs, record_failure re-opens
+    action = await strategy(ctx)
+    assert action.kind == "retry"
+    # Breaker should be OPEN again because we called record_failure after inner
+    assert b.state() == BreakerState.OPEN
+
+
+async def test_record_success_closes_breaker_after_probe():
+    """Calling record_success() after a recovered run closes the breaker."""
+    b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
+    b.record_failure(_now=0.0)
+    b.allow_request(_now=31.0)  # claim probe slot → HALF_OPEN
+    b.record_success(_now=32.0)
+    assert b.state(_now=32.0) == BreakerState.CLOSED
+    assert b.failure_count(_now=32.0) == 0
 
 
 # ── Agent integration ─────────────────────────────────────────────────────────
