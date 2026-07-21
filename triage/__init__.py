@@ -10,6 +10,7 @@ from triage.agent import (
     Agent,
     TriageAbortError,
     TriageEscalationError,
+    TriageSuspendedError,
     agent,
     get_recorder,
     get_state_updater,
@@ -22,6 +23,7 @@ from triage.feedback import Correction, coverage_report, record_correction
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.scorer.base import RiskScore, StepRiskScorer
 from triage.scorer.rules import RulesRiskScorer
+from triage.suspension import InMemorySuspensionStore, SuspendedRun, SuspensionStore
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.testing import RecordingAgent, assert_classifies_as, make_step
 from triage.usage import Usage, UsageMeter
@@ -43,6 +45,10 @@ __all__ = [
     "Step",
     "TriageAbortError",
     "TriageEscalationError",
+    "TriageSuspendedError",
+    "InMemorySuspensionStore",
+    "SuspendedRun",
+    "SuspensionStore",
     "agent",
     "get_recorder",
     "get_state_updater",
@@ -69,7 +75,7 @@ __all__ = [
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 
 
 def __getattr__(name: str) -> object:

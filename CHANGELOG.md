@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.17.0] - 2026-07-22
+
+### Added
+- **Human-in-the-loop pause/resume** — `RecoveryAction.SUSPEND(message, metadata)` pauses a run instead of raising. The agent serializes a `SuspendedRun` to the `SuspensionStore` and raises `TriageSuspendedError(token, run)`. Call `agent.resume(token, action=RecoveryAction.RETRY())` (or `REPLAN`, `ABORT`, etc.) to restart from the exact suspension point. The token is single-use; the store deletes it on load.
+- **`SuspensionStore` protocol** — `async save(run)` / `async load(token)` / `async delete(token)`. `InMemorySuspensionStore` is the default (not durable across restarts). Swap for a Redis-backed implementation in production.
+- **`suspension_store=` on `Agent`** — accepts any `SuspensionStore` implementation; defaults to `InMemorySuspensionStore`. Copied by `clone()`.
+- **`Agent.resume(token, *, action)`** — resumes a suspended run. Loads the `SuspendedRun`, deletes the token, executes the supplied action, then continues the recovery loop. Shares the same `circuit_breakers` auto-signaling and OTel span/metrics instrumentation as `run()`.
+- `TriageSuspendedError`, `SuspendedRun`, `SuspensionStore`, `InMemorySuspensionStore` exported from `triage.__all__`.
+
+### Fixed
+- **HALF_OPEN single-probe guarantee** — `CircuitBreaker.allow_request()` now sets `_probe_in_flight = True` atomically in HALF_OPEN. Concurrent callers receive `False` until the probe records its outcome via `record_failure()` or `record_success()`. All three clearing paths (`record_failure`, `record_success`, `reset`) clear the flag.
+- **`circuit_breaker()` HALF_OPEN semantics** — `record_failure()` is now called *after* the inner strategy returns, not before. This preserves correct probe semantics: the failure is counted, but the inner strategy runs its full logic before the breaker re-opens.
+- **`on_escalate`, `circuit_breakers`, OTel metrics** — added in this release cycle (see below).
+
+### Added (same release cycle, shipping together)
+- **`on_escalate` hook** — `Agent(on_escalate=async def(ctx) -> RecoveryAction | None)`: called just before `TriageEscalationError` is raised; return an action to override, `None` to proceed with escalation.
+- **`circuit_breakers=` on `Agent`** — list of `CircuitBreaker` instances; `record_success()` is called on all of them after a clean `run()` return, closing HALF_OPEN breakers automatically.
+- **OTel metrics** — `triage/observability/metrics.py`: five instruments (`triage.runs`, `triage.failures`, `triage.recoveries`, `triage.run.duration`, `triage.recovery.attempts`). Same lazy-import and auto-detect pattern as OTel spans. Pass `Agent(meter=...)` to override.
+- **ROADMAP.md** — published at the repo root.
+
+---
+
 ## [0.16.0] - 2026-07-21
 
 ### Added

@@ -52,6 +52,30 @@ class RecoveryAction:
         return cls("escalate", message=message)
 
     @classmethod
+    def SUSPEND(
+        cls,
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RecoveryAction:
+        """Pause execution and await a human decision.
+
+        Unlike ``ESCALATE`` (which raises immediately), ``SUSPEND`` serializes
+        the current run state to the ``SuspensionStore`` and raises
+        ``TriageSuspendedError`` carrying a token.  The caller routes the token
+        to a human, waits for a decision, then calls ``agent.resume(token,
+        action=...)``.
+
+        Parameters
+        ----------
+        message:
+            Human-readable description of why the run was suspended.
+        metadata:
+            Arbitrary key/value pairs to store alongside the suspended run
+            (e.g. routing hints like ``{"channel": "#ops"}``).
+        """
+        return cls("suspend", message=message, metadata=metadata)
+
+    @classmethod
     def ABORT(cls, reason: str | None = None) -> RecoveryAction:
         """Hard stop. No recovery attempted."""
         return cls("abort", reason=reason)

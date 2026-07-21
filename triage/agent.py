@@ -39,6 +39,7 @@ from triage.observability.otel import (
     set_span_run_outcome,
 )
 from triage.policy import FailurePolicy, RecoveryAction
+from triage.suspension import InMemorySuspensionStore, SuspendedRun, SuspensionStore, make_token
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.trajectory import Trajectory
 from triage.usage import Usage, UsageMeter
@@ -170,6 +171,21 @@ class TriageAbortError(Exception):
         self.context = context
 
 
+class TriageSuspendedError(Exception):
+    """Raised when a strategy returns RecoveryAction.SUSPEND().
+
+    The run is paused; call ``agent.resume(token, action=...)`` to continue.
+    """
+
+    def __init__(self, token: str, run: SuspendedRun) -> None:
+        super().__init__(
+            f"Run suspended (token={token!r}). "
+            f"Call agent.resume({token!r}, action=...) to continue."
+        )
+        self.token = token
+        self.run = run
+
+
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
 class Agent:
@@ -238,6 +254,11 @@ class Agent:
         without requiring manual success-signalling at the call site. Pass the
         same breaker instances that are wired into ``circuit_breaker()``
         strategy wrappers in the policy.
+    suspension_store:
+        Store for serializing paused runs when ``RecoveryAction.SUSPEND()``
+        is returned.  Defaults to ``InMemorySuspensionStore`` (not durable
+        across restarts).  Swap for a Redis-backed store in production so
+        tokens survive process restarts.
     on_escalate:
         Optional async callback invoked just before ``TriageEscalationError``
         is raised. Signature::
@@ -294,6 +315,7 @@ class Agent:
         meter: Any = None,
         circuit_breakers: list[CircuitBreaker] | None = None,
         on_escalate: Callable[[FailureContext], Awaitable[RecoveryAction | None]] | None = None,
+        suspension_store: SuspensionStore | None = None,
         max_tokens: int | None = None,
         max_cost_usd: float | None = None,
     ) -> None:
@@ -317,6 +339,9 @@ class Agent:
         self._otel_meter = resolve_meter(meter)
         self._circuit_breakers: list[CircuitBreaker] = list(circuit_breakers or [])
         self._on_escalate = on_escalate
+        self._suspension_store: SuspensionStore = (
+            suspension_store or InMemorySuspensionStore()
+        )
         self._max_tokens = max_tokens
         self._max_cost_usd = max_cost_usd
 
@@ -422,6 +447,7 @@ class Agent:
             meter=self._otel_meter,
             circuit_breakers=list(self._circuit_breakers),
             on_escalate=self._on_escalate,
+            suspension_store=self._suspension_store,
             max_tokens=self._max_tokens,
             max_cost_usd=self._max_cost_usd,
         )
@@ -478,6 +504,87 @@ class Agent:
             _update_state_var.reset(upd_token)
             _record_usage_var.reset(usg_token)
 
+    async def resume(self, token: str, *, action: RecoveryAction) -> Any:
+        """Resume a previously suspended run.
+
+        Loads the ``SuspendedRun`` from the suspension store, executes
+        ``action`` as the human's decision, then continues the recovery loop
+        from where it left off.
+
+        Parameters
+        ----------
+        token:
+            The token from ``TriageSuspendedError.token``.
+        action:
+            The ``RecoveryAction`` chosen by the human.  Common choices:
+
+            - ``RecoveryAction.RETRY()`` — try again, possibly with a hint
+            - ``RecoveryAction.REPLAN(hint="...")`` — generate a new plan
+            - ``RecoveryAction.ABORT(reason="...")`` — give up permanently
+
+        The suspended run is deleted from the store after a successful load,
+        so tokens are single-use.
+
+        Raises
+        ------
+        KeyError
+            If ``token`` is not found in the suspension store.
+        TriageSuspendedError
+            If the resumed run is immediately suspended again by the policy.
+        TriageEscalationError / TriageAbortError
+            If the recovery loop exhausts attempts or the action is ABORT.
+        """
+        suspended = await self._suspension_store.load(token)
+        await self._suspension_store.delete(token)
+
+        ctx = suspended.context
+        task = suspended.task
+        attempt = suspended.attempt + 1
+        attempt_history = list(suspended.attempt_history)
+
+        # Re-establish contextvars so get_recorder() etc. work inside fn.
+        rec_token = _record_step_var.set(self._record_step)
+        upd_token = _update_state_var.set(self._update_state)
+        usg_token = _record_usage_var.set(self._record_usage)
+
+        # Restore run_id so any new checkpoints join the same scoped run.
+        self._run_id = ctx.metadata.get("run_id") or str(uuid.uuid4())
+        self._meter.reset()
+
+        _run_start = time.monotonic()
+        try:
+            async with run_span(self._tracer, self._run_id, task) as _root_span:
+                try:
+                    # Execute the human-supplied action first, then continue
+                    # the loop exactly as if this were a normal recovery attempt.
+                    kwargs = await self._execute_action(
+                        action, ctx, task, suspended.kwargs
+                    )
+                    result = await self._run_loop(
+                        task, attempt, attempt_history, kwargs
+                    )
+                    set_span_run_outcome(_root_span)
+                    for breaker in self._circuit_breakers:
+                        breaker.record_success()
+                    metrics_record_run_end(
+                        self._otel_meter,
+                        outcome="success",
+                        duration_s=time.monotonic() - _run_start,
+                    )
+                    return result
+                except Exception as exc:
+                    set_span_run_outcome(_root_span, error=exc)
+                    metrics_record_run_end(
+                        self._otel_meter,
+                        outcome="error",
+                        duration_s=time.monotonic() - _run_start,
+                    )
+                    raise
+        finally:
+            _record_step_var.reset(rec_token)
+            _update_state_var.reset(upd_token)
+            _record_usage_var.reset(usg_token)
+
     async def _run_loop(
         self,
         task: str,
@@ -503,7 +610,7 @@ class Agent:
                 await self._drain_checkpoints()
                 return result
 
-            except (TriageEscalationError, TriageAbortError):
+            except (TriageEscalationError, TriageAbortError, TriageSuspendedError):
                 await self._drain_checkpoints()
                 raise
 
@@ -724,6 +831,30 @@ class Agent:
             subgoal = action.params.get("from_subgoal")
             if subgoal:
                 new_kwargs["_triage_subgoal"] = subgoal
+
+        elif action.kind == "suspend":
+            token = make_token()
+            suspended = SuspendedRun(
+                token=token,
+                context=ctx,
+                task=task,
+                kwargs=dict(new_kwargs),
+                attempt=ctx.metadata["attempt_number"],
+                attempt_history=list(ctx.attempt_history),
+                message=action.params.get("message", ""),
+                metadata=action.params.get("metadata") or {},
+            )
+            await self._suspension_store.save(suspended)
+            logger.info(
+                "[triage] run suspended",
+                extra={
+                    "triage_event": "run_suspended",
+                    "token": token,
+                    "failure_type": ctx.failure_type.value,
+                    "message": suspended.message,
+                },
+            )
+            raise TriageSuspendedError(token, suspended)
 
         elif action.kind == "escalate":
             raise TriageEscalationError(
