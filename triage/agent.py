@@ -329,7 +329,7 @@ class Agent:
     ) -> None:
         self._fn = fn
         self._fn_is_async = inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(
-            getattr(fn, "__call__", None)
+            type(fn).__call__
         )
         self._policy = policy
         self._classifier: Classifier = classifier or RulesClassifier()
