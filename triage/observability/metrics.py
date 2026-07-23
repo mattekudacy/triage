@@ -62,7 +62,7 @@ def resolve_meter(explicit: Any = None) -> Any:
 
     provider = _otel_metrics.get_meter_provider()
     provider_type = type(provider).__name__
-    if provider_type in ("NoOpMeterProvider", "ProxyMeterProvider"):
+    if provider_type in ("NoOpMeterProvider", "ProxyMeterProvider", "_ProxyMeterProvider"):
         return None
 
     return _otel_metrics.get_meter("triage")

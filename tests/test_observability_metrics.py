@@ -97,113 +97,92 @@ def test_resolve_meter_returns_none_for_noop_provider():
 
 
 @pytestmark_metrics
-def test_resolve_meter_returns_meter_when_provider_configured():
-    from opentelemetry import metrics
+def test_resolve_meter_returns_explicit_meter_directly():
     from opentelemetry.sdk.metrics import MeterProvider
-    from triage.observability.metrics import resolve_meter, _instrument_cache
+    from triage.observability.metrics import resolve_meter
 
     provider = MeterProvider()
-    original = metrics.get_meter_provider()
-    try:
-        metrics.set_meter_provider(provider)
-        result = resolve_meter(None)
-        assert result is not None
-    finally:
-        metrics.set_meter_provider(original)
-        # Clear the instrument cache so other tests get fresh instruments
-        _instrument_cache.clear()
+    explicit_meter = provider.get_meter("triage-test")
+    # When passed explicitly, resolve_meter returns it unchanged regardless of
+    # global provider state — no set_meter_provider call needed.
+    result = resolve_meter(explicit_meter)
+    assert result is explicit_meter
 
 
 @pytestmark_metrics
 async def test_agent_records_run_and_failure_metrics():
     """A failed + recovered run emits failures and recoveries metrics."""
-    from opentelemetry import metrics
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import InMemoryMetricReader
     import triage
     from triage.policy import FailurePolicy, RecoveryAction
-    from triage.observability.metrics import _instrument_cache
 
     reader = InMemoryMetricReader()
     provider = MeterProvider(metric_readers=[reader])
-    original = metrics.get_meter_provider()
-    try:
-        metrics.set_meter_provider(provider)
-        _instrument_cache.clear()
+    # Pass an explicit meter so the test is isolated from global provider state.
+    meter = provider.get_meter("triage-test")
 
-        calls: list[int] = []
+    calls: list[int] = []
 
-        async def flaky(task: str, *, record_step, **kwargs) -> str:
-            calls.append(len(calls))
-            record_step(Step(index=0, action="attempt"))
-            if len(calls) == 1:
-                raise RuntimeError("first failure")
-            return "ok"
+    async def flaky(task: str, *, record_step, **kwargs) -> str:
+        calls.append(len(calls))
+        record_step(Step(index=0, action="attempt"))
+        if len(calls) == 1:
+            raise RuntimeError("first failure")
+        return "ok"
 
-        async def retry_strategy(ctx):
-            return RecoveryAction.RETRY()
+    async def retry_strategy(ctx):
+        return RecoveryAction.RETRY()
 
-        agent = triage.Agent(
-            flaky,
-            policy=FailurePolicy(default=retry_strategy),
-            max_recovery_attempts=3,
-        )
-        result = await agent.run("task")
-        assert result == "ok"
+    agent = triage.Agent(
+        flaky,
+        policy=FailurePolicy(default=retry_strategy),
+        max_recovery_attempts=3,
+        meter=meter,
+    )
+    result = await agent.run("task")
+    assert result == "ok"
 
-        data = reader.get_metrics_data()
-        names = {
-            m.name
-            for rm in data.resource_metrics
-            for sm in rm.scope_metrics
-            for m in sm.metrics
-        }
-        assert "triage.runs" in names
-        assert "triage.failures" in names
-        assert "triage.recoveries" in names
-        assert "triage.run.duration" in names
-
-    finally:
-        metrics.set_meter_provider(original)
-        _instrument_cache.clear()
+    data = reader.get_metrics_data()
+    names = {
+        m.name
+        for rm in data.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+    }
+    assert "triage.runs" in names
+    assert "triage.failures" in names
+    assert "triage.recoveries" in names
+    assert "triage.run.duration" in names
 
 
 @pytestmark_metrics
 async def test_run_counter_has_success_outcome_on_clean_run():
-    from opentelemetry import metrics
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import InMemoryMetricReader
     import triage
     from triage.policy import FailurePolicy
-    from triage.observability.metrics import _instrument_cache
 
     reader = InMemoryMetricReader()
     provider = MeterProvider(metric_readers=[reader])
-    original = metrics.get_meter_provider()
-    try:
-        metrics.set_meter_provider(provider)
-        _instrument_cache.clear()
+    meter = provider.get_meter("triage-test")
 
-        async def ok_agent(task: str, *, record_step, **kwargs) -> str:
-            record_step(Step(index=0, action="work"))
-            return "done"
+    async def ok_agent(task: str, *, record_step, **kwargs) -> str:
+        record_step(Step(index=0, action="work"))
+        return "done"
 
-        agent = triage.Agent(ok_agent, policy=FailurePolicy())
-        await agent.run("t")
+    agent = triage.Agent(ok_agent, policy=FailurePolicy(), meter=meter)
+    await agent.run("t")
 
-        data = reader.get_metrics_data()
-        runs_points = [
-            dp
-            for rm in data.resource_metrics
-            for sm in rm.scope_metrics
-            for m in sm.metrics
-            if m.name == "triage.runs"
-            for dps in m.data.data_points
-            for dp in [dps]
-        ]
-        outcomes = {dp.attributes.get("outcome") for dp in runs_points}
-        assert "success" in outcomes
-
-    finally:
-        metrics.set_meter_provider(original)
-        _instrument_cache.clear()
+    data = reader.get_metrics_data()
+    runs_points = [
+        dp
+        for rm in data.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+        if m.name == "triage.runs"
+        for dps in m.data.data_points
+        for dp in [dps]
+    ]
+    outcomes = {dp.attributes.get("outcome") for dp in runs_points}
+    assert "success" in outcomes

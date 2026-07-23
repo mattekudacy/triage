@@ -121,25 +121,20 @@ def test_resolve_tracer_returns_none_for_noop_provider():
 
 
 @pytestmark_otel
-def test_resolve_tracer_returns_tracer_when_provider_configured():
-    """With a real TracerProvider set, resolve_tracer() returns a live tracer."""
-    from opentelemetry import trace
+def test_resolve_tracer_returns_explicit_tracer_directly():
+    """An explicitly passed tracer is returned unchanged regardless of global state."""
     from opentelemetry.sdk.trace import TracerProvider
     from triage.observability.otel import resolve_tracer
 
-    original = trace.get_tracer_provider()
-    try:
-        trace.set_tracer_provider(TracerProvider())
-        result = resolve_tracer(None)
-        assert result is not None
-    finally:
-        trace.set_tracer_provider(original)
+    provider = TracerProvider()
+    explicit_tracer = provider.get_tracer("triage-test")
+    result = resolve_tracer(explicit_tracer)
+    assert result is explicit_tracer
 
 
 @pytestmark_otel
 async def test_agent_emits_run_classify_dispatch_spans():
     """A full Agent.run() with failure + recovery must produce the expected span tree."""
-    from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -149,154 +144,135 @@ async def test_agent_emits_run_classify_dispatch_spans():
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("triage-test")
 
-    original = trace.get_tracer_provider()
-    try:
-        trace.set_tracer_provider(provider)
+    calls = []
 
-        calls = []
+    async def flaky(task: str, *, record_step, **kwargs) -> str:
+        calls.append(len(calls))
+        record_step(Step(index=0, action="attempt"))
+        if len(calls) == 1:
+            raise RuntimeError("first failure")
+        return "ok"
 
-        async def flaky(task: str, *, record_step, **kwargs) -> str:
-            calls.append(len(calls))
-            record_step(Step(index=0, action="attempt"))
-            if len(calls) == 1:
-                raise RuntimeError("first failure")
-            return "ok"
+    async def retry_strategy(ctx):
+        return RecoveryAction.RETRY()
 
-        async def retry_strategy(ctx):
-            return RecoveryAction.RETRY()
+    agent = triage.Agent(
+        flaky,
+        policy=FailurePolicy(default=retry_strategy),
+        max_recovery_attempts=3,
+        tracer=tracer,
+    )
+    result = await agent.run("task")
+    assert result == "ok"
 
-        agent = triage.Agent(
-            flaky,
-            policy=FailurePolicy(default=retry_strategy),
-            max_recovery_attempts=3,
-        )
-        result = await agent.run("task")
-        assert result == "ok"
+    spans = exporter.get_finished_spans()
+    span_names = [s.name for s in spans]
 
-        spans = exporter.get_finished_spans()
-        span_names = [s.name for s in spans]
+    assert "triage.run" in span_names
+    assert "triage.classify" in span_names
+    assert "triage.dispatch" in span_names
 
-        assert "triage.run" in span_names
-        assert "triage.classify" in span_names
-        assert "triage.dispatch" in span_names
+    # run span must carry run_id and task attributes
+    run_span_obj = next(s for s in spans if s.name == "triage.run")
+    assert run_span_obj.attributes.get("triage.task") == "task"
+    run_id = run_span_obj.attributes.get("triage.run_id")
+    assert run_id  # non-empty
 
-        # run span must carry run_id and task attributes
-        run_span_obj = next(s for s in spans if s.name == "triage.run")
-        assert run_span_obj.attributes.get("triage.task") == "task"
-        run_id = run_span_obj.attributes.get("triage.run_id")
-        assert run_id  # non-empty
+    # classify span must carry the failure_type
+    classify_span_obj = next(s for s in spans if s.name == "triage.classify")
+    assert classify_span_obj.attributes.get("triage.failure_type") is not None
 
-        # classify span must carry the failure_type
-        classify_span_obj = next(s for s in spans if s.name == "triage.classify")
-        assert classify_span_obj.attributes.get("triage.failure_type") is not None
+    # dispatch span must carry action_kind
+    dispatch_span_obj = next(s for s in spans if s.name == "triage.dispatch")
+    assert dispatch_span_obj.attributes.get("triage.action_kind") == "retry"
 
-        # dispatch span must carry action_kind
-        dispatch_span_obj = next(s for s in spans if s.name == "triage.dispatch")
-        assert dispatch_span_obj.attributes.get("triage.action_kind") == "retry"
-
-        # all child spans must share the same trace_id as the root run span
-        root_trace_id = run_span_obj.context.trace_id
-        for s in spans:
-            assert s.context.trace_id == root_trace_id, f"{s.name} has wrong trace_id"
-
-    finally:
-        trace.set_tracer_provider(original)
-        exporter.clear()
+    # all child spans must share the same trace_id as the root run span
+    root_trace_id = run_span_obj.context.trace_id
+    for s in spans:
+        assert s.context.trace_id == root_trace_id, f"{s.name} has wrong trace_id"
 
 
 @pytestmark_otel
 async def test_escalate_marks_dispatch_span_as_error():
     """A dispatch that results in escalate must set the dispatch span status to ERROR."""
-    from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.trace import StatusCode
     import triage
-    from triage.policy import FailurePolicy, RecoveryAction
+    from triage.policy import FailurePolicy
 
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("triage-test")
 
-    original = trace.get_tracer_provider()
-    try:
-        trace.set_tracer_provider(provider)
+    async def always_fails(task: str, *, record_step, **kwargs) -> str:
+        record_step(Step(index=0, action="boom"))
+        raise RuntimeError("permanent failure")
 
-        async def always_fails(task: str, *, record_step, **kwargs) -> str:
-            record_step(Step(index=0, action="boom"))
-            raise RuntimeError("permanent failure")
+    agent = triage.Agent(
+        always_fails,
+        policy=FailurePolicy(),  # no strategies -> escalate by default
+        max_recovery_attempts=1,
+        tracer=tracer,
+    )
 
-        agent = triage.Agent(
-            always_fails,
-            policy=FailurePolicy(),  # no strategies -> escalate by default
-            max_recovery_attempts=1,
-        )
+    with pytest.raises(triage.TriageEscalationError):
+        await agent.run("task")
 
-        with pytest.raises(triage.TriageEscalationError):
-            await agent.run("task")
-
-        spans = exporter.get_finished_spans()
-        dispatch_spans = [s for s in spans if s.name == "triage.dispatch"]
-        assert dispatch_spans, "expected at least one dispatch span"
-        ds = dispatch_spans[0]
-        assert ds.attributes.get("triage.action_kind") == "escalate"
-        assert ds.status.status_code == StatusCode.ERROR
-
-    finally:
-        trace.set_tracer_provider(original)
-        exporter.clear()
+    spans = exporter.get_finished_spans()
+    dispatch_spans = [s for s in spans if s.name == "triage.dispatch"]
+    assert dispatch_spans, "expected at least one dispatch span"
+    ds = dispatch_spans[0]
+    assert ds.attributes.get("triage.action_kind") == "escalate"
+    assert ds.status.status_code == StatusCode.ERROR
 
 
 @pytestmark_otel
 async def test_run_id_is_same_across_classify_and_dispatch_spans():
     """All spans from one Agent.run() must share the same triage.run_id attribute."""
-    from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     import triage
-    from triage.policy import FailurePolicy, RecoveryAction
+    from triage.policy import FailurePolicy
 
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("triage-test")
 
-    original = trace.get_tracer_provider()
-    try:
-        trace.set_tracer_provider(provider)
+    calls = []
 
-        calls = []
+    async def flaky(task: str, *, record_step, **kwargs) -> str:
+        calls.append(1)
+        record_step(Step(index=0, action="step"))
+        if len(calls) == 1:
+            raise RuntimeError("fail once")
+        return "ok"
 
-        async def flaky(task: str, *, record_step, **kwargs) -> str:
-            calls.append(1)
-            record_step(Step(index=0, action="step"))
-            if len(calls) == 1:
-                raise RuntimeError("fail once")
-            return "ok"
+    async def retry_strategy(ctx):
+        return __import__("triage").RecoveryAction.RETRY()
 
-        agent = triage.Agent(
-            flaky,
-            policy=FailurePolicy(default=lambda ctx: (
-                __import__("triage").RecoveryAction.RETRY()
-            )),
-            max_recovery_attempts=2,
-        )
-        await agent.run("task")
+    agent = triage.Agent(
+        flaky,
+        policy=FailurePolicy(default=retry_strategy),
+        max_recovery_attempts=2,
+        tracer=tracer,
+    )
+    await agent.run("task")
 
-        spans = exporter.get_finished_spans()
-        run_id = next(
-            s.attributes["triage.run_id"]
-            for s in spans
-            if s.name == "triage.run"
-        )
-        for s in spans:
-            if "triage.run_id" in (s.attributes or {}):
-                assert s.attributes["triage.run_id"] == run_id, (
-                    f"{s.name} has different run_id"
-                )
-
-    finally:
-        trace.set_tracer_provider(original)
-        exporter.clear()
+    spans = exporter.get_finished_spans()
+    run_id = next(
+        s.attributes["triage.run_id"]
+        for s in spans
+        if s.name == "triage.run"
+    )
+    for s in spans:
+        if "triage.run_id" in (s.attributes or {}):
+            assert s.attributes["triage.run_id"] == run_id, (
+                f"{s.name} has different run_id"
+            )
