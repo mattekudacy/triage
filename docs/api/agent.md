@@ -196,6 +196,10 @@ All spans from one `run()` call share the same `trace_id` and `triage.run_id` (t
 
 Spans are **additive** — the six existing structured log events (`failure_classified`, `action_dispatched`, etc.) continue to emit regardless of whether OTel is configured.
 
+### Aggregating into a failure distribution
+
+The `triage.classify` and `triage.run` span attributes are all you need to produce a per-type failure frequency and recovery-rate report across a run population. See the [Failure Distribution example](../examples/failure-distribution.md) for a working implementation using an `InMemorySpanExporter` and guidance on adapting it to a production backend.
+
 ## Example
 
 ```python

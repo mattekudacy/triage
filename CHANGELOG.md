@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.18.0] - 2026-07-23
+
+### Added
+- **Failure distribution example** — `examples/failure_distribution.py` demonstrates aggregating triage's OTel spans into a per-type frequency table across a run population. Reads `triage.classify` span attributes (`triage.failure_type`) and `triage.run` span status codes to compute input counts, failure-type mix, and recovery rate. No new library code — uses only the span attributes shipped in v0.14.
+- **Failure distribution docs** — `docs/examples/failure-distribution.md` explains the output columns, recovery outcome detection logic, and how to adapt the pattern to a production OTel backend (Jaeger, Tempo, Honeycomb, etc.). Cross-reference added to the Observability section of `docs/api/agent.md`.
+
+### Fixed
+- **OTel SDK compatibility** — `resolve_meter()` now recognises `_ProxyMeterProvider` (the internal name used by newer `opentelemetry-sdk` releases) as a no-op provider, matching the existing `ProxyMeterProvider` guard. OTel observability tests updated to pass `tracer=` / `meter=` explicitly to `Agent()` instead of relying on `set_tracer_provider` / `set_meter_provider`, which newer SDK versions treat as one-shot and warn on subsequent calls.
+
+---
+
 ## [0.17.0] - 2026-07-22
 
 ### Added

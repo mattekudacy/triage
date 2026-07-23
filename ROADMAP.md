@@ -25,28 +25,12 @@ type to a recovery strategy. This document tracks what has shipped and what come
 | v0.14 | OpenTelemetry spans | `triage.run` / `triage.classify` / `triage.dispatch` spans; lazy OTel import; `tracer=` on `Agent` |
 | v0.15 | Cost/token budgets | `max_tokens` / `max_cost_usd` caps; `UsageMeter`; `LLMClassifier` auto-reports token usage |
 | v0.16 | Circuit breaker | `CircuitBreaker` with CLOSED / OPEN / HALF_OPEN states; `circuit_breaker()` strategy wrapper |
+| v0.17 | Human-in-the-loop pause/resume | `RecoveryAction.SUSPEND`; `SuspensionStore` protocol; `Agent.resume(token, action=...)`; `InMemorySuspensionStore` default |
+| v0.18 | Failure distribution example | `examples/failure_distribution.py` + `docs/examples/failure-distribution.md`; aggregates OTel span attributes into per-type frequency and recovery-rate table; no new library code |
 
 ---
 
-## Near-term (v0.17–v0.20)
-
-### v0.17 — Human-in-the-loop pause/resume
-
-When a failure warrants human judgment, `ESCALATE` today raises immediately and discards
-run state. This feature makes `ESCALATE` optionally suspend instead: the agent serializes
-a `SuspendedRun` token to the checkpoint store and returns it to the caller without raising.
-`Agent.resume(token, action=...)` then restarts the run from that exact point once a human
-(or an approval webhook) has supplied a decision. The core persists and reloads state;
-routing that decision from Slack, a CLI, or an HTTP callback is userland.
-
-### v0.18 — Failure distribution example
-
-The OTel integration (v0.14) emits per-classification spans, but there is no reference
-showing how to aggregate them into a breakdown of failure types across a run population.
-`examples/failure_distribution.py` will demonstrate reading the span attributes and producing
-a frequency table — input counts, output failure-type mix, recovery rate — using only the
-existing OTel metrics counters. No new library code; purely an example and accompanying
-documentation section.
+## Near-term (v0.19–v0.20)
 
 ### v0.19 — OpenAI Agents SDK adapter
 
