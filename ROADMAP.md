@@ -27,31 +27,13 @@ type to a recovery strategy. This document tracks what has shipped and what come
 | v0.16 | Circuit breaker | `CircuitBreaker` with CLOSED / OPEN / HALF_OPEN states; `circuit_breaker()` strategy wrapper |
 | v0.17 | Human-in-the-loop pause/resume | `RecoveryAction.SUSPEND`; `SuspensionStore` protocol; `Agent.resume(token, action=...)`; `InMemorySuspensionStore` default |
 | v0.18 | Failure distribution example | `examples/failure_distribution.py` + `docs/examples/failure-distribution.md`; aggregates OTel span attributes into per-type frequency and recovery-rate table; no new library code |
-
----
-
-## Near-term (v0.19–v0.20)
-
-### v0.19 — OpenAI Agents SDK adapter
-
-`wrap_openai_agents()` following the same pattern as `wrap_langgraph()` and `wrap_langchain()`.
-The OpenAI Agents SDK exception hierarchy (`AgentError`, `MaxTurnsExceeded`, tool-not-found
-errors) maps cleanly onto the `FailureType` taxonomy, making automatic classification
-straightforward. Framework import is lazy, behind `try/except ImportError`, so the module
-is safe to import without the SDK installed.
-
-### v0.20 — Native sync-agent support
-
-Synchronous agent functions — legacy code, compute-bound tasks, libraries that predate
-async — cannot be wrapped today without converting them to `async def`. This feature allows
-passing a plain `def` callable to `Agent`; triage runs it via `anyio.to_thread.run_sync()`
-so the full policy loop, classification, checkpointing, and lifecycle hooks apply unchanged.
-No public API changes for users who already wrap async callables.
+| v0.19 | Native sync-agent support | Plain `def` callables accepted by `Agent`; run via `anyio.to_thread.run_sync()`; all policy, checkpointing, hooks, and ContextVar injection unchanged |
 
 ---
 
 ## Later (no version assigned)
 
+- **OpenAI Agents SDK adapter** — `wrap_openai_agents()`; deprioritised until the SDK stabilises.
 - **Persistent circuit breaker state** — serialize `CircuitBreaker` state to the checkpoint store (Redis-backed) so the open/half-open state survives process restarts in multi-worker and serverless deployments.
 - **Streaming agent support** — needs a design doc covering the partial `Step` model and mid-stream retry semantics before implementation begins.
 - **Saga / compensating rollback** — reverse-order compensate callables that undo side effects on rollback; deliberately minimal and only if there is concrete user demand.

@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.19.0] - 2026-07-23
+
+### Added
+- **Native sync-agent support** — `Agent` now accepts plain `def` callables alongside `async def`. Sync functions are run via `anyio.to_thread.run_sync()` so the event loop is never blocked; the full policy loop, classification, checkpointing, lifecycle hooks, and ContextVar injection (`get_recorder()`, `get_state_updater()`, `get_usage_recorder()`) work unchanged. Detection uses `inspect.iscoroutinefunction()` on both the callable and its `__call__` method, so callable class instances with `async __call__` are correctly identified as async. The `@agent` decorator accepts sync functions too.
+
+---
+
 ## [0.18.0] - 2026-07-23
 
 ### Added

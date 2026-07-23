@@ -8,6 +8,8 @@ failures, dispatches recovery actions, and executes them.
 from __future__ import annotations
 
 import contextvars
+import functools
+import inspect
 import logging
 import time
 import uuid
@@ -200,13 +202,19 @@ class Agent:
             update_state({"data": data})   # persisted into checkpoints
             return result
 
+    Synchronous callables are also accepted — triage runs them via
+    ``anyio.to_thread.run_sync()`` so the event loop is never blocked::
+
+        def my_sync_agent(task: str, *, record_step, **kwargs) -> Any:
+            ...
+
     Alternatively, use ``triage.agent.get_recorder()`` inside the agent body
     to avoid changing the function signature.
 
     Parameters
     ----------
     fn:
-        The async agent callable to wrap.
+        The agent callable to wrap — either ``async def`` or plain ``def``.
     policy:
         Maps each ``FailureType`` to a recovery strategy.
     classifier:
@@ -297,7 +305,7 @@ class Agent:
 
     def __init__(
         self,
-        fn: Callable[..., Awaitable[Any]],
+        fn: Callable[..., Any],
         policy: FailurePolicy,
         classifier: Classifier | None = None,
         checkpoint_store: CheckpointStore | None = None,
@@ -320,6 +328,9 @@ class Agent:
         max_cost_usd: float | None = None,
     ) -> None:
         self._fn = fn
+        self._fn_is_async = inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(
+            getattr(fn, "__call__", None)
+        )
         self._policy = policy
         self._classifier: Classifier = classifier or RulesClassifier()
         self._checkpoint_store: CheckpointStore = checkpoint_store or InMemoryCheckpointStore()
@@ -600,13 +611,25 @@ class Agent:
             self._pending_checkpoints = []
 
             try:
-                result = await self._fn(
-                    task,
-                    record_step=self._record_step,
-                    update_state=self._update_state,
-                    record_usage=self._record_usage,
-                    **kwargs,
-                )
+                if self._fn_is_async:
+                    result = await self._fn(
+                        task,
+                        record_step=self._record_step,
+                        update_state=self._update_state,
+                        record_usage=self._record_usage,
+                        **kwargs,
+                    )
+                else:
+                    result = await anyio.to_thread.run_sync(
+                        functools.partial(
+                            self._fn,
+                            task,
+                            record_step=self._record_step,
+                            update_state=self._update_state,
+                            record_usage=self._record_usage,
+                            **kwargs,
+                        )
+                    )
                 await self._drain_checkpoints()
                 return result
 
@@ -978,15 +1001,19 @@ class Agent:
         return await self.run(task, **kwargs)
 
 
-def agent(policy: FailurePolicy, **kwargs: Any) -> Callable[[Callable[..., Awaitable[Any]]], Agent]:
-    """Decorator factory. Wraps an async function with triage recovery.
+def agent(policy: FailurePolicy, **kwargs: Any) -> Callable[[Callable[..., Any]], Agent]:
+    """Decorator factory. Wraps an async or sync function with triage recovery.
 
     Usage::
 
         @triage.agent(policy=my_policy)
         async def my_agent(task: str, *, record_step, update_state, **kwargs) -> str:
             ...
+
+        @triage.agent(policy=my_policy)
+        def my_sync_agent(task: str, *, record_step, **kwargs) -> str:
+            ...
     """
-    def decorator(fn: Callable[..., Awaitable[Any]]) -> Agent:
+    def decorator(fn: Callable[..., Any]) -> Agent:
         return Agent(fn, policy=policy, **kwargs)
     return decorator

@@ -1828,3 +1828,109 @@ async def test_circuit_breakers_copied_by_clone():
     await ag.run("task")
 
     assert b.state() == BreakerState.CLOSED
+
+
+# ── sync agent support ────────────────────────────────────────────────────────
+
+async def test_sync_agent_basic():
+    """A plain def callable should run via anyio.to_thread.run_sync and return correctly."""
+    def sync_agent(task: str, *, record_step: Any, **_kw: Any) -> str:
+        record_step(make_step(0))
+        return f"sync:{task}"
+
+    ag = Agent(sync_agent, FailurePolicy())
+    result = await ag.run("hello")
+    assert result == "sync:hello"
+
+
+async def test_sync_agent_recovery():
+    """A sync agent that fails once should be recoverable via the policy."""
+    calls: list[int] = []
+
+    def sync_agent(task: str, *, record_step: Any, **_kw: Any) -> str:
+        calls.append(len(calls))
+        record_step(make_step(0, error="HTTP 503" if len(calls) == 1 else None))
+        if len(calls) == 1:
+            raise RuntimeError("HTTP 503 Service Unavailable")
+        return "recovered"
+
+    from triage.strategies.retry import backoff_and_retry
+
+    ag = Agent(
+        sync_agent,
+        FailurePolicy(EXTERNAL_FAULT=backoff_and_retry(max_attempts=3)),
+        max_recovery_attempts=3,
+    )
+    result = await ag.run("task")
+    assert result == "recovered"
+    assert len(calls) == 2
+
+
+async def test_sync_agent_record_step_via_contextvar():
+    """get_recorder() must work inside a sync agent (ContextVar is visible in thread)."""
+    from triage.agent import get_recorder
+
+    def sync_agent(task: str, **_kw: Any) -> str:
+        record = get_recorder()
+        record(make_step(0))
+        return "done"
+
+    ag = Agent(sync_agent, FailurePolicy())
+    result = await ag.run("task")
+    assert result == "done"
+
+
+async def test_sync_agent_update_state():
+    """update_state() must persist state that is visible in a subsequent rollback."""
+    calls: list[int] = []
+
+    def sync_agent(task: str, *, record_step: Any, update_state: Any, **_kw: Any) -> str:
+        calls.append(len(calls))
+        update_state({"call": len(calls)})
+        record_step(make_step(0, error="HTTP 503" if len(calls) == 1 else None))
+        if len(calls) == 1:
+            raise RuntimeError("HTTP 503")
+        return "done"
+
+    from triage.strategies.retry import backoff_and_retry
+
+    ag = Agent(
+        sync_agent,
+        FailurePolicy(EXTERNAL_FAULT=backoff_and_retry(max_attempts=2)),
+        max_recovery_attempts=3,
+        auto_checkpoint=True,
+    )
+    result = await ag.run("task")
+    assert result == "done"
+
+
+async def test_async_callable_instance_detected_as_async():
+    """A callable class with async __call__ must NOT be run via run_sync."""
+    import inspect
+    import triage
+
+    class AsyncCallable:
+        async def __call__(self, task: str, *, record_step: Any, **_kw: Any) -> str:
+            record_step(make_step(0))
+            return "async-instance"
+
+    fn = AsyncCallable()
+    ag = Agent(fn, FailurePolicy())
+    # Verify the detection flag
+    assert ag._fn_is_async is True
+    result = await ag.run("task")
+    assert result == "async-instance"
+
+
+async def test_sync_callable_instance_runs_in_thread():
+    """A callable class with plain def __call__ must be run via run_sync."""
+    class SyncCallable:
+        def __call__(self, task: str, *, record_step: Any, **_kw: Any) -> str:
+            record_step(make_step(0))
+            return "sync-instance"
+
+    fn = SyncCallable()
+    ag = Agent(fn, FailurePolicy())
+    assert ag._fn_is_async is False
+    result = await ag.run("task")
+    assert result == "sync-instance"

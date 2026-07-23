@@ -75,7 +75,7 @@ __all__ = [
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 
 
 def __getattr__(name: str) -> object:
