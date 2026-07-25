@@ -28,12 +28,12 @@ type to a recovery strategy. This document tracks what has shipped and what come
 | v0.17 | Human-in-the-loop pause/resume | `RecoveryAction.SUSPEND`; `SuspensionStore` protocol; `Agent.resume(token, action=...)`; `InMemorySuspensionStore` default |
 | v0.18 | Failure distribution example | `examples/failure_distribution.py` + `docs/examples/failure-distribution.md`; aggregates OTel span attributes into per-type frequency and recovery-rate table; no new library code |
 | v0.19 | Native sync-agent support | Plain `def` callables accepted by `Agent`; run via `anyio.to_thread.run_sync()`; all policy, checkpointing, hooks, and ContextVar injection unchanged |
+| v0.20 | Persistent circuit breaker state | `BreakerStore` protocol + `RedisBreakerStore`; `CircuitBreaker(store=...)` shares OPEN/HALF_OPEN state across workers and survives process restarts; switches to wall-clock timestamps automatically when a store is attached |
 
 ---
 
 ## Later (no version assigned)
 
 - **OpenAI Agents SDK adapter** — `wrap_openai_agents()`; deprioritised until the SDK stabilises.
-- **Persistent circuit breaker state** — serialize `CircuitBreaker` state to the checkpoint store (Redis-backed) so the open/half-open state survives process restarts in multi-worker and serverless deployments.
 - **Streaming agent support** — needs a design doc covering the partial `Step` model and mid-stream retry semantics before implementation begins.
 - **Saga / compensating rollback** — reverse-order compensate callables that undo side effects on rollback; deliberately minimal and only if there is concrete user demand.

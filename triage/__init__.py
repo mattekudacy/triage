@@ -65,6 +65,8 @@ __all__ = [
     # circuit breaker
     "BreakerState",
     "CircuitBreaker",
+    "BreakerStore",
+    "RedisBreakerStore",
     # usage accounting
     "Usage",
     "UsageMeter",
@@ -75,7 +77,7 @@ __all__ = [
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 
 
 def __getattr__(name: str) -> object:
@@ -91,4 +93,10 @@ def __getattr__(name: str) -> object:
     if name == "RedisCheckpointStore":
         from triage.checkpoint.redis import RedisCheckpointStore
         return RedisCheckpointStore
+    if name == "BreakerStore":
+        from triage.breaker_store import BreakerStore
+        return BreakerStore
+    if name == "RedisBreakerStore":
+        from triage.breaker_store import RedisBreakerStore
+        return RedisBreakerStore
     raise AttributeError(f"module 'triage' has no attribute {name!r}")

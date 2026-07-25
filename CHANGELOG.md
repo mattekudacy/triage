@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.20.0] - 2026-07-25
+
+### Added
+- **Persistent circuit breaker state** — new `triage/breaker_store.py`: `BreakerStore` protocol
+  (sync, thread-safe, 6 methods) and `RedisBreakerStore` implementation backed by a synchronous
+  `redis.Redis` client. `CircuitBreaker` gains an optional `store: BreakerStore | None = None`
+  constructor param. When set, all state reads/writes (failure window, OPEN/HALF_OPEN state,
+  `opened_at`, probe-in-flight flag) go through the store so the breaker is shared across
+  workers and survives process restarts. The in-memory path (no store) is completely unchanged.
+- **Wall-clock timestamps on the store path** — `time.monotonic()` is process-local and cannot
+  be compared across machines. When `store` is attached, `CircuitBreaker` automatically switches
+  to `time.time()` (wall-clock UTC seconds) for all timestamps. The `_now` injectable on all
+  public methods continues to work; just pass wall-clock floats when a store is present.
+- **`RedisBreakerStore` uses a sorted set for the failure window** — scores are wall-clock
+  timestamps; `evict_before()` issues `ZREMRANGEBYSCORE` and `add_failure()` issues `ZADD`
+  with a UUID-suffixed member to avoid score collisions. `save()` pipelines the state, `opened_at`,
+  and probe-in-flight key writes atomically. Optional `ttl_seconds` param auto-expires all keys
+  after each write — useful in serverless environments.
+- `BreakerStore`, `RedisBreakerStore` added to `triage.__all__` (lazy-imported via `__getattr__`).
+
+---
+
 ## [0.19.0] - 2026-07-23
 
 ### Added
