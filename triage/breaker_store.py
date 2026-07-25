@@ -31,7 +31,7 @@ of monotonic floats.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from triage.breaker import BreakerState
 
@@ -124,7 +124,7 @@ class RedisBreakerStore:
                 f"got {type(redis_client).__name__}. "
                 "Use redis.Redis(...), not redis.asyncio.Redis(...)."
             )
-        self._r = redis_client
+        self._r: Any = redis_client
         self._state_key = f"{key_prefix}:state"
         self._opened_at_key = f"{key_prefix}:opened_at"
         self._failures_key = f"{key_prefix}:failures"
@@ -185,4 +185,4 @@ class RedisBreakerStore:
 
     def get_probe_in_flight(self) -> bool:
         raw = self._r.get(self._probe_key)
-        return raw == b"1"
+        return bool(raw == b"1")

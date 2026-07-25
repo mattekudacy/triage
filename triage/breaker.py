@@ -64,7 +64,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     pass
@@ -241,7 +241,7 @@ class CircuitBreaker:
                     state = BreakerState.HALF_OPEN
                     snap.state = state
                     self.store.save(snap)
-            return state
+            return cast(BreakerState, state)
         # in-memory path
         if self._state == BreakerState.OPEN and self._opened_at is not None:
             t = now if now is not None else time.monotonic()
@@ -287,7 +287,7 @@ class CircuitBreaker:
                 snap.opened_at = now
                 snap.probe_in_flight = False
                 self.store.save(snap)
-        return state
+        return cast(BreakerState, state)
 
     def _record_success_mem(self) -> BreakerState:
         """In-memory record_success. Must be called under lock."""
@@ -308,4 +308,4 @@ class CircuitBreaker:
             snap.opened_at = None
             self.store.evict_before(float("inf"))
         self.store.save(snap)
-        return snap.state
+        return cast(BreakerState, snap.state)
