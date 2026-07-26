@@ -17,7 +17,7 @@ import random
 
 from triage.bench import run_benchmark
 from triage.policy import FailurePolicy, RecoveryAction
-from triage.strategies.retry import backoff_and_retry, retry_with_tool_manifest
+from triage.strategies.retry import retry_with_tool_manifest
 from triage.taxonomy import FailureContext, Step
 
 # ── synthetic tasks ────────────────────────────────────────────────────────────
@@ -122,15 +122,19 @@ async def main() -> None:
     # Emit the Markdown table for the README
     bsr = report._baseline_success_rate
     tsr = report.success_rate
-    bml = report._baseline_mean_latency_s
     tml = report.mean_latency_s
     rec = report.total_recoveries
 
     print("Markdown table:")
     print()
-    print("| Scenario | blind-retry success | triage success | triage recoveries | mean latency |")
+    cols = "| Scenario | blind-retry | triage | recoveries | mean latency |"
+    row = (
+        f"| 6 tasks × 5 runs (mixed failure modes)"
+        f" | {bsr:.0%} | {tsr:.0%} | {rec} | {tml:.3f}s |"
+    )
+    print(cols)
     print("|---|---|---|---|---|")
-    print(f"| 6 tasks × 5 runs (mixed failure modes) | {bsr:.0%} | {tsr:.0%} | {rec} | {tml:.3f}s |")
+    print(row)
     print()
     print("Failure type breakdown:")
     for ft, n in sorted(report.failure_type_counts.items(), key=lambda x: -x[1]):
