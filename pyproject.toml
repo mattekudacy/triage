@@ -106,7 +106,7 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["triage.policy", "triage.classifier.llm"]
+module = ["triage.policy", "triage.classifier.llm", "triage.adapters.langchain"]
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]

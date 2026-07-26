@@ -24,7 +24,7 @@ from triage.taxonomy import Step
 
 
 def wrap_langgraph(
-    graph: CompiledStateGraph,
+    graph: CompiledStateGraph[Any, Any, Any, Any],
     policy: FailurePolicy,
     **kwargs: Any,
 ) -> Agent:
