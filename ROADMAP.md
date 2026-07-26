@@ -66,11 +66,6 @@ Items are grouped by urgency. Within each group, order is rough priority.
 
 ### Evidence and positioning
 
-- **Publish bench numbers** — the single highest-value item on this list. `triage.bench`
-  and `run_benchmark()` exist but the README shows no results. Classification accuracy and
-  recovery lift vs. blind retry are both unproven to anyone evaluating the library. A
-  table in the README with a small reproducible scenario would change that immediately.
-
 - **Cut a 1.0 with an API stability commitment** — twenty-one minor versions in a short
   window reads as churn, and some bumps were not library changes at all (v0.18 was an
   example file). The public API has been stable since v0.2; a 1.0 with an explicit

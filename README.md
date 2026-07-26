@@ -23,6 +23,23 @@ agent fails → classify failure type → route to matching strategy → recover
 
 It works with any async agent callable — OpenAI, LangGraph, raw LLM loops — without requiring you to change your framework.
 
+## Results
+
+Synthetic benchmark across three failure modes (transient 503, wrong tool, schema mismatch),
+6 task variants × 5 runs each, `RulesClassifier` (zero API calls):
+
+| | blind-retry | triage |
+|---|---|---|
+| success rate | 77% | **100%** |
+| recoveries | — | 30 |
+| failure types classified | — | `external_fault` ×15, `wrong_tool_called` ×10, `schema_mismatch` ×5 |
+
+Blind retry succeeds on transient faults when the second attempt happens to work, but
+fails on wrong-tool and schema errors because retrying without a hint doesn't change
+the outcome. Triage routes each type to the right strategy and recovers all of them.
+
+Reproduce: `PYTHONPATH=. python scripts/bench_synthetic.py`
+
 ---
 
 ## Installation
