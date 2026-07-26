@@ -37,13 +37,13 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 try:
     from openai import OpenAI
 except ImportError:
-    raise SystemExit("Run: pip install openai")
+    raise SystemExit("Run: pip install openai") from None
 
-import triage
-from triage.classifier.llm import LLMClassifier
-from triage.strategies.retry import retry_with_tool_manifest
-from triage.strategies.replan import replan
-from triage.taxonomy import Step
+import triage  # noqa: E402
+from triage.classifier.llm import LLMClassifier  # noqa: E402
+from triage.strategies.replan import replan  # noqa: E402
+from triage.strategies.retry import retry_with_tool_manifest  # noqa: E402
+from triage.taxonomy import Step  # noqa: E402
 
 HF_BASE_URL = "https://api-inference.huggingface.co/v1"
 MODEL = "meta-llama/Llama-3.2-3B-Instruct"

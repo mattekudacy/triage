@@ -35,12 +35,12 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 try:
     from openai import OpenAI
 except ImportError:
-    raise SystemExit("Run: pip install openai")
+    raise SystemExit("Run: pip install openai") from None
 
-import triage
-from triage.classifier.llm import LLMClassifier
-from triage.strategies.retry import retry_with_tool_manifest
-from triage.taxonomy import Step
+import triage  # noqa: E402
+from triage.classifier.llm import LLMClassifier  # noqa: E402
+from triage.strategies.retry import retry_with_tool_manifest  # noqa: E402
+from triage.taxonomy import Step  # noqa: E402
 
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
 MODEL = "llama3.2"

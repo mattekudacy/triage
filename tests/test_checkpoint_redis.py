@@ -11,11 +11,11 @@ import pytest
 redis_mod = pytest.importorskip("redis")
 fakeredis = pytest.importorskip("fakeredis")
 
-from fakeredis.aioredis import FakeRedis
+from fakeredis.aioredis import FakeRedis  # noqa: E402
 
-from triage.checkpoint.base import Checkpoint, make_checkpoint
-from triage.checkpoint.redis import RedisCheckpointStore
-from triage.taxonomy import Step
+from triage.checkpoint.base import Checkpoint, make_checkpoint  # noqa: E402
+from triage.checkpoint.redis import RedisCheckpointStore  # noqa: E402
+from triage.taxonomy import Step  # noqa: E402
 
 
 def make_step(

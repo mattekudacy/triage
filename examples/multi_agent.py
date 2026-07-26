@@ -36,8 +36,8 @@ import asyncio
 import logging
 
 import triage
-from triage.strategies.retry import backoff_and_retry
 from triage.strategies.replan import replan
+from triage.strategies.retry import backoff_and_retry
 from triage.taxonomy import Step
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -47,7 +47,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 _researcher_calls = [0]
 
 
-async def researcher_agent(task: str, *, record_step, _triage_hint: str | None = None, **_kwargs) -> str:
+async def researcher_agent(
+    task: str, *, record_step, _triage_hint: str | None = None, **_kwargs
+) -> str:
     _researcher_calls[0] += 1
     call = _researcher_calls[0]
 

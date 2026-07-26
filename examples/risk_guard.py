@@ -36,9 +36,9 @@ import asyncio
 import logging
 
 import triage
-from triage.strategies.retry import backoff_and_retry
-from triage.strategies.replan import replan
 from triage.policy import RecoveryAction
+from triage.strategies.replan import replan
+from triage.strategies.retry import backoff_and_retry
 from triage.taxonomy import FailureContext, Step
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")

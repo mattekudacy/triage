@@ -47,7 +47,6 @@ import triage
 from triage.strategies.retry import backoff_and_retry
 from triage.taxonomy import Step
 
-
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
 _attempt = [0]
@@ -124,7 +123,7 @@ async def main() -> None:
     exporter.clear()
 
 
-def _print_spans(exporter: "InMemorySpanExporter") -> None:
+def _print_spans(exporter: InMemorySpanExporter) -> None:
     spans = exporter.get_finished_spans()
     print(f"Spans emitted: {len(spans)}\n")
     for span in spans:
@@ -135,8 +134,10 @@ def _print_spans(exporter: "InMemorySpanExporter") -> None:
             f"  {span.name:<22}"
             f"  status={status:<6}"
             f"  run_id={run_id[:8]}…"
-            + (f"  failure_type={attrs['triage.failure_type']}" if "triage.failure_type" in attrs else "")
-            + (f"  action_kind={attrs['triage.action_kind']}" if "triage.action_kind" in attrs else "")
+            + (f"  failure_type={attrs['triage.failure_type']}"
+               if "triage.failure_type" in attrs else "")
+            + (f"  action_kind={attrs['triage.action_kind']}"
+               if "triage.action_kind" in attrs else "")
         )
     print()
 

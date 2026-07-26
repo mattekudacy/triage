@@ -31,6 +31,12 @@ class Trajectory:
         # informational (used in log lines and LLM prompts, not by any
         # internal invariant), and existing agents that don't track it
         # carefully should not suddenly break on upgrade.
+        #
+        # Strict less-than (<) rather than less-than-or-equal (<=) is
+        # intentional: equal indices are allowed because Step.partial=True
+        # steps legitimately share an index with the completed step that
+        # follows them (the partial and its successor represent the same
+        # logical step, just at different stages of completion).
         if self._steps and step.index < self._steps[-1].index:
             logger.warning(
                 "[triage] Trajectory.append() received non-monotonic index "

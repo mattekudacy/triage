@@ -14,7 +14,6 @@ import pytest
 
 from triage.taxonomy import Step
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def make_step(index: int = 0, error: str | None = None) -> Step:
@@ -99,6 +98,7 @@ def test_resolve_meter_returns_none_for_noop_provider():
 @pytestmark_metrics
 def test_resolve_meter_returns_explicit_meter_directly():
     from opentelemetry.sdk.metrics import MeterProvider
+
     from triage.observability.metrics import resolve_meter
 
     provider = MeterProvider()
@@ -114,6 +114,7 @@ async def test_agent_records_run_and_failure_metrics():
     """A failed + recovered run emits failures and recoveries metrics."""
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
     import triage
     from triage.policy import FailurePolicy, RecoveryAction
 
@@ -160,6 +161,7 @@ async def test_agent_records_run_and_failure_metrics():
 async def test_run_counter_has_success_outcome_on_clean_run():
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
     import triage
     from triage.policy import FailurePolicy
 

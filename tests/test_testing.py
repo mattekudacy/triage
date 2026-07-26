@@ -13,7 +13,6 @@ from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import FailureType, Step
 from triage.testing import RecordingAgent, assert_classifies_as, make_step
 
-
 # ── make_step ────────────────────────────────────────────────────────────────
 
 def test_make_step_defaults():
@@ -56,7 +55,8 @@ async def test_recording_agent_succeeds_immediately():
 
 async def test_recording_agent_records_kwargs():
     fn = RecordingAgent()
-    sentinel = lambda s: None
+    def sentinel(s):
+        return None
     await fn("task", record_step=sentinel, update_state=lambda d: None, extra="val")
     assert fn.calls[0]["extra"] == "val"
     assert fn.calls[0]["record_step"] is sentinel

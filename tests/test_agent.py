@@ -11,9 +11,13 @@ from typing import Any
 
 import pytest
 
-from unittest.mock import MagicMock
-
-from triage.agent import Agent, TriageAbortError, TriageEscalationError, get_recorder, get_state_updater
+from triage.agent import (
+    Agent,
+    TriageAbortError,
+    TriageEscalationError,
+    get_recorder,
+    get_state_updater,
+)
 from triage.checkpoint import InMemoryCheckpointStore
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import FailureType, Step, TriageContext
@@ -690,7 +694,6 @@ async def test_no_triage_state_injected_when_checkpoint_state_empty():
 
 
 async def test_update_state_resets_each_attempt():
-    states_at_failure: list[dict] = []
     call_count = [0]
 
     async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
@@ -1906,8 +1909,6 @@ async def test_sync_agent_update_state():
 
 async def test_async_callable_instance_detected_as_async():
     """A callable class with async __call__ must NOT be run via run_sync."""
-    import inspect
-    import triage
 
     class AsyncCallable:
         async def __call__(self, task: str, *, record_step: Any, **_kw: Any) -> str:

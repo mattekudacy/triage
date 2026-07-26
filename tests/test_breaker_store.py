@@ -16,8 +16,7 @@ from triage.breaker import BreakerState, CircuitBreaker
 fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
 
 
-def _make_store(prefix: str = "test:breaker") -> "RedisBreakerStore":  # noqa: F821
-    import redis
+def _make_store(prefix: str = "test:breaker") -> RedisBreakerStore:  # noqa: F821
     from triage.breaker_store import RedisBreakerStore
 
     r = fakeredis.FakeRedis()
@@ -91,6 +90,7 @@ def test_probe_in_flight_roundtrip():
 
 def test_wrong_client_type_raises():
     import redis.asyncio as aioredis
+
     from triage.breaker_store import RedisBreakerStore
     async_client = aioredis.Redis()
     with pytest.raises(TypeError, match="synchronous redis.Redis"):
@@ -214,7 +214,6 @@ def test_store_success_in_closed_is_noop():
 
 def test_state_shared_across_instances_same_store():
     """Two CircuitBreakers sharing the same Redis client see each other's state."""
-    import redis
     from triage.breaker_store import RedisBreakerStore
 
     r = fakeredis.FakeRedis()
@@ -234,7 +233,6 @@ def test_state_shared_across_instances_same_store():
 
 
 def test_reset_on_one_instance_visible_to_other():
-    import redis
     from triage.breaker_store import RedisBreakerStore
 
     r = fakeredis.FakeRedis()
@@ -256,7 +254,7 @@ def test_reset_on_one_instance_visible_to_other():
 # ── ttl_seconds ───────────────────────────────────────────────────────────────
 
 def test_ttl_param_accepted():
-    import redis
+
     from triage.breaker_store import RedisBreakerStore
     r = fakeredis.FakeRedis()
     store = RedisBreakerStore(r, key_prefix="test:ttl", ttl_seconds=3600)

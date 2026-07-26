@@ -282,9 +282,17 @@ async def test_sequence_counts_only_matching_failure_type():
 async def test_sequence_three_strategies_in_order():
     results = []
 
-    async def s1(ctx): results.append("s1"); return RecoveryAction.RETRY()
-    async def s2(ctx): results.append("s2"); return RecoveryAction.REPLAN()
-    async def s3(ctx): results.append("s3"); return RecoveryAction.ROLLBACK()
+    async def s1(ctx):
+        results.append("s1")
+        return RecoveryAction.RETRY()
+
+    async def s2(ctx):
+        results.append("s2")
+        return RecoveryAction.REPLAN()
+
+    async def s3(ctx):
+        results.append("s3")
+        return RecoveryAction.ROLLBACK()
 
     seq = FailurePolicy.sequence(s1, s2, s3)
     ft = FailureType.UNKNOWN
@@ -346,7 +354,9 @@ async def test_from_dict_with_default():
 
 
 async def test_from_dict_unregistered_type_escalates_without_default():
-    policy = FailurePolicy.from_dict({FailureType.EXTERNAL_FAULT: FailurePolicy.escalate_by_default()})
+    policy = FailurePolicy.from_dict(
+        {FailureType.EXTERNAL_FAULT: FailurePolicy.escalate_by_default()}
+    )
     ctx = make_ctx(FailureType.TIMEOUT)
     action = await policy.dispatch(ctx)
     assert action.kind == "escalate"
@@ -398,7 +408,9 @@ def test_from_yaml_custom_registry(tmp_path):
     async def my_strategy(ctx): return RecoveryAction.RETRY()
     config = tmp_path / "policy.toml"
     config.write_text('[EXTERNAL_FAULT]\nstrategy = "my_custom"\n')
-    policy = FailurePolicy.from_yaml(str(config), strategy_registry={"my_custom": lambda **_: my_strategy})
+    policy = FailurePolicy.from_yaml(
+        str(config), strategy_registry={"my_custom": lambda **_: my_strategy}
+    )
     assert policy.resolve(FailureType.EXTERNAL_FAULT) is my_strategy
 
 

@@ -1,11 +1,9 @@
 """Tests for triage.bench — BenchResult, BenchReport, run_benchmark."""
 
-import pytest
 
 from triage.bench import BenchReport, BenchResult, run_benchmark
 from triage.policy import FailurePolicy, RecoveryAction
-from triage.taxonomy import FailureType, Step
-
+from triage.taxonomy import Step
 
 # ── BenchReport properties ────────────────────────────────────────────────────
 

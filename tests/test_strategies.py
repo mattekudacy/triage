@@ -1,8 +1,6 @@
 """Tests for triage.strategies — retry, replan, rollback."""
 
-import pytest
 
-from triage.policy import RecoveryAction
 from triage.strategies.replan import replan, resume_from_subgoal
 from triage.strategies.retry import backoff_and_retry, retry_with_tool_manifest
 from triage.taxonomy import FailureContext, FailureType, Step

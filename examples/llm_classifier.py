@@ -24,10 +24,10 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-import triage
-from triage.strategies.replan import replan
-from triage.strategies.retry import backoff_and_retry
-from triage.taxonomy import Step
+import triage  # noqa: E402
+from triage.strategies.replan import replan  # noqa: E402
+from triage.strategies.retry import backoff_and_retry  # noqa: E402
+from triage.taxonomy import Step  # noqa: E402
 
 try:
     from triage.classifier.llm import LLMClassifier
@@ -35,7 +35,7 @@ except ImportError:
     raise SystemExit(
         "Missing dependency. Run:\n"
         "  pip install 'triage-agent[anthropic]'"
-    )
+    ) from None
 
 # ── Synthetic agent ───────────────────────────────────────────────────────────
 
@@ -98,7 +98,7 @@ agent = triage.Agent(
 async def main() -> None:
     task = "Summarise the latest research on transformer architectures."
     print(f"\nTask: {task}")
-    print(f"Classifier: LLMClassifier (claude-haiku-4-5-20251001)\n")
+    print("Classifier: LLMClassifier (claude-haiku-4-5-20251001)\n")
     try:
         result = await agent.run(task)
         print(f"\n{result}")

@@ -107,7 +107,7 @@ pytestmark_otel = pytest.mark.skipif(
 def test_resolve_tracer_returns_none_for_noop_provider():
     """With OTel installed but no provider set, resolve_tracer() returns None."""
     from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
+
     from triage.observability.otel import resolve_tracer
 
     # Save and reset to the default proxy provider
@@ -124,6 +124,7 @@ def test_resolve_tracer_returns_none_for_noop_provider():
 def test_resolve_tracer_returns_explicit_tracer_directly():
     """An explicitly passed tracer is returned unchanged regardless of global state."""
     from opentelemetry.sdk.trace import TracerProvider
+
     from triage.observability.otel import resolve_tracer
 
     provider = TracerProvider()
@@ -136,8 +137,9 @@ def test_resolve_tracer_returns_explicit_tracer_directly():
 async def test_agent_emits_run_classify_dispatch_spans():
     """A full Agent.run() with failure + recovery must produce the expected span tree."""
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
     import triage
     from triage.policy import FailurePolicy, RecoveryAction
 
@@ -198,9 +200,10 @@ async def test_agent_emits_run_classify_dispatch_spans():
 async def test_escalate_marks_dispatch_span_as_error():
     """A dispatch that results in escalate must set the dispatch span status to ERROR."""
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.trace import StatusCode
+
     import triage
     from triage.policy import FailurePolicy
 
@@ -235,8 +238,9 @@ async def test_escalate_marks_dispatch_span_as_error():
 async def test_run_id_is_same_across_classify_and_dispatch_spans():
     """All spans from one Agent.run() must share the same triage.run_id attribute."""
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
     import triage
     from triage.policy import FailurePolicy
 

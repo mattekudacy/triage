@@ -13,7 +13,6 @@ from triage.policy import FailurePolicy, RecoveryAction
 from triage.streaming import StreamRetryEvent
 from triage.taxonomy import FailureType, Step
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def make_step(
@@ -27,7 +26,9 @@ def make_step(
                 tool_input=tool_input, error=error, llm_output=llm_output)
 
 
-async def _collect(agent: Agent, task: str, **kwargs: object) -> tuple[list[object], list[StreamRetryEvent]]:
+async def _collect(
+    agent: Agent, task: str, **kwargs: object
+) -> tuple[list[object], list[StreamRetryEvent]]:
     chunks: list[object] = []
     retries: list[StreamRetryEvent] = []
     async for item in agent.stream(task, **kwargs):
@@ -318,7 +319,7 @@ async def test_stream_on_recovery_hook_called():
 # ── circuit_breakers integration ──────────────────────────────────────────────
 
 async def test_stream_calls_record_success_on_clean_run():
-    from triage.breaker import CircuitBreaker, BreakerState
+    from triage.breaker import BreakerState, CircuitBreaker
 
     b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=30)
     b.record_failure()

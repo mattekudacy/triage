@@ -7,7 +7,6 @@ Tests for triage.usage — Usage dataclass and UsageMeter accumulation.
 from __future__ import annotations
 
 import threading
-from typing import Any
 
 import anyio
 import pytest
@@ -16,7 +15,6 @@ from triage.agent import Agent, TriageEscalationError, get_usage_recorder
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import Step
 from triage.usage import Usage, UsageMeter
-
 
 # ── UsageMeter unit tests ─────────────────────────────────────────────────────
 
@@ -93,7 +91,6 @@ def test_usage_total_tokens():
 
 async def test_agent_injects_record_usage():
     """record_usage kwarg is received and meter accumulates."""
-    recorded: list[Usage] = []
 
     async def my_agent(task: str, *, record_step, record_usage, **kwargs) -> str:
         record_usage(Usage(input_tokens=10, output_tokens=5))
@@ -218,7 +215,6 @@ async def test_max_cost_none_does_not_escalate():
 
 async def test_concurrent_runs_have_independent_meters():
     """Two concurrent run() calls on the same Agent don't share usage totals."""
-    import asyncio
 
     async def my_agent(task: str, *, record_usage, **kwargs) -> str:
         record_usage(Usage(input_tokens=int(task)))

@@ -16,7 +16,10 @@ pytest.importorskip("langchain")
 try:
     from langchain.agents import AgentExecutor as _AgentExecutor  # noqa: F401
 except ImportError:
-    pytest.skip("langchain.agents.AgentExecutor not available in this version", allow_module_level=True)
+    pytest.skip(
+        "langchain.agents.AgentExecutor not available in this version",
+        allow_module_level=True,
+    )
 
 from triage.adapters.langchain import wrap_langchain
 from triage.policy import FailurePolicy
@@ -58,7 +61,6 @@ async def test_callback_passed_to_ainvoke():
 
 
 async def test_tool_start_recorded():
-    from langchain_core.callbacks import BaseCallbackHandler
     recorded_steps = []
     executor = MagicMock()
 

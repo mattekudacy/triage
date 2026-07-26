@@ -99,7 +99,9 @@ async def test_concurrent_saves_all_persisted():
     import anyio
 
     store = InMemoryCheckpointStore()
-    checkpoints = [make_checkpoint(state={"i": i}, trajectory_steps=[], id=f"cp-{i}") for i in range(20)]
+    checkpoints = [
+        make_checkpoint(state={"i": i}, trajectory_steps=[], id=f"cp-{i}") for i in range(20)
+    ]
 
     async with anyio.create_task_group() as tg:
         for cp in checkpoints:
@@ -176,7 +178,6 @@ async def test_concurrent_runs_rollback_to_own_checkpoints():
     results: dict[str, str] = {}
 
     async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
-        call_key = f"{task}-{kw.get('_attempt', 0)}"
         record_step(Step(index=0, action=f"step-{task}"))
         update_state({"owner": task})
         if "_triage_hint" not in kw:

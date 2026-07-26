@@ -7,7 +7,6 @@ Tests for triage.breaker.CircuitBreaker and triage.strategies.circuit_breaker.
 from __future__ import annotations
 
 import threading
-from typing import Any
 
 import pytest
 
@@ -16,7 +15,6 @@ from triage.breaker import BreakerState, CircuitBreaker
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.strategies.circuit_breaker import circuit_breaker
 from triage.taxonomy import FailureContext, FailureType, Step
-
 
 # ── CircuitBreaker unit tests ─────────────────────────────────────────────────
 
@@ -180,7 +178,7 @@ def test_concurrent_record_failure_is_threadsafe():
     n = 50
 
     def worker():
-        for i in range(n):
+        for _i in range(n):
             b.record_failure()
 
     threads = [threading.Thread(target=worker) for _ in range(10)]
@@ -343,7 +341,6 @@ async def test_agent_trips_breaker_after_threshold():
         record_step(Step(index=0, action="step", error="HTTP 503"))
         raise RuntimeError("down")
 
-    from triage.strategies.retry import backoff_and_retry
 
     async def _single_retry(ctx):
         return RecoveryAction.RETRY()

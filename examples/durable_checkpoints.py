@@ -28,9 +28,9 @@ import tempfile
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-import triage
-from triage.strategies.rollback import rollback_to_checkpoint
-from triage.taxonomy import Step
+import triage  # noqa: E402
+from triage.strategies.rollback import rollback_to_checkpoint  # noqa: E402
+from triage.taxonomy import Step  # noqa: E402
 
 try:
     from triage.checkpoint.sqlite import SQLiteCheckpointStore
@@ -38,7 +38,7 @@ except ImportError:
     raise SystemExit(
         "Missing dependency. Run:\n"
         "  pip install 'triage-agent[sqlite]'"
-    )
+    ) from None
 
 # ── Synthetic multi-phase agent ───────────────────────────────────────────────
 

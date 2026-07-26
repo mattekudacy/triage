@@ -43,10 +43,9 @@ except ImportError:
     _OTEL_AVAILABLE = False
 
 import triage
-from triage.strategies.retry import backoff_and_retry
 from triage.strategies.replan import replan
+from triage.strategies.retry import backoff_and_retry
 from triage.taxonomy import Step
-
 
 # ── Synthetic agents ───────────────────────────────────────────────────────────
 # Each agent raises a specific error on its first call, then succeeds.
@@ -87,7 +86,7 @@ def _make_always_failing_agent(error_msg: str):
 # ── Run population ─────────────────────────────────────────────────────────────
 
 async def _run_population(
-    exporter: "InMemorySpanExporter",
+    exporter: InMemorySpanExporter,
 ) -> tuple[int, int]:
     """
     Execute 20 synthetic runs and return (total_runs, successful_runs).

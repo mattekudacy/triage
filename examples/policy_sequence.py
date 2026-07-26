@@ -35,8 +35,8 @@ import asyncio
 import logging
 
 import triage
-from triage.strategies.retry import backoff_and_retry
 from triage.strategies.replan import replan
+from triage.strategies.retry import backoff_and_retry
 from triage.strategies.rollback import rollback_to_checkpoint
 from triage.taxonomy import Step
 

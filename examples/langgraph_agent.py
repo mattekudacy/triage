@@ -25,19 +25,19 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 try:
-    from langchain_openai import ChatOpenAI
     from langchain_core.tools import tool
+    from langchain_openai import ChatOpenAI
     from langgraph.prebuilt import create_react_agent
 except ImportError:
     raise SystemExit(
         "Missing dependencies. Run:\n"
         "  pip install 'triage-agent[langgraph]' langchain-openai"
-    )
+    ) from None
 
-import triage
-from triage.adapters.langgraph import wrap_langgraph
-from triage.strategies.retry import retry_with_tool_manifest
-from triage.strategies.replan import replan
+import triage  # noqa: E402
+from triage.adapters.langgraph import wrap_langgraph  # noqa: E402
+from triage.strategies.replan import replan  # noqa: E402
+from triage.strategies.retry import retry_with_tool_manifest  # noqa: E402
 
 # ── Tool definition ───────────────────────────────────────────────────────────
 
@@ -50,7 +50,9 @@ def calculator(expression: str) -> str:
     if _fail_once[0]:
         _fail_once[0] = False
         # Simulate a validation error to trigger SCHEMA_MISMATCH
-        raise ValueError("validation error: expression must not contain spaces — got: " + repr(expression))
+        raise ValueError(
+            "validation error: expression must not contain spaces — got: " + repr(expression)
+        )
     try:
         result = eval(expression, {"__builtins__": {}})  # noqa: S307
         return str(result)

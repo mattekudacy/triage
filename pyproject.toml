@@ -108,3 +108,9 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["triage.policy", "triage.classifier.llm"]
 warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+# Observability modules use conditional imports for optional OTel/metrics deps;
+# the type stubs pattern (assigning None/Any to typed variables) is intentional.
+module = ["triage.observability.*"]
+ignore_errors = true

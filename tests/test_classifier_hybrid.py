@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from triage.classifier.hybrid import HybridClassifier
-from triage.classifier.rules import RulesClassifier
 from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
 
@@ -127,7 +126,7 @@ def test_llm_receives_same_trajectory_and_task():
     clf = HybridClassifier(llm=llm)
 
     t = traj(make_step(0, error="unclear"))
-    result = clf.classify(t, "my task")
+    clf.classify(t, "my task")
 
     call_args = llm.classify.call_args
     assert call_args[0][0] is t

@@ -23,7 +23,6 @@ What happens:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -31,13 +30,13 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 try:
     import anthropic
 except ImportError:
-    raise SystemExit("Run: pip install 'triage-agent[anthropic]'")
+    raise SystemExit("Run: pip install 'triage-agent[anthropic]'") from None
 
-import triage
-from triage.classifier.llm import LLMClassifier
-from triage.strategies.replan import replan
-from triage.strategies.retry import backoff_and_retry
-from triage.taxonomy import Step
+import triage  # noqa: E402
+from triage.classifier.llm import LLMClassifier  # noqa: E402
+from triage.strategies.replan import replan  # noqa: E402
+from triage.strategies.retry import backoff_and_retry  # noqa: E402
+from triage.taxonomy import Step  # noqa: E402
 
 MODEL = "claude-haiku-4-5-20251001"
 
@@ -141,7 +140,9 @@ async def anthropic_agent(
 classifier = LLMClassifier(model=MODEL, max_trajectory_steps=6)
 
 policy = triage.FailurePolicy(
-    LOOP_DETECTED=replan(hint="You are repeating the same tool call. Use the actual numbers from the task."),
+    LOOP_DETECTED=replan(
+        hint="You are repeating the same tool call. Use the actual numbers from the task."
+    ),
     EXTERNAL_FAULT=backoff_and_retry(max_attempts=3),
     default=triage.FailurePolicy.escalate_by_default(),
 )

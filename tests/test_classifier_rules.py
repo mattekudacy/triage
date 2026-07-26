@@ -393,12 +393,14 @@ def test_openai_wrong_tool_pattern():
 
 def test_anthropic_wrong_tool_pattern():
     t = traj(make_step(error="Invalid tool use: foo does not exist in tools list"))
-    assert RulesClassifier(framework="anthropic").classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+    result = RulesClassifier(framework="anthropic").classify(t, "task")
+    assert result == FailureType.WRONG_TOOL_CALLED
 
 
 def test_langgraph_wrong_tool_pattern():
     t = traj(make_step(error="search not found in tool map"))
-    assert RulesClassifier(framework="langgraph").classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+    result = RulesClassifier(framework="langgraph").classify(t, "task")
+    assert result == FailureType.WRONG_TOOL_CALLED
 
 
 def test_openai_schema_pattern():

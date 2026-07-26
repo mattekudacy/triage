@@ -25,8 +25,6 @@ def test_risk_score_clamps_below_zero():
 
 
 def test_step_risk_scorer_is_callable_protocol():
-    from triage.taxonomy import Step
-    from triage.trajectory import Trajectory
 
     def my_scorer(step: Step, trajectory: Trajectory) -> RiskScore:
         return RiskScore(score=0.0)

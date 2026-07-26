@@ -30,7 +30,6 @@ from triage.classifier.rules import RulesClassifier
 from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
 
-
 # ── Test case definition ──────────────────────────────────────────────────────
 
 @dataclass
@@ -199,7 +198,8 @@ CASES: list[Case] = [
     Case(
         label="constraint: case-insensitive match",
         expected=FailureType.CONSTRAINT_IGNORED,
-        steps=[make_step(0, llm_output="DO NOT USE MARKDOWN is what I should avoid but here it is anyway.")],
+        steps=[make_step(0, llm_output="DO NOT USE MARKDOWN is what I should avoid"
+                                       " but here it is anyway.")],
         task="do not use markdown",  # constraint lowercase, matched case-insensitively
     ),
     # ── NOT CONSTRAINT ─────────────────────────────────────────────────────────
@@ -293,12 +293,18 @@ SEMANTIC_CASES: list[Case] = [
         label="context-overflow: loses track of what was already processed",
         expected=FailureType.CONTEXT_OVERFLOW,
         steps=[
-            make_step(0, tool_called="list_items", tool_output='["item1","item2","item3","item4","item5"]'),
-            make_step(1, tool_called="process_item", tool_input={"id": "item1"}, tool_output="done"),
-            make_step(2, tool_called="process_item", tool_input={"id": "item2"}, tool_output="done"),
-            make_step(3, tool_called="process_item", tool_input={"id": "item3"}, tool_output="done"),
-            make_step(4, tool_called="process_item", tool_input={"id": "item4"}, tool_output="done"),
-            make_step(5, tool_called="process_item", tool_input={"id": "item1"}, tool_output="done"),
+            make_step(0, tool_called="list_items",
+                      tool_output='["item1","item2","item3","item4","item5"]'),
+            make_step(1, tool_called="process_item",
+                      tool_input={"id": "item1"}, tool_output="done"),
+            make_step(2, tool_called="process_item",
+                      tool_input={"id": "item2"}, tool_output="done"),
+            make_step(3, tool_called="process_item",
+                      tool_input={"id": "item3"}, tool_output="done"),
+            make_step(4, tool_called="process_item",
+                      tool_input={"id": "item4"}, tool_output="done"),
+            make_step(5, tool_called="process_item",
+                      tool_input={"id": "item1"}, tool_output="done"),
             make_step(6, llm_output="Processed items. I think I got them all."),
         ],
         task="Process each item exactly once and confirm all five are done.",
@@ -405,7 +411,8 @@ def main() -> None:
 
     # ── LLMClassifier (optional) ──────────────────────────────────────────────
     if args.llm:
-        print("\n\n── LLMClassifier (claude-haiku-4-5-20251001) ─────────────────────────────────\n")
+        print("\n\n── LLMClassifier (claude-haiku-4-5-20251001) "
+              "─────────────────────────────────\n")
         llm_clf = _load_llm_classifier()
         all_llm_cases = CASES + SEMANTIC_CASES
         run_cases(llm_clf, all_llm_cases)
@@ -417,7 +424,8 @@ def main() -> None:
 
     # ── HybridClassifier (optional) ───────────────────────────────────────────
     if args.hybrid:
-        print("\n\n── HybridClassifier (rules + claude-haiku-4-5-20251001) ───────────────────────\n")
+        print("\n\n── HybridClassifier (rules + claude-haiku-4-5-20251001) "
+              "───────────────────────\n")
         try:
             from triage.classifier.hybrid import HybridClassifier
         except ImportError:

@@ -40,6 +40,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -47,6 +48,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from triage.taxonomy import FailureContext, FailureType, Step
 from triage.usage import Usage
+
+logger = logging.getLogger("triage")
 
 
 @dataclass
@@ -121,6 +124,9 @@ def make_token() -> str:
     return str(uuid.uuid4())
 
 
+_JSON_PRIMITIVES = (str, int, float, bool, list, dict, type(None))
+
+
 def serialize_run(run: SuspendedRun) -> str:
     """Serialize a ``SuspendedRun`` to a JSON string.
 
@@ -130,8 +136,39 @@ def serialize_run(run: SuspendedRun) -> str:
     ``trajectory`` matter).  Custom ``SuspensionStore`` implementations
     (e.g. Redis-backed) should use this helper rather than
     ``json.dumps(dataclasses.asdict(run))`` which would raise ``TypeError``.
+
+    **kwargs filtering:** any value that is not a JSON primitive (str, int,
+    float, bool, list, dict, or None) is silently dropped.  The resumed run
+    will therefore execute with fewer kwargs than the suspended one —
+    non-serializable values such as client handles, datetime objects, or
+    custom types will be absent.  A ``logger.warning`` is emitted for each
+    dropped key so callers can diagnose the mismatch.
+
+    **tool_output coercion:** ``Step.tool_output`` values that are not JSON
+    primitives are coerced to ``str()`` before serialization.  Strategies
+    that inspect ``tool_output`` directly (rather than via the LLM prompt)
+    will see a string after deserialization even if the original value was a
+    custom object — keep this in mind when writing strategies for agents that
+    set non-primitive tool outputs.
     """
     ctx = run.context
+
+    # Warn about kwargs that will be dropped so callers can diagnose resume mismatches.
+    serializable_kwargs: dict[str, Any] = {}
+    dropped: list[str] = []
+    for k, v in run.kwargs.items():
+        if isinstance(v, _JSON_PRIMITIVES):
+            serializable_kwargs[k] = v
+        else:
+            dropped.append(k)
+    if dropped:
+        logger.warning(
+            "[triage] serialize_run: dropping non-serializable kwargs %r — "
+            "the resumed run will not receive these values",
+            dropped,
+            extra={"triage_event": "serialize_kwargs_dropped", "dropped_keys": dropped},
+        )
+
     return json.dumps({
         "token": run.token,
         "task": run.task,
@@ -140,10 +177,7 @@ def serialize_run(run: SuspendedRun) -> str:
         "timestamp": run.timestamp,
         "message": run.message,
         "metadata": run.metadata,
-        "kwargs": {
-            k: v for k, v in run.kwargs.items()
-            if isinstance(v, (str, int, float, bool, list, dict, type(None)))
-        },
+        "kwargs": serializable_kwargs,
         "usage_snapshot": {
             "input_tokens": run.usage_snapshot.input_tokens,
             "output_tokens": run.usage_snapshot.output_tokens,
@@ -164,7 +198,7 @@ def serialize_run(run: SuspendedRun) -> str:
                     "tool_called": s.tool_called,
                     "tool_input": s.tool_input,
                     "tool_output": s.tool_output
-                    if isinstance(s.tool_output, (str, int, float, bool, list, dict, type(None)))
+                    if isinstance(s.tool_output, _JSON_PRIMITIVES)
                     else str(s.tool_output),
                     "llm_output": s.llm_output,
                     "error": s.error,

@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
-
-import pytest
+from typing import Any
 
 from triage.classifier.rules import RulesClassifier
 from triage.feedback import Correction, coverage_report, load_corrections, record_correction
@@ -34,7 +32,7 @@ def test_record_correction_writes_to_file(tmp_path: Any):
     record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store)
 
     with open(store) as f:
-        lines = [l for l in f.read().splitlines() if l.strip()]
+        lines = [line for line in f.read().splitlines() if line.strip()]
     assert len(lines) == 1
     data = json.loads(lines[0])
     assert data["expected_type"] == "external_fault"
@@ -48,7 +46,7 @@ def test_record_correction_appends(tmp_path: Any):
     record_correction(ctx, FailureType.TIMEOUT, store_path=store)
 
     with open(store) as f:
-        lines = [l for l in f.read().splitlines() if l.strip()]
+        lines = [line for line in f.read().splitlines() if line.strip()]
     assert len(lines) == 2
 
 
@@ -168,8 +166,10 @@ def test_fit_warns_on_misclassification(tmp_path: Any, caplog: Any):
     with caplog.at_level(logging.WARNING, logger="triage"):
         clf.fit(store)
 
-    events = [r for r in caplog.records if getattr(r, "triage_event", None) == "fit_misclassification"]
-    assert events, "Expected a fit_misclassification warning"
+    fit_events = [
+        r for r in caplog.records if getattr(r, "triage_event", None) == "fit_misclassification"
+    ]
+    assert fit_events, "Expected a fit_misclassification warning"
 
 
 def test_fit_no_warnings_on_correct_entry(tmp_path: Any, caplog: Any):
@@ -182,8 +182,10 @@ def test_fit_no_warnings_on_correct_entry(tmp_path: Any, caplog: Any):
     with caplog.at_level(logging.WARNING, logger="triage"):
         clf.fit(store)
 
-    events = [r for r in caplog.records if getattr(r, "triage_event", None) == "fit_misclassification"]
-    assert not events, "Expected no fit_misclassification warnings"
+    misclass = [
+        r for r in caplog.records if getattr(r, "triage_event", None) == "fit_misclassification"
+    ]
+    assert not misclass, "Expected no fit_misclassification warnings"
 
 
 def test_fit_returns_coverage_dict(tmp_path: Any):
@@ -213,10 +215,22 @@ def test_fit_empty_file(tmp_path: Any):
 
 def test_coverage_report_counts_correct_and_wrong():
     corrections = [
-        Correction(task="t", steps_summary=[], expected_type="external_fault", observed_type="external_fault", timestamp=0.0),
-        Correction(task="t", steps_summary=[], expected_type="external_fault", observed_type="unknown", timestamp=0.0),
-        Correction(task="t", steps_summary=[], expected_type="external_fault", observed_type="unknown", timestamp=0.0),
-        Correction(task="t", steps_summary=[], expected_type="timeout", observed_type="timeout", timestamp=0.0),
+        Correction(
+            task="t", steps_summary=[],
+            expected_type="external_fault", observed_type="external_fault", timestamp=0.0,
+        ),
+        Correction(
+            task="t", steps_summary=[],
+            expected_type="external_fault", observed_type="unknown", timestamp=0.0,
+        ),
+        Correction(
+            task="t", steps_summary=[],
+            expected_type="external_fault", observed_type="unknown", timestamp=0.0,
+        ),
+        Correction(
+            task="t", steps_summary=[],
+            expected_type="timeout", observed_type="timeout", timestamp=0.0,
+        ),
     ]
     report = coverage_report(corrections)
     assert report["external_fault"] == {"correct": 1, "wrong": 2}
@@ -229,12 +243,14 @@ def test_coverage_report_empty_list():
 
 def test_coverage_report_all_correct():
     corrections = [
-        Correction(task="t", steps_summary=[], expected_type="timeout", observed_type="timeout", timestamp=0.0),
-        Correction(task="t", steps_summary=[], expected_type="timeout", observed_type="timeout", timestamp=0.0),
+        Correction(
+            task="t", steps_summary=[],
+            expected_type="timeout", observed_type="timeout", timestamp=0.0,
+        ),
+        Correction(
+            task="t", steps_summary=[],
+            expected_type="timeout", observed_type="timeout", timestamp=0.0,
+        ),
     ]
     report = coverage_report(corrections)
     assert report["timeout"] == {"correct": 2, "wrong": 0}
-
-
-# type annotation fix for pytest fixtures
-from typing import Any

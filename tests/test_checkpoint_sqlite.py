@@ -10,9 +10,9 @@ import pytest
 
 aiosqlite = pytest.importorskip("aiosqlite")
 
-from triage.checkpoint.base import Checkpoint, make_checkpoint
-from triage.checkpoint.sqlite import SQLiteCheckpointStore
-from triage.taxonomy import Step
+from triage.checkpoint.base import Checkpoint, make_checkpoint  # noqa: E402
+from triage.checkpoint.sqlite import SQLiteCheckpointStore  # noqa: E402
+from triage.taxonomy import Step  # noqa: E402
 
 
 def make_step(

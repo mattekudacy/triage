@@ -17,8 +17,15 @@ import pytest
 
 from triage.agent import Agent, TriageAbortError, TriageEscalationError, TriageSuspendedError
 from triage.policy import FailurePolicy, RecoveryAction
-from triage.suspension import InMemorySuspensionStore, SuspendedRun, SuspensionStore
-from triage.taxonomy import FailureType, Step
+from triage.suspension import (
+    InMemorySuspensionStore,
+    SuspendedRun,
+    SuspensionStore,
+    deserialize_run,
+    serialize_run,
+)
+from triage.taxonomy import FailureContext, FailureType, Step
+from triage.usage import Usage
 
 
 def make_step(
@@ -345,3 +352,141 @@ async def test_suspension_store_copied_by_clone():
     # Resume via clone — same store, so the token is accessible
     with pytest.raises(TriageAbortError):
         await cloned.resume(token, action=RecoveryAction.ABORT(reason="done"))
+
+
+# ── serialize_run / deserialize_run round-trip ────────────────────────────────
+
+def _make_suspended_run(*, kwargs: dict[str, Any] | None = None) -> SuspendedRun:
+    step = Step(
+        index=0,
+        action="test step",
+        tool_called="search",
+        tool_input={"query": "hello"},
+        tool_output="some result",
+        llm_output="thinking...",
+        error=None,
+        timestamp=1.0,
+        idempotent=True,
+        partial=False,
+    )
+    ctx = FailureContext(
+        failure_type=FailureType.EXTERNAL_FAULT,
+        trajectory=[step],
+        critical_step_index=0,
+        original_task="do the thing",
+        last_checkpoint_id="ckpt-1",
+        metadata={"attempt_number": 1, "run_id": "run-abc"},
+        attempt_history=[(FailureType.TIMEOUT, "retry")],
+    )
+    return SuspendedRun(
+        token="tok-rt",
+        context=ctx,
+        task="do the thing",
+        kwargs=kwargs or {"user": "alice", "dry_run": True},
+        attempt=1,
+        attempt_history=[(FailureType.TIMEOUT, "retry")],
+        timestamp=1000.0,
+        message="needs approval",
+        metadata={"channel": "#ops"},
+        usage_snapshot=Usage(input_tokens=10, output_tokens=5, cost_usd=0.001, calls=1),
+    )
+
+
+def test_serialize_deserialize_round_trip():
+    """All scalar and nested fields survive a JSON round-trip without loss."""
+    run = _make_suspended_run()
+    restored = deserialize_run(serialize_run(run))
+
+    assert restored.token == run.token
+    assert restored.task == run.task
+    assert restored.attempt == run.attempt
+    assert restored.timestamp == run.timestamp
+    assert restored.message == run.message
+    assert restored.metadata == run.metadata
+    assert restored.kwargs == run.kwargs
+    assert restored.attempt_history == run.attempt_history
+
+    # Usage snapshot
+    assert restored.usage_snapshot.input_tokens == run.usage_snapshot.input_tokens
+    assert restored.usage_snapshot.output_tokens == run.usage_snapshot.output_tokens
+    assert restored.usage_snapshot.cost_usd == run.usage_snapshot.cost_usd
+    assert restored.usage_snapshot.calls == run.usage_snapshot.calls
+
+    # FailureContext
+    ctx = restored.context
+    assert ctx.failure_type == FailureType.EXTERNAL_FAULT
+    assert ctx.original_task == "do the thing"
+    assert ctx.critical_step_index == 0
+    assert ctx.last_checkpoint_id == "ckpt-1"
+    assert ctx.attempt_history == [(FailureType.TIMEOUT, "retry")]
+
+    # Trajectory
+    assert len(ctx.trajectory) == 1
+    s = ctx.trajectory[0]
+    assert s.index == 0
+    assert s.action == "test step"
+    assert s.tool_called == "search"
+    assert s.tool_input == {"query": "hello"}
+    assert s.tool_output == "some result"
+    assert s.llm_output == "thinking..."
+    assert s.error is None
+    assert s.timestamp == 1.0
+    assert s.idempotent is True
+    assert s.partial is False
+
+
+def test_serialize_non_primitive_tool_output_coerced_to_str():
+    """tool_output values that are not JSON primitives are coerced to str()."""
+    step = Step(index=0, action="step", tool_output=object())
+    ctx = FailureContext(
+        failure_type=FailureType.UNKNOWN,
+        trajectory=[step],
+        critical_step_index=0,
+        original_task="task",
+    )
+    run = SuspendedRun(
+        token="tok-coerce",
+        context=ctx,
+        task="task",
+        kwargs={},
+        attempt=0,
+        attempt_history=[],
+    )
+    restored = deserialize_run(serialize_run(run))
+    # After round-trip the value is a string (str(object()) form), not the original object.
+    assert isinstance(restored.context.trajectory[0].tool_output, str)
+
+
+def test_serialize_non_serializable_kwargs_are_dropped_with_warning(caplog: Any):
+    """kwargs with non-primitive values are dropped and a warning is logged."""
+    import logging
+
+    run = _make_suspended_run(kwargs={"user": "alice", "client": object(), "timeout": 30})
+    with caplog.at_level(logging.WARNING, logger="triage"):
+        restored = deserialize_run(serialize_run(run))
+
+    # Non-serializable "client" key is absent; primitives survive
+    assert "client" not in restored.kwargs
+    assert restored.kwargs == {"user": "alice", "timeout": 30}
+
+    # Warning was emitted
+    warnings = [
+        r for r in caplog.records if getattr(r, "triage_event", None) == "serialize_kwargs_dropped"
+    ]
+    assert warnings, "Expected a serialize_kwargs_dropped warning"
+    assert "client" in warnings[0].dropped_keys
+
+
+def test_serialize_all_primitive_kwargs_no_warning(caplog: Any):
+    """No warning is emitted when all kwargs are JSON-serializable."""
+    import logging
+
+    run = _make_suspended_run(kwargs={"user": "alice", "n": 3, "flag": True, "x": None})
+    with caplog.at_level(logging.WARNING, logger="triage"):
+        restored = deserialize_run(serialize_run(run))
+
+    assert restored.kwargs == {"user": "alice", "n": 3, "flag": True, "x": None}
+    warnings = [
+        r for r in caplog.records if getattr(r, "triage_event", None) == "serialize_kwargs_dropped"
+    ]
+    assert not warnings
