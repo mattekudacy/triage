@@ -57,12 +57,13 @@ def test_append_monotonic_index_does_not_warn(caplog):
     assert "non-monotonic" not in caplog.text
 
 
-def test_append_repeated_index_warns(caplog):
+def test_append_repeated_index_does_not_warn(caplog):
+    # Equal index is normal when agents reset to index=0 on each retry attempt.
     t = Trajectory()
     with caplog.at_level(logging.WARNING, logger="triage"):
         t.append(make_step(0))
         t.append(make_step(0))
-    assert "non-monotonic" in caplog.text
+    assert "non-monotonic" not in caplog.text
 
 
 def test_append_decreasing_index_warns(caplog):
@@ -89,7 +90,7 @@ def test_append_first_step_never_warns(caplog):
 
 
 def test_append_skipped_index_does_not_warn(caplog):
-    """Gaps are fine — only same-or-decreasing indices are flagged."""
+    """Gaps are fine — only strictly decreasing indices are flagged."""
     t = Trajectory()
     with caplog.at_level(logging.WARNING, logger="triage"):
         t.append(make_step(0))

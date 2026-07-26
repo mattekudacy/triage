@@ -24,7 +24,13 @@ from triage.policy import FailurePolicy, RecoveryAction
 from triage.scorer.base import RiskScore, StepRiskScorer
 from triage.scorer.rules import RulesRiskScorer
 from triage.streaming import StreamRetryEvent
-from triage.suspension import InMemorySuspensionStore, SuspendedRun, SuspensionStore
+from triage.suspension import (
+    InMemorySuspensionStore,
+    SuspendedRun,
+    SuspensionStore,
+    deserialize_run,
+    serialize_run,
+)
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.testing import RecordingAgent, assert_classifies_as, make_step
 from triage.usage import Usage, UsageMeter
@@ -50,6 +56,8 @@ __all__ = [
     "InMemorySuspensionStore",
     "SuspendedRun",
     "SuspensionStore",
+    "serialize_run",
+    "deserialize_run",
     "agent",
     "get_recorder",
     "get_state_updater",

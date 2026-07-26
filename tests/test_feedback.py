@@ -87,12 +87,14 @@ def test_record_correction_rotates_when_threshold_exceeded(tmp_path: Any):
     for _ in range(4):
         record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store, max_lines=3)
 
-    # 4th write pushes the file to 4 lines (> 3) — rotates: store_path becomes
-    # empty/fresh (about to receive the *next* write), backup holds all 4 lines
+    # With max_lines=3, rotation fires as soon as the file reaches 3 lines.
+    # Write 3 → backup holds 3 lines, primary is empty.
+    # Write 4 → goes to fresh primary (1 line); backup still holds 3.
     assert os.path.exists(store + ".1")
     with open(store + ".1") as f:
-        assert len(f.read().splitlines()) == 4
-    assert not os.path.exists(store) or open(store).read() == ""
+        assert len(f.read().splitlines()) == 3
+    with open(store) as f:
+        assert len(f.read().splitlines()) == 1
 
 
 def test_record_correction_rotation_overwrites_previous_backup(tmp_path: Any):

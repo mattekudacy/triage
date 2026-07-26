@@ -666,7 +666,7 @@ class Agent:
                     original_task=task,
                     last_checkpoint_id=self._last_checkpoint_id,
                     raw_error=exc,
-                    metadata={"attempt_number": attempt},
+                    metadata={"attempt_number": attempt, "run_id": self._run_id},
                     attempt_history=list(attempt_history),
                 )
                 self._last_ctx = ctx
@@ -811,7 +811,14 @@ class Agent:
 
         # Restore run_id so any new checkpoints join the same scoped run.
         self._run_id = ctx.metadata.get("run_id") or str(uuid.uuid4())
+        reset_call_count = getattr(self._classifier, "reset_call_count", None)
+        if reset_call_count is not None:
+            reset_call_count()
+        # Restore the usage snapshot from before suspension so budget caps
+        # remain accurate across the pause — a fresh reset() would grant a
+        # full new budget to a run that may have already consumed most of it.
         self._meter.reset()
+        self._meter.record(suspended.usage_snapshot)
 
         _run_start = time.monotonic()
         try:
@@ -937,7 +944,7 @@ class Agent:
                     original_task=task,
                     last_checkpoint_id=self._last_checkpoint_id,
                     raw_error=exc,
-                    metadata={"attempt_number": attempt},
+                    metadata={"attempt_number": attempt, "run_id": self._run_id},
                     attempt_history=list(attempt_history),
                 )
                 self._last_ctx = ctx
@@ -1064,6 +1071,8 @@ class Agent:
                 await anyio.sleep(delay)
             if "hint" in action.params:
                 new_kwargs["_triage_hint"] = action.params["hint"]
+            if "inject" in action.params:
+                new_kwargs.update(action.params["inject"])
 
             # Idempotency enforcement: escalate instead of retrying if any
             # executed step was non-idempotent and strict_idempotency is set.
@@ -1117,6 +1126,7 @@ class Agent:
                 attempt_history=list(ctx.attempt_history),
                 message=action.params.get("message", ""),
                 metadata=action.params.get("metadata") or {},
+                usage_snapshot=self._meter.total,
             )
             await self._suspension_store.save(suspended)
             logger.info(

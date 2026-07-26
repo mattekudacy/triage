@@ -28,6 +28,19 @@ Usage::
             buffer.append(item)
 
     result = "".join(buffer)
+
+.. warning:: **Streaming retry is only safe for buffered consumers.**
+
+    When a retry occurs, triage re-starts the generator from the top and
+    yields a ``StreamRetryEvent`` so the caller can discard accumulated
+    output.  If chunks have already been forwarded to a live-rendered output
+    (a terminal, a streaming HTTP response, a WebSocket), there is no way to
+    un-show them — the user will see duplicated content.
+
+    Only use ``Agent.stream()`` with a buffer that you control and can clear
+    on ``StreamRetryEvent``.  If you are streaming directly to a user, either
+    accept that retries may produce visible duplication or disable recovery
+    by setting ``max_recovery_attempts=0``.
 """
 
 from __future__ import annotations

@@ -31,7 +31,7 @@ class Trajectory:
         # informational (used in log lines and LLM prompts, not by any
         # internal invariant), and existing agents that don't track it
         # carefully should not suddenly break on upgrade.
-        if self._steps and step.index <= self._steps[-1].index:
+        if self._steps and step.index < self._steps[-1].index:
             logger.warning(
                 "[triage] Trajectory.append() received non-monotonic index "
                 "(step.index=%r, previous=%r) — Step.index should increase "

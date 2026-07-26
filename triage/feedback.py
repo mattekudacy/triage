@@ -97,7 +97,7 @@ def _rotate_if_needed(store_path: str, max_lines: int) -> None:
             line_count = sum(1 for _ in f)
     except FileNotFoundError:
         return
-    if line_count <= max_lines:
+    if line_count < max_lines:
         return
     backup_path = store_path + ".1"
     os.replace(store_path, backup_path)

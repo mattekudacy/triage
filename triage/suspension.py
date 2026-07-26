@@ -39,12 +39,14 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from triage.taxonomy import FailureContext
+from triage.taxonomy import FailureContext, FailureType, Step
+from triage.usage import Usage
 
 
 @dataclass
@@ -84,6 +86,7 @@ class SuspendedRun:
     timestamp: float = field(default_factory=time.time)
     message: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    usage_snapshot: Usage = field(default_factory=Usage)
 
 
 @runtime_checkable
@@ -116,3 +119,112 @@ class InMemorySuspensionStore:
 def make_token() -> str:
     """Generate a fresh suspension token."""
     return str(uuid.uuid4())
+
+
+def serialize_run(run: SuspendedRun) -> str:
+    """Serialize a ``SuspendedRun`` to a JSON string.
+
+    ``FailureContext.raw_error`` is an ``Exception`` and is not
+    JSON-serializable; it is intentionally dropped here because it is never
+    needed to resume a run (only the classified ``failure_type`` and
+    ``trajectory`` matter).  Custom ``SuspensionStore`` implementations
+    (e.g. Redis-backed) should use this helper rather than
+    ``json.dumps(dataclasses.asdict(run))`` which would raise ``TypeError``.
+    """
+    ctx = run.context
+    return json.dumps({
+        "token": run.token,
+        "task": run.task,
+        "attempt": run.attempt,
+        "attempt_history": [[ft.value, kind] for ft, kind in run.attempt_history],
+        "timestamp": run.timestamp,
+        "message": run.message,
+        "metadata": run.metadata,
+        "kwargs": {
+            k: v for k, v in run.kwargs.items()
+            if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+        },
+        "usage_snapshot": {
+            "input_tokens": run.usage_snapshot.input_tokens,
+            "output_tokens": run.usage_snapshot.output_tokens,
+            "cost_usd": run.usage_snapshot.cost_usd,
+            "calls": run.usage_snapshot.calls,
+        },
+        "context": {
+            "failure_type": ctx.failure_type.value,
+            "original_task": ctx.original_task,
+            "critical_step_index": ctx.critical_step_index,
+            "last_checkpoint_id": ctx.last_checkpoint_id,
+            "metadata": ctx.metadata,
+            "attempt_history": [[ft.value, kind] for ft, kind in ctx.attempt_history],
+            "trajectory": [
+                {
+                    "index": s.index,
+                    "action": s.action,
+                    "tool_called": s.tool_called,
+                    "tool_input": s.tool_input,
+                    "tool_output": s.tool_output
+                    if isinstance(s.tool_output, (str, int, float, bool, list, dict, type(None)))
+                    else str(s.tool_output),
+                    "llm_output": s.llm_output,
+                    "error": s.error,
+                    "timestamp": s.timestamp,
+                    "idempotent": s.idempotent,
+                    "partial": s.partial,
+                }
+                for s in ctx.trajectory
+            ],
+        },
+    })
+
+
+def deserialize_run(data: str) -> SuspendedRun:
+    """Deserialize a ``SuspendedRun`` from a JSON string produced by ``serialize_run``."""
+    d = json.loads(data)
+    ctx_d = d["context"]
+    trajectory = [
+        Step(
+            index=s["index"],
+            action=s["action"],
+            tool_called=s.get("tool_called"),
+            tool_input=s.get("tool_input"),
+            tool_output=s.get("tool_output"),
+            llm_output=s.get("llm_output"),
+            error=s.get("error"),
+            timestamp=s.get("timestamp", 0.0),
+            idempotent=s.get("idempotent", False),
+            partial=s.get("partial", False),
+        )
+        for s in ctx_d["trajectory"]
+    ]
+    ctx = FailureContext(
+        failure_type=FailureType(ctx_d["failure_type"]),
+        trajectory=trajectory,
+        critical_step_index=ctx_d["critical_step_index"],
+        original_task=ctx_d["original_task"],
+        last_checkpoint_id=ctx_d.get("last_checkpoint_id"),
+        metadata=ctx_d.get("metadata", {}),
+        attempt_history=[
+            (FailureType(ft), kind) for ft, kind in ctx_d.get("attempt_history", [])
+        ],
+    )
+    u = d.get("usage_snapshot", {})
+    return SuspendedRun(
+        token=d["token"],
+        context=ctx,
+        task=d["task"],
+        kwargs=d.get("kwargs", {}),
+        attempt=d["attempt"],
+        attempt_history=[
+            (FailureType(ft), kind) for ft, kind in d.get("attempt_history", [])
+        ],
+        timestamp=d.get("timestamp", 0.0),
+        message=d.get("message", ""),
+        metadata=d.get("metadata", {}),
+        usage_snapshot=Usage(
+            input_tokens=u.get("input_tokens", 0),
+            output_tokens=u.get("output_tokens", 0),
+            cost_usd=u.get("cost_usd", 0.0),
+            calls=u.get("calls", 0),
+        ),
+    )
