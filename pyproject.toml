@@ -68,6 +68,10 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py310"
 line-length = 100
+extend-exclude = ["docs/**", "*.md"]
+
+[tool.ruff.format]
+exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
