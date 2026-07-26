@@ -47,6 +47,7 @@ MODEL = "llama3.2"
 
 # ── Tool ─────────────────────────────────────────────────────────────────────
 
+
 def calculator(expression: str) -> str:
     try:
         result = eval(expression, {"__builtins__": {}})  # noqa: S307
@@ -82,9 +83,7 @@ async def ollama_agent(
                 "description": "Evaluate an arithmetic expression.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "expression": {"type": "string", "description": "e.g. '6 * 7'"}
-                    },
+                    "properties": {"expression": {"type": "string", "description": "e.g. '6 * 7'"}},
                     "required": ["expression"],
                 },
             },
@@ -117,22 +116,26 @@ async def ollama_agent(
     try:
         args = json.loads(raw_args)
     except json.JSONDecodeError as exc:
-        record_step(Step(
-            index=0,
-            action="tool_call:calculator",
-            tool_called="calculator",
-            error=f"JSONDecodeError: {exc}",
-        ))
+        record_step(
+            Step(
+                index=0,
+                action="tool_call:calculator",
+                tool_called="calculator",
+                error=f"JSONDecodeError: {exc}",
+            )
+        )
         raise RuntimeError(f"JSONDecodeError: {exc}") from exc
 
     result = calculator(args["expression"])
-    record_step(Step(
-        index=0,
-        action="tool_call:calculator",
-        tool_called="calculator",
-        tool_input=args,
-        tool_output=result,
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="tool_call:calculator",
+            tool_called="calculator",
+            tool_input=args,
+            tool_output=result,
+        )
+    )
     return f"Result: {result}"
 
 

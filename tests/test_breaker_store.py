@@ -25,8 +25,10 @@ def _make_store(prefix: str = "test:breaker") -> RedisBreakerStore:  # noqa: F82
 
 # ── BreakerSnapshot defaults ──────────────────────────────────────────────────
 
+
 def test_snapshot_default_state_is_closed():
     from triage.breaker_store import BreakerSnapshot
+
     snap = BreakerSnapshot()
     assert snap.state == BreakerState.CLOSED
     assert snap.failure_times == []
@@ -35,6 +37,7 @@ def test_snapshot_default_state_is_closed():
 
 
 # ── RedisBreakerStore unit tests ──────────────────────────────────────────────
+
 
 def test_load_returns_defaults_when_empty():
     store = _make_store()
@@ -47,6 +50,7 @@ def test_load_returns_defaults_when_empty():
 
 def test_save_and_load_roundtrip():
     from triage.breaker_store import BreakerSnapshot
+
     store = _make_store()
     snap = BreakerSnapshot(
         state=BreakerState.OPEN,
@@ -92,12 +96,14 @@ def test_wrong_client_type_raises():
     import redis.asyncio as aioredis
 
     from triage.breaker_store import RedisBreakerStore
+
     async_client = aioredis.Redis()
     with pytest.raises(TypeError, match="synchronous redis.Redis"):
         RedisBreakerStore(async_client)
 
 
 # ── CircuitBreaker(store=...) integration ─────────────────────────────────────
+
 
 def _breaker(prefix: str = "test:cb", **kwargs) -> CircuitBreaker:
     store = _make_store(prefix)
@@ -212,6 +218,7 @@ def test_store_success_in_closed_is_noop():
 
 # ── Cross-instance state sharing (the key multi-worker scenario) ──────────────
 
+
 def test_state_shared_across_instances_same_store():
     """Two CircuitBreakers sharing the same Redis client see each other's state."""
     from triage.breaker_store import RedisBreakerStore
@@ -221,10 +228,12 @@ def test_state_shared_across_instances_same_store():
     store_a = RedisBreakerStore(r, key_prefix=prefix)
     store_b = RedisBreakerStore(r, key_prefix=prefix)
 
-    b1 = CircuitBreaker(failure_threshold=2, window_seconds=60.0,
-                         cooldown_seconds=30.0, store=store_a)
-    b2 = CircuitBreaker(failure_threshold=2, window_seconds=60.0,
-                         cooldown_seconds=30.0, store=store_b)
+    b1 = CircuitBreaker(
+        failure_threshold=2, window_seconds=60.0, cooldown_seconds=30.0, store=store_a
+    )
+    b2 = CircuitBreaker(
+        failure_threshold=2, window_seconds=60.0, cooldown_seconds=30.0, store=store_b
+    )
 
     b1.record_failure(_now=1.0)
     b1.record_failure(_now=2.0)
@@ -240,10 +249,12 @@ def test_reset_on_one_instance_visible_to_other():
     store_a = RedisBreakerStore(r, key_prefix=prefix)
     store_b = RedisBreakerStore(r, key_prefix=prefix)
 
-    b1 = CircuitBreaker(failure_threshold=1, window_seconds=60.0,
-                         cooldown_seconds=30.0, store=store_a)
-    b2 = CircuitBreaker(failure_threshold=1, window_seconds=60.0,
-                         cooldown_seconds=30.0, store=store_b)
+    b1 = CircuitBreaker(
+        failure_threshold=1, window_seconds=60.0, cooldown_seconds=30.0, store=store_a
+    )
+    b2 = CircuitBreaker(
+        failure_threshold=1, window_seconds=60.0, cooldown_seconds=30.0, store=store_b
+    )
 
     b1.record_failure(_now=1.0)
     assert b2.state(_now=2.0) == BreakerState.OPEN
@@ -253,13 +264,14 @@ def test_reset_on_one_instance_visible_to_other():
 
 # ── ttl_seconds ───────────────────────────────────────────────────────────────
 
+
 def test_ttl_param_accepted():
 
     from triage.breaker_store import RedisBreakerStore
+
     r = fakeredis.FakeRedis()
     store = RedisBreakerStore(r, key_prefix="test:ttl", ttl_seconds=3600)
-    b = CircuitBreaker(failure_threshold=1, window_seconds=60.0,
-                        cooldown_seconds=30.0, store=store)
+    b = CircuitBreaker(failure_threshold=1, window_seconds=60.0, cooldown_seconds=30.0, store=store)
     b.record_failure(_now=1.0)
     # State persisted and TTLs set — just verify no crash and state is correct
     assert b.state(_now=2.0) == BreakerState.OPEN

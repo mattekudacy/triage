@@ -1,6 +1,5 @@
 """Tests for triage.strategies — retry, replan, rollback."""
 
-
 from triage.strategies.replan import replan, resume_from_subgoal
 from triage.strategies.retry import backoff_and_retry, retry_with_tool_manifest
 from triage.taxonomy import FailureContext, FailureType, Step
@@ -22,6 +21,7 @@ def make_ctx(
 
 
 # ── replan() ─────────────────────────────────────────────────────────────────
+
 
 async def test_replan_returns_replan_action():
     strategy = replan()
@@ -95,6 +95,7 @@ async def test_replan_one_below_limit_replans():
 
 # ── resume_from_subgoal() ─────────────────────────────────────────────────────
 
+
 async def test_resume_returns_resume_action():
     strategy = resume_from_subgoal()
     ctx = make_ctx(metadata={"incomplete_subgoal": "step-3"})
@@ -119,6 +120,7 @@ async def test_resume_escalates_when_metadata_empty():
 
 
 # ── retry_with_tool_manifest() ────────────────────────────────────────────────
+
 
 async def test_retry_with_tool_manifest_returns_retry():
     strategy = retry_with_tool_manifest()
@@ -167,6 +169,7 @@ async def test_retry_with_tool_manifest_exactly_at_limit_escalates():
 
 
 # ── backoff_and_retry() ───────────────────────────────────────────────────────
+
 
 async def test_backoff_and_retry_returns_retry():
     strategy = backoff_and_retry()

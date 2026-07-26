@@ -112,6 +112,7 @@ def test_steps_after_failure_middle():
 
 # ── TriageContext ─────────────────────────────────────────────────────────────
 
+
 def test_step_idempotent_defaults_to_false():
     step = Step(index=0, action="send_email")
     assert step.idempotent is False
@@ -123,6 +124,7 @@ def test_step_idempotent_can_be_set_true():
 
 
 # ── TriageContext ─────────────────────────────────────────────────────────────
+
 
 def test_triage_context_defaults():
     tc = TriageContext(failure_type=FailureType.EXTERNAL_FAULT, attempt_number=1)

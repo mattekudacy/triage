@@ -123,17 +123,21 @@ class FailurePolicy:
     UNKNOWN: StrategyFn | None = None
     default: StrategyFn | None = None
 
-    _FIELD_MAP: dict[FailureType, str] = field(init=False, repr=False, default_factory=lambda: {
-        FailureType.WRONG_TOOL_CALLED:  "WRONG_TOOL_CALLED",
-        FailureType.CONSTRAINT_IGNORED: "CONSTRAINT_IGNORED",
-        FailureType.LOOP_DETECTED:      "LOOP_DETECTED",
-        FailureType.PLAN_INCOMPLETE:    "PLAN_INCOMPLETE",
-        FailureType.SCHEMA_MISMATCH:    "SCHEMA_MISMATCH",
-        FailureType.CONTEXT_OVERFLOW:   "CONTEXT_OVERFLOW",
-        FailureType.EXTERNAL_FAULT:     "EXTERNAL_FAULT",
-        FailureType.TIMEOUT:            "TIMEOUT",
-        FailureType.UNKNOWN:            "UNKNOWN",
-    })
+    _FIELD_MAP: dict[FailureType, str] = field(
+        init=False,
+        repr=False,
+        default_factory=lambda: {
+            FailureType.WRONG_TOOL_CALLED: "WRONG_TOOL_CALLED",
+            FailureType.CONSTRAINT_IGNORED: "CONSTRAINT_IGNORED",
+            FailureType.LOOP_DETECTED: "LOOP_DETECTED",
+            FailureType.PLAN_INCOMPLETE: "PLAN_INCOMPLETE",
+            FailureType.SCHEMA_MISMATCH: "SCHEMA_MISMATCH",
+            FailureType.CONTEXT_OVERFLOW: "CONTEXT_OVERFLOW",
+            FailureType.EXTERNAL_FAULT: "EXTERNAL_FAULT",
+            FailureType.TIMEOUT: "TIMEOUT",
+            FailureType.UNKNOWN: "UNKNOWN",
+        },
+    )
 
     def resolve(self, failure_type: FailureType) -> StrategyFn | None:
         """Return the strategy for a given failure type, falling back to default."""
@@ -153,8 +157,7 @@ class FailurePolicy:
         if strategy is None:
             return RecoveryAction.ESCALATE(
                 message=(
-                    f"No strategy registered for {ctx.failure_type.value}."
-                    " Manual review required."
+                    f"No strategy registered for {ctx.failure_type.value}. Manual review required."
                 )
             )
         return await strategy(ctx)
@@ -208,6 +211,7 @@ class FailurePolicy:
                     f" for {ctx.failure_type.value}."
                 )
             )
+
         return _sequenced
 
     @staticmethod
@@ -245,30 +249,35 @@ class FailurePolicy:
                 ),
             )
         """
+
         async def _chained(ctx: FailureContext) -> RecoveryAction:
             action = await primary(ctx)
             if action.kind in after_kinds:
                 return await fallback(ctx)
             return action
+
         return _chained
 
     @staticmethod
     def escalate_by_default() -> StrategyFn:
         """Default strategy: always escalate to human."""
+
         async def _escalate(ctx: FailureContext) -> RecoveryAction:
             return RecoveryAction.ESCALATE(
                 message=(
-                    f"Unhandled failure: {ctx.failure_type.value}"
-                    f" at step {ctx.critical_step_index}"
+                    f"Unhandled failure: {ctx.failure_type.value} at step {ctx.critical_step_index}"
                 )
             )
+
         return _escalate
 
     @staticmethod
     def abort_by_default() -> StrategyFn:
         """Default strategy: hard abort on any unhandled failure."""
+
         async def _abort(ctx: FailureContext) -> RecoveryAction:
             return RecoveryAction.ABORT(reason=ctx.failure_type.value)
+
         return _abort
 
     @classmethod
@@ -352,6 +361,7 @@ class FailurePolicy:
         """
         # Lazy imports to keep core deps minimal
         import os
+
         raw: dict[str, Any]
         ext = os.path.splitext(path)[1].lower()
         if ext == ".toml":
@@ -419,8 +429,7 @@ class FailurePolicy:
 
             if key not in valid_fields:
                 raise ValueError(
-                    f"Unknown FailureType {key!r}. "
-                    f"Valid types: {sorted(valid_fields)}"
+                    f"Unknown FailureType {key!r}. Valid types: {sorted(valid_fields)}"
                 )
 
             if isinstance(value, str):
@@ -437,8 +446,7 @@ class FailurePolicy:
 
             if strategy_name not in registry:
                 raise ValueError(
-                    f"Unknown strategy {strategy_name!r} for {key!r}. "
-                    f"Available: {sorted(registry)}"
+                    f"Unknown strategy {strategy_name!r} for {key!r}. Available: {sorted(registry)}"
                 )
 
             factory = registry[strategy_name]

@@ -31,6 +31,7 @@ try:
         StatusCode,
         Tracer,
     )
+
     _OTEL_AVAILABLE = True
 except ImportError:
     _OTEL_AVAILABLE = False
@@ -71,6 +72,7 @@ def resolve_tracer(explicit: Any = None) -> Any:
 
 
 # ── span helpers ──────────────────────────────────────────────────────────────
+
 
 @asynccontextmanager
 async def run_span(
@@ -157,10 +159,13 @@ def set_span_dispatch_result(span: Any, action_kind: str, failure_type_value: st
         return
     span.set_attribute("triage.action_kind", action_kind)
     span.set_attribute("triage.failure_type", failure_type_value)
-    span.add_event("triage.dispatched", {
-        "action_kind": action_kind,
-        "failure_type": failure_type_value,
-    })
+    span.add_event(
+        "triage.dispatched",
+        {
+            "action_kind": action_kind,
+            "failure_type": failure_type_value,
+        },
+    )
     if action_kind in ("escalate", "abort"):
         _mark_span_error(span, f"{action_kind}: {failure_type_value}")
 
@@ -176,6 +181,7 @@ def set_span_run_outcome(span: Any, *, error: Exception | None = None) -> None:
 
 
 # ── internals ─────────────────────────────────────────────────────────────────
+
 
 def _mark_error(span: Any, exc: Exception) -> None:
     if span is None or not _OTEL_AVAILABLE:

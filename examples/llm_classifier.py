@@ -32,10 +32,7 @@ from triage.taxonomy import Step  # noqa: E402
 try:
     from triage.classifier.llm import LLMClassifier
 except ImportError:
-    raise SystemExit(
-        "Missing dependency. Run:\n"
-        "  pip install 'triage-agent[anthropic]'"
-    ) from None
+    raise SystemExit("Missing dependency. Run:\n  pip install 'triage-agent[anthropic]'") from None
 
 # ── Synthetic agent ───────────────────────────────────────────────────────────
 
@@ -56,21 +53,30 @@ async def research_agent(
 
     # First attempt: simulate the agent drifting from the original goal
     if _attempt[0] == 1:
-        record_step(Step(
-            index=0,
-            action="web_search",
-            tool_called="search",
-            tool_input={"q": "unrelated topic"},
-            llm_output="I got distracted and started researching something else entirely.",
-        ))
+        record_step(
+            Step(
+                index=0,
+                action="web_search",
+                tool_called="search",
+                tool_input={"q": "unrelated topic"},
+                llm_output="I got distracted and started researching something else entirely.",
+            )
+        )
         raise RuntimeError(
             "The agent appears to have deviated from the original objective "
             "and is now pursuing an unrelated sub-task."
         )
 
     # Second attempt succeeds
-    record_step(Step(index=0, action="web_search", tool_called="search",
-                     tool_input={"q": task}, tool_output="relevant results"))
+    record_step(
+        Step(
+            index=0,
+            action="web_search",
+            tool_called="search",
+            tool_input={"q": task},
+            tool_output="relevant results",
+        )
+    )
     return f"Completed: {task}"
 
 

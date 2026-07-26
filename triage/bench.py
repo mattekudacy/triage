@@ -228,13 +228,15 @@ async def run_benchmark(
                 success = False
             duration = time.perf_counter() - t0
 
-            report.results.append(BenchResult(
-                task=task,
-                success=success,
-                duration_s=duration,
-                recoveries=recoveries,
-                failure_types=failure_types,
-            ))
+            report.results.append(
+                BenchResult(
+                    task=task,
+                    success=success,
+                    duration_s=duration,
+                    recoveries=recoveries,
+                    failure_types=failure_types,
+                )
+            )
 
             # ── baseline run (no triage) ──────────────────────────────────────
             if baseline_fn is not None:
@@ -246,11 +248,13 @@ async def run_benchmark(
                     b_success = False
                 b_duration = time.perf_counter() - bt0
 
-                report.baseline_results.append(BenchResult(
-                    task=task,
-                    success=b_success,
-                    duration_s=b_duration,
-                    recoveries=0,
-                ))
+                report.baseline_results.append(
+                    BenchResult(
+                        task=task,
+                        success=b_success,
+                        duration_s=b_duration,
+                        recoveries=0,
+                    )
+                )
 
     return report

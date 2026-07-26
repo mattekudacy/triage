@@ -6,8 +6,7 @@ from triage.trajectory import Trajectory
 
 
 def make_step(action="test step", tool_called=None, error=None, idempotent=False):
-    return Step(index=0, action=action, tool_called=tool_called,
-                error=error, idempotent=idempotent)
+    return Step(index=0, action=action, tool_called=tool_called, error=error, idempotent=idempotent)
 
 
 def traj(*steps):
@@ -90,6 +89,7 @@ def test_custom_medium_risk_patterns():
 
 def test_score_returns_risk_score_instance():
     from triage.scorer.base import RiskScore
+
     scorer = RulesRiskScorer()
     step = make_step()
     result = scorer(step, traj(step))

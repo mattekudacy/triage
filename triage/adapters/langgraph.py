@@ -34,31 +34,34 @@ def wrap_langgraph(
     capture per-step tool calls and LLM outputs before returning the
     final chain output.
     """
+
     async def wrapped_fn(task: str, *, record_step: Any, **kw: Any) -> Any:
         i = 0
         final_output: Any = None
         graph_name = getattr(graph, "name", "graph")
-        async for event in graph.astream_events(
-            {"messages": [("user", task)]}, version="v2", **kw
-        ):
+        async for event in graph.astream_events({"messages": [("user", task)]}, version="v2", **kw):
             etype = event["event"]
             if etype == "on_tool_start":
-                record_step(Step(
-                    index=i,
-                    action=f"tool_start:{event['name']}",
-                    tool_called=event["name"],
-                    tool_input=event["data"].get("input"),
-                ))
+                record_step(
+                    Step(
+                        index=i,
+                        action=f"tool_start:{event['name']}",
+                        tool_called=event["name"],
+                        tool_input=event["data"].get("input"),
+                    )
+                )
                 i += 1
             elif etype == "on_tool_end":
                 err_val = event["data"].get("error")
-                record_step(Step(
-                    index=i,
-                    action=f"tool_end:{event['name']}",
-                    tool_called=event["name"],
-                    tool_output=event["data"].get("output"),
-                    error=str(err_val) if err_val else None,
-                ))
+                record_step(
+                    Step(
+                        index=i,
+                        action=f"tool_end:{event['name']}",
+                        tool_called=event["name"],
+                        tool_output=event["data"].get("output"),
+                        error=str(err_val) if err_val else None,
+                    )
+                )
                 i += 1
             elif etype == "on_chat_model_end":
                 content = str(event["data"]["output"].content)

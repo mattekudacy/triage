@@ -62,24 +62,29 @@ def on_recovery(ctx: FailureContext, action: RecoveryAction) -> None:
 
 # ── Run A: agent tries to send an email ──────────────────────────────────────
 
+
 async def email_agent(task: str, *, record_step, **_kwargs) -> str:
     # Safe step
-    record_step(Step(
-        index=0,
-        action="fetch_data",
-        tool_called="fetch",
-        tool_input={"url": "https://api.example.com/report"},
-        tool_output="report data",
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="fetch_data",
+            tool_called="fetch",
+            tool_input={"url": "https://api.example.com/report"},
+            tool_output="report data",
+        )
+    )
 
     # Destructive step — RulesRiskScorer fires here, score 0.95
-    record_step(Step(
-        index=1,
-        action="send_email",          # matches high-risk pattern
-        tool_called="send_email",
-        tool_input={"to": "ceo@corp.com", "body": "Quarterly report attached."},
-        idempotent=False,
-    ))
+    record_step(
+        Step(
+            index=1,
+            action="send_email",  # matches high-risk pattern
+            tool_called="send_email",
+            tool_input={"to": "ceo@corp.com", "body": "Quarterly report attached."},
+            idempotent=False,
+        )
+    )
 
     # We never reach this line — TriageAbortError raised during record_step above
     return "done"
@@ -94,23 +99,27 @@ async def payment_agent(task: str, *, record_step, **_kwargs) -> str:
     _run_b_attempt[0] += 1
 
     # Non-idempotent step — money has moved
-    record_step(Step(
-        index=0,
-        action="charge_card",
-        tool_called="charge_card",
-        tool_input={"amount": 99.00, "currency": "USD"},
-        tool_output="charge_id: chg_abc123",
-        idempotent=False,             # explicitly marked non-idempotent
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="charge_card",
+            tool_called="charge_card",
+            tool_input={"amount": 99.00, "currency": "USD"},
+            tool_output="charge_id: chg_abc123",
+            idempotent=False,  # explicitly marked non-idempotent
+        )
+    )
 
     # Confirmation endpoint fails — record the 503 so the classifier can see it
-    record_step(Step(
-        index=1,
-        action="confirm_charge",
-        tool_called="confirm_api",
-        tool_input={"charge_id": "chg_abc123"},
-        error="HTTP 503 Service Unavailable — confirmation endpoint down",
-    ))
+    record_step(
+        Step(
+            index=1,
+            action="confirm_charge",
+            tool_called="confirm_api",
+            tool_input={"charge_id": "chg_abc123"},
+            error="HTTP 503 Service Unavailable — confirmation endpoint down",
+        )
+    )
     raise RuntimeError("HTTP 503 Service Unavailable — confirmation endpoint down")
 
 
@@ -140,7 +149,7 @@ agent_b = triage.Agent(
         EXTERNAL_FAULT=backoff_and_retry(max_attempts=3),  # would retry, but idempotency blocks it
         default=triage.FailurePolicy.escalate_by_default(),
     ),
-    strict_idempotency=True,          # never retry after a non-idempotent step
+    strict_idempotency=True,  # never retry after a non-idempotent step
     on_step=on_step,
     on_failure=on_failure,
     on_recovery=on_recovery,

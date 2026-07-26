@@ -85,6 +85,7 @@ class BreakerSnapshot:
 
 # ── Redis implementation ──────────────────────────────────────────────────────
 
+
 class RedisBreakerStore:
     """Thread-safe BreakerStore backed by Redis.
 
@@ -170,6 +171,7 @@ class RedisBreakerStore:
 
     def add_failure(self, ts: float) -> list[float]:
         import uuid as _uuid
+
         member = f"{ts}:{_uuid.uuid4().hex}"
         self._r.zadd(self._failures_key, {member: ts})
         pairs = self._r.zrangebyscore(self._failures_key, "-inf", "+inf", withscores=True)

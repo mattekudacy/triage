@@ -15,6 +15,7 @@ from triage.taxonomy import FailureType, Step
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+
 def make_step(
     index: int = 0,
     tool_called: str | None = None,
@@ -22,8 +23,14 @@ def make_step(
     error: str | None = None,
     llm_output: str | None = None,
 ) -> Step:
-    return Step(index=index, action="test step", tool_called=tool_called,
-                tool_input=tool_input, error=error, llm_output=llm_output)
+    return Step(
+        index=index,
+        action="test step",
+        tool_called=tool_called,
+        tool_input=tool_input,
+        error=error,
+        llm_output=llm_output,
+    )
 
 
 async def _collect(
@@ -41,6 +48,7 @@ async def _collect(
 
 
 # ── StreamRetryEvent dataclass ────────────────────────────────────────────────
+
 
 def test_stream_retry_event_fields():
     evt = StreamRetryEvent(
@@ -62,6 +70,7 @@ def test_stream_retry_event_hint_defaults_none():
 
 # ── Step.partial field ────────────────────────────────────────────────────────
 
+
 def test_step_partial_default_false():
     s = make_step()
     assert s.partial is False
@@ -73,6 +82,7 @@ def test_step_partial_can_be_set():
 
 
 # ── Type guards ───────────────────────────────────────────────────────────────
+
 
 async def test_run_on_async_gen_raises_type_error():
     async def gen_agent(task: str, *, record_step, **kwargs):
@@ -94,6 +104,7 @@ async def test_stream_on_coroutine_raises_type_error():
 
 
 # ── Happy path ────────────────────────────────────────────────────────────────
+
 
 async def test_stream_yields_chunks_on_success():
     async def gen_agent(task: str, *, record_step, **kwargs):
@@ -120,6 +131,7 @@ async def test_stream_empty_generator_succeeds():
 
 
 # ── Retry on failure ──────────────────────────────────────────────────────────
+
 
 async def test_stream_retry_yields_event_then_resumes():
     call_count = 0
@@ -196,6 +208,7 @@ async def test_stream_retry_hint_propagated():
 
 # ── Caps and escalation ───────────────────────────────────────────────────────
 
+
 async def test_stream_escalates_after_max_recovery_attempts():
     async def gen_agent(task: str, *, record_step, **kwargs):
         record_step(make_step(index=0, error="HTTP 503"))
@@ -268,6 +281,7 @@ async def test_stream_multiple_retries():
 
 # ── Lifecycle hooks ───────────────────────────────────────────────────────────
 
+
 async def test_stream_on_failure_hook_called():
     events: list[str] = []
 
@@ -317,6 +331,7 @@ async def test_stream_on_recovery_hook_called():
 
 
 # ── circuit_breakers integration ──────────────────────────────────────────────
+
 
 async def test_stream_calls_record_success_on_clean_run():
     from triage.breaker import BreakerState, CircuitBreaker

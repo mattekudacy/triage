@@ -35,8 +35,10 @@ def _make_executor(output: str = "executor result") -> MagicMock:
 # Basic wrapping
 # ---------------------------------------------------------------------------
 
+
 async def test_wrap_langchain_returns_agent():
     from triage.agent import Agent
+
     executor = _make_executor()
     ag = wrap_langchain(executor, FailurePolicy())
     assert isinstance(ag, Agent)
@@ -78,6 +80,7 @@ async def test_tool_start_recorded():
     async def capturing_fn(task, *, record_step, **kw):
         def r(step):
             recorded_steps.append(step)
+
         return await original_fn(task, record_step=r, **kw)
 
     ag._fn = capturing_fn
@@ -106,6 +109,7 @@ async def test_tool_end_recorded():
     async def capturing_fn(task, *, record_step, **kw):
         def r(step):
             recorded_steps.append(step)
+
         return await original_fn(task, record_step=r, **kw)
 
     ag._fn = capturing_fn
@@ -133,6 +137,7 @@ async def test_tool_error_recorded():
     async def capturing_fn(task, *, record_step, **kw):
         def r(step):
             recorded_steps.append(step)
+
         return await original_fn(task, record_step=r, **kw)
 
     ag._fn = capturing_fn
@@ -164,6 +169,7 @@ async def test_llm_end_recorded():
     async def capturing_fn(task, *, record_step, **kw):
         def r(step):
             recorded_steps.append(step)
+
         return await original_fn(task, record_step=r, **kw)
 
     ag._fn = capturing_fn

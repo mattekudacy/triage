@@ -65,6 +65,7 @@ _SAFE_OPS: dict = {
 
 def _safe_eval(expr: str) -> float:
     """Evaluate a pure arithmetic expression without eval()."""
+
     def _visit(node: ast.expr) -> float:
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
             return float(node.value)
@@ -73,6 +74,7 @@ def _safe_eval(expr: str) -> float:
         if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
             return _SAFE_OPS[type(node.op)](_visit(node.operand))
         raise ValueError(f"Unsupported expression: {ast.dump(node)}")
+
     return _visit(ast.parse(expr, mode="eval").body)
 
 
@@ -155,27 +157,32 @@ async def hf_agent(
     try:
         args = json.loads(raw_args)
     except json.JSONDecodeError as exc:
-        record_step(Step(
-            index=0,
-            action="tool_call:calculator",
-            tool_called="calculator",
-            error=f"JSONDecodeError: {exc}",
-        ))
+        record_step(
+            Step(
+                index=0,
+                action="tool_call:calculator",
+                tool_called="calculator",
+                error=f"JSONDecodeError: {exc}",
+            )
+        )
         raise RuntimeError(f"JSONDecodeError: {exc}") from exc
 
     result = calculator(args["expression"])
-    record_step(Step(
-        index=0,
-        action="tool_call:calculator",
-        tool_called="calculator",
-        tool_input=args,
-        tool_output=result,
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="tool_call:calculator",
+            tool_called="calculator",
+            tool_input=args,
+            tool_output=result,
+        )
+    )
     update_state({"last_result": result})
     return f"Result: {result}"
 
 
 # ── Wire up triage ────────────────────────────────────────────────────────────
+
 
 def _make_classifier() -> LLMClassifier:
     token = os.environ.get("HF_TOKEN", "")

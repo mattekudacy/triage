@@ -25,6 +25,7 @@ def wrap_langchain(
     Creates a fresh ``BaseCallbackHandler`` per call that records tool starts,
     tool ends, tool errors, and LLM completions as triage Steps.
     """
+
     async def wrapped_fn(task: str, *, record_step: Any, **kw: Any) -> Any:
         try:
             from langchain_core.callbacks import BaseCallbackHandler
@@ -42,32 +43,36 @@ def wrap_langchain(
             ) -> None:
                 nonlocal step_index
                 name = serialized.get("name", "unknown_tool")
-                record_step(Step(
-                    index=step_index,
-                    action=f"tool_start:{name}",
-                    tool_called=name,
-                    tool_input={"input": input_str},
-                ))
+                record_step(
+                    Step(
+                        index=step_index,
+                        action=f"tool_start:{name}",
+                        tool_called=name,
+                        tool_input={"input": input_str},
+                    )
+                )
                 step_index += 1
 
             def on_tool_end(self, output: str, **cb_kw: Any) -> None:
                 nonlocal step_index
-                record_step(Step(
-                    index=step_index,
-                    action="tool_end",
-                    tool_output=output,
-                ))
+                record_step(
+                    Step(
+                        index=step_index,
+                        action="tool_end",
+                        tool_output=output,
+                    )
+                )
                 step_index += 1
 
-            def on_tool_error(
-                self, error: BaseException | str, **cb_kw: Any
-            ) -> None:
+            def on_tool_error(self, error: BaseException | str, **cb_kw: Any) -> None:
                 nonlocal step_index
-                record_step(Step(
-                    index=step_index,
-                    action="tool_error",
-                    error=str(error),
-                ))
+                record_step(
+                    Step(
+                        index=step_index,
+                        action="tool_error",
+                        error=str(error),
+                    )
+                )
                 step_index += 1
 
             def on_llm_end(self, response: Any, **cb_kw: Any) -> None:

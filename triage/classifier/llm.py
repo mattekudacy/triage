@@ -56,6 +56,7 @@ def _is_retryable(exc: Exception) -> bool:
         return True
     return type(exc).__name__ in _RETRYABLE_EXCEPTION_NAMES
 
+
 # Lazy module-level imports — None when the package is not installed.
 # Keeping them at module scope (rather than inside _get_client) lets tests
 # patch triage.classifier.llm._anthropic / triage.classifier.llm._openai.
@@ -204,6 +205,7 @@ class LLMClassifier:
         """
         try:
             from triage.agent import _record_usage_var  # lazy to avoid circular import
+
             record_fn = _record_usage_var.get()
             if record_fn is None:
                 return
@@ -278,7 +280,7 @@ class LLMClassifier:
             except Exception as exc:
                 if attempt >= self._max_retries or not _is_retryable(exc):
                     return FailureType.UNKNOWN
-                time.sleep(self._retry_backoff_base * (2 ** attempt))
+                time.sleep(self._retry_backoff_base * (2**attempt))
         return FailureType.UNKNOWN
 
     async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
@@ -297,5 +299,5 @@ class LLMClassifier:
             except Exception as exc:
                 if attempt >= self._max_retries or not _is_retryable(exc):
                     return FailureType.UNKNOWN
-                await anyio.sleep(self._retry_backoff_base * (2 ** attempt))
+                await anyio.sleep(self._retry_backoff_base * (2**attempt))
         return FailureType.UNKNOWN

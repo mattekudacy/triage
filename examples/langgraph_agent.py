@@ -30,8 +30,7 @@ try:
     from langgraph.prebuilt import create_react_agent
 except ImportError:
     raise SystemExit(
-        "Missing dependencies. Run:\n"
-        "  pip install 'triage-agent[langgraph]' langchain-openai"
+        "Missing dependencies. Run:\n  pip install 'triage-agent[langgraph]' langchain-openai"
     ) from None
 
 import triage  # noqa: E402

@@ -169,52 +169,54 @@ def serialize_run(run: SuspendedRun) -> str:
             extra={"triage_event": "serialize_kwargs_dropped", "dropped_keys": dropped},
         )
 
-    return json.dumps({
-        "token": run.token,
-        "task": run.task,
-        "attempt": run.attempt,
-        "attempt_history": [[ft.value, kind] for ft, kind in run.attempt_history],
-        "timestamp": run.timestamp,
-        "message": run.message,
-        "metadata": run.metadata,
-        "kwargs": serializable_kwargs,
-        "usage_snapshot": {
-            "input_tokens": run.usage_snapshot.input_tokens,
-            "output_tokens": run.usage_snapshot.output_tokens,
-            "cost_usd": run.usage_snapshot.cost_usd,
-            "calls": run.usage_snapshot.calls,
-        },
-        "context": {
-            "failure_type": ctx.failure_type.value,
-            "original_task": ctx.original_task,
-            "critical_step_index": ctx.critical_step_index,
-            "last_checkpoint_id": ctx.last_checkpoint_id,
-            "loop_steps": ctx.loop_steps,
-            "violated_constraint": ctx.violated_constraint,
-            "expected_schema": ctx.expected_schema,
-            "metadata": ctx.metadata,
-            "attempt_history": [[ft.value, kind] for ft, kind in ctx.attempt_history],
-            "trajectory": [
-                {
-                    "index": s.index,
-                    "action": s.action,
-                    "tool_called": s.tool_called,
-                    "tool_input": s.tool_input,
-                    "tool_output": s.tool_output
-                    if isinstance(s.tool_output, _JSON_PRIMITIVES)
-                    else str(s.tool_output),
-                    "llm_output": s.llm_output,
-                    "error": s.error,
-                    "timestamp": s.timestamp,
-                    "state_hash": s.state_hash,
-                    "metadata": s.metadata,
-                    "idempotent": s.idempotent,
-                    "partial": s.partial,
-                }
-                for s in ctx.trajectory
-            ],
-        },
-    })
+    return json.dumps(
+        {
+            "token": run.token,
+            "task": run.task,
+            "attempt": run.attempt,
+            "attempt_history": [[ft.value, kind] for ft, kind in run.attempt_history],
+            "timestamp": run.timestamp,
+            "message": run.message,
+            "metadata": run.metadata,
+            "kwargs": serializable_kwargs,
+            "usage_snapshot": {
+                "input_tokens": run.usage_snapshot.input_tokens,
+                "output_tokens": run.usage_snapshot.output_tokens,
+                "cost_usd": run.usage_snapshot.cost_usd,
+                "calls": run.usage_snapshot.calls,
+            },
+            "context": {
+                "failure_type": ctx.failure_type.value,
+                "original_task": ctx.original_task,
+                "critical_step_index": ctx.critical_step_index,
+                "last_checkpoint_id": ctx.last_checkpoint_id,
+                "loop_steps": ctx.loop_steps,
+                "violated_constraint": ctx.violated_constraint,
+                "expected_schema": ctx.expected_schema,
+                "metadata": ctx.metadata,
+                "attempt_history": [[ft.value, kind] for ft, kind in ctx.attempt_history],
+                "trajectory": [
+                    {
+                        "index": s.index,
+                        "action": s.action,
+                        "tool_called": s.tool_called,
+                        "tool_input": s.tool_input,
+                        "tool_output": s.tool_output
+                        if isinstance(s.tool_output, _JSON_PRIMITIVES)
+                        else str(s.tool_output),
+                        "llm_output": s.llm_output,
+                        "error": s.error,
+                        "timestamp": s.timestamp,
+                        "state_hash": s.state_hash,
+                        "metadata": s.metadata,
+                        "idempotent": s.idempotent,
+                        "partial": s.partial,
+                    }
+                    for s in ctx.trajectory
+                ],
+            },
+        }
+    )
 
 
 def deserialize_run(data: str) -> SuspendedRun:
@@ -248,9 +250,7 @@ def deserialize_run(data: str) -> SuspendedRun:
         violated_constraint=ctx_d.get("violated_constraint"),
         expected_schema=ctx_d.get("expected_schema"),
         metadata=ctx_d.get("metadata", {}),
-        attempt_history=[
-            (FailureType(ft), kind) for ft, kind in ctx_d.get("attempt_history", [])
-        ],
+        attempt_history=[(FailureType(ft), kind) for ft, kind in ctx_d.get("attempt_history", [])],
     )
     u = d.get("usage_snapshot", {})
     return SuspendedRun(
@@ -259,9 +259,7 @@ def deserialize_run(data: str) -> SuspendedRun:
         task=d["task"],
         kwargs=d.get("kwargs", {}),
         attempt=d["attempt"],
-        attempt_history=[
-            (FailureType(ft), kind) for ft, kind in d.get("attempt_history", [])
-        ],
+        attempt_history=[(FailureType(ft), kind) for ft, kind in d.get("attempt_history", [])],
         timestamp=d.get("timestamp", 0.0),
         message=d.get("message", ""),
         metadata=d.get("metadata", {}),

@@ -35,6 +35,7 @@ from typing import Any
 try:
     from opentelemetry import metrics as _otel_metrics
     from opentelemetry.metrics import Meter
+
     _OTEL_METRICS_AVAILABLE = True
 except ImportError:
     _OTEL_METRICS_AVAILABLE = False
@@ -43,6 +44,7 @@ except ImportError:
 
 
 # ── meter resolution ──────────────────────────────────────────────────────────
+
 
 def resolve_meter(explicit: Any = None) -> Any:
     """Return a Meter to use for this Agent instance.
@@ -69,6 +71,7 @@ def resolve_meter(explicit: Any = None) -> Any:
 
 
 # ── instrument cache ──────────────────────────────────────────────────────────
+
 
 class _Instruments:
     """Lazily-built instruments for a given Meter instance."""
@@ -116,6 +119,7 @@ def _get_instruments(meter: Any) -> _Instruments | None:
 
 
 # ── record helpers ────────────────────────────────────────────────────────────
+
 
 def record_run_start(meter: Any) -> None:
     """Called at the very start of Agent.run() — no attributes yet."""

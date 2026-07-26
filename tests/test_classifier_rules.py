@@ -33,10 +33,14 @@ def traj(*steps: Step) -> Trajectory:
 
 # ── LOOP_DETECTED ──────────────────────────────────────────────────────────────
 
+
 def test_loop_detected():
     step = make_step(tool_called="search", tool_input={"q": "hello"})
-    t = traj(step, make_step(1, tool_called="search", tool_input={"q": "hello"}),
-             make_step(2, tool_called="search", tool_input={"q": "hello"}))
+    t = traj(
+        step,
+        make_step(1, tool_called="search", tool_input={"q": "hello"}),
+        make_step(2, tool_called="search", tool_input={"q": "hello"}),
+    )
     assert RulesClassifier().classify(t, "task") == FailureType.LOOP_DETECTED
 
 
@@ -52,25 +56,31 @@ def test_loop_window_configurable_detects_at_4():
     clf = RulesClassifier(loop_window=4)
     step = make_step(tool_called="search", tool_input={"q": "x"})
     # 3 identical steps — below the window, must NOT trigger
-    t3 = traj(step,
-              make_step(1, tool_called="search", tool_input={"q": "x"}),
-              make_step(2, tool_called="search", tool_input={"q": "x"}))
+    t3 = traj(
+        step,
+        make_step(1, tool_called="search", tool_input={"q": "x"}),
+        make_step(2, tool_called="search", tool_input={"q": "x"}),
+    )
     assert clf.classify(t3, "task") == FailureType.UNKNOWN
     # 4 identical steps — at window, must trigger
-    t4 = traj(step,
-              make_step(1, tool_called="search", tool_input={"q": "x"}),
-              make_step(2, tool_called="search", tool_input={"q": "x"}),
-              make_step(3, tool_called="search", tool_input={"q": "x"}))
+    t4 = traj(
+        step,
+        make_step(1, tool_called="search", tool_input={"q": "x"}),
+        make_step(2, tool_called="search", tool_input={"q": "x"}),
+        make_step(3, tool_called="search", tool_input={"q": "x"}),
+    )
     assert clf.classify(t4, "task") == FailureType.LOOP_DETECTED
 
 
 def test_loop_window_below_2_raises():
     import pytest
+
     with pytest.raises(ValueError, match="loop_window"):
         RulesClassifier(loop_window=1)
 
 
 # ── Fuzzy loop detection (loop_similarity_threshold) ────────────────────────────
+
 
 def test_fuzzy_loop_detected_on_reworded_query():
     clf = RulesClassifier(loop_similarity_threshold=0.9)
@@ -152,18 +162,21 @@ def test_fuzzy_loop_none_tool_input_not_falsely_matched():
 
 def test_loop_similarity_threshold_zero_raises():
     import pytest
+
     with pytest.raises(ValueError, match="loop_similarity_threshold"):
         RulesClassifier(loop_similarity_threshold=0.0)
 
 
 def test_loop_similarity_threshold_above_one_raises():
     import pytest
+
     with pytest.raises(ValueError, match="loop_similarity_threshold"):
         RulesClassifier(loop_similarity_threshold=1.5)
 
 
 def test_loop_similarity_threshold_negative_raises():
     import pytest
+
     with pytest.raises(ValueError, match="loop_similarity_threshold"):
         RulesClassifier(loop_similarity_threshold=-0.1)
 
@@ -208,6 +221,7 @@ def test_loop_not_detected_none_tool():
 
 # ── WRONG_TOOL_CALLED ──────────────────────────────────────────────────────────
 
+
 def test_wrong_tool_called_no_tool_named():
     t = traj(make_step(error="no tool named calculator"))
     assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
@@ -241,6 +255,7 @@ def test_wrong_tool_not_triggered_by_unrelated_error():
 
 # ── SCHEMA_MISMATCH ────────────────────────────────────────────────────────────
 
+
 def test_schema_mismatch_validation_error():
     t = traj(make_step(error="validation error: field required"))
     assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
@@ -262,6 +277,7 @@ def test_schema_mismatch_not_triggered_by_unrelated_error():
 
 
 # ── EXTERNAL_FAULT ─────────────────────────────────────────────────────────────
+
 
 def test_external_fault_429():
     t = traj(make_step(error="HTTP 429 Too Many Requests"))
@@ -302,6 +318,7 @@ def test_external_fault_word_boundary_429_standalone():
 
 # ── CONSTRAINT_IGNORED ────────────────────────────────────────────────────────
 
+
 def test_constraint_ignored():
     classifier = RulesClassifier(constraints=["do not use markdown"])
     t = traj(make_step(llm_output="Here is the answer. Do not use markdown formatting."))
@@ -328,6 +345,7 @@ def test_constraint_not_violated():
 
 # ── UNKNOWN fallback ──────────────────────────────────────────────────────────
 
+
 def test_unknown_fallback():
     t = traj(make_step(error="something completely unrelated"))
     assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
@@ -339,6 +357,7 @@ def test_empty_trajectory():
 
 
 # ── TIMEOUT ───────────────────────────────────────────────────────────────────
+
 
 def test_timeout_detected_from_asyncio_error():
     t = traj(make_step(error="asyncio.TimeoutError: timeout"))
@@ -374,6 +393,7 @@ def test_priority_external_over_timeout():
 
 # ── Priority: LOOP_DETECTED wins over EXTERNAL_FAULT ─────────────────────────
 
+
 def test_priority_loop_over_external():
     # Trajectory that triggers both LOOP_DETECTED and EXTERNAL_FAULT;
     # LOOP_DETECTED has higher priority and must win.
@@ -387,6 +407,7 @@ def test_priority_loop_over_external():
 
 
 # ── per-framework patterns ────────────────────────────────────────────────────
+
 
 def test_openai_wrong_tool_pattern():
     t = traj(make_step(error="Tool 'search' does not exist"))
@@ -439,67 +460,82 @@ def test_unknown_framework_falls_back_to_generic():
 # you didn't think of.
 
 
-@pytest.mark.parametrize("msg", [
-    "expected 500 items but got 42",
-    "processed 503 records successfully",
-    "returned 429 results",
-    "502 bytes written",
-    "step 500 completed",
-    "line 503: syntax error",
-    "error in row 429",
-])
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "expected 500 items but got 42",
+        "processed 503 records successfully",
+        "returned 429 results",
+        "502 bytes written",
+        "step 500 completed",
+        "line 503: syntax error",
+        "error in row 429",
+    ],
+)
 def test_external_fault_false_positive_corpus(msg: str) -> None:
     """Numbers resembling HTTP status codes in non-error contexts must not fire."""
     t = traj(make_step(error=msg))
     assert RulesClassifier().classify(t, "task") != FailureType.EXTERNAL_FAULT
 
 
-@pytest.mark.parametrize("msg", [
-    "HTTP 429: rate limited",
-    "status code 500",
-    "received 503 from upstream",
-    "server returned 502 bad gateway",
-    "upstream error 429",
-    "got 500 from remote",
-])
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "HTTP 429: rate limited",
+        "status code 500",
+        "received 503 from upstream",
+        "server returned 502 bad gateway",
+        "upstream error 429",
+        "got 500 from remote",
+    ],
+)
 def test_external_fault_true_positive_corpus(msg: str) -> None:
     """Genuine HTTP error strings must still fire EXTERNAL_FAULT."""
     t = traj(make_step(error=msg))
     assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
 
 
-@pytest.mark.parametrize("msg", [
-    "tooltip not found in DOM",
-    "found 3 tools available",
-    "initialize tool chain",
-    "toolbox is empty",
-    "retool configuration loaded",
-])
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "tooltip not found in DOM",
+        "found 3 tools available",
+        "initialize tool chain",
+        "toolbox is empty",
+        "retool configuration loaded",
+    ],
+)
 def test_wrong_tool_false_positive_corpus(msg: str) -> None:
     """'tool' in non-error contexts must not trigger WRONG_TOOL_CALLED."""
     t = traj(make_step(error=msg))
     assert RulesClassifier().classify(t, "task") != FailureType.WRONG_TOOL_CALLED
 
 
-@pytest.mark.parametrize("msg", [
-    "validation error: expected string at field 'name'",
-    "jsondecodeerror at line 1",
-    "invalid json in response body",
-    "unexpected token '{' in json",
-    "failed to json parse the response",
-])
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "validation error: expected string at field 'name'",
+        "jsondecodeerror at line 1",
+        "invalid json in response body",
+        "unexpected token '{' in json",
+        "failed to json parse the response",
+    ],
+)
 def test_schema_mismatch_true_positive_corpus(msg: str) -> None:
     """Schema-related error strings must fire SCHEMA_MISMATCH."""
     t = traj(make_step(error=msg))
     assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
 
 
-@pytest.mark.parametrize("msg", [
-    "operation timed out after 30s",
-    "deadline exceeded for request",
-    "async time limit reached",
-    "timed out waiting for response",
-])
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "operation timed out after 30s",
+        "deadline exceeded for request",
+        "async time limit reached",
+        "timed out waiting for response",
+    ],
+)
 def test_timeout_true_positive_corpus(msg: str) -> None:
     """Timeout-related strings must fire TIMEOUT."""
     t = traj(make_step(error=msg))

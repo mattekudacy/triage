@@ -96,7 +96,7 @@ class FailureContext:
     @property
     def steps_after_failure(self) -> list[Step]:
         """All steps that executed after the critical failure."""
-        return self.trajectory[self.critical_step_index + 1:]
+        return self.trajectory[self.critical_step_index + 1 :]
 
 
 @dataclass

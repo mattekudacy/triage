@@ -38,6 +38,7 @@ try:
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
     _OTEL_AVAILABLE = True
 except ImportError:
     _OTEL_AVAILABLE = False
@@ -49,6 +50,7 @@ from triage.taxonomy import Step
 
 # ── Synthetic agents ───────────────────────────────────────────────────────────
 # Each agent raises a specific error on its first call, then succeeds.
+
 
 def _make_agent(error_msg: str, *, succeed_after: int = 1):
     """Return an agent that fails ``succeed_after`` times then succeeds."""
@@ -76,6 +78,7 @@ def _make_agent(error_msg: str, *, succeed_after: int = 1):
 
 def _make_always_failing_agent(error_msg: str):
     """Return an agent that always fails (forces escalation)."""
+
     async def _agent(task: str, *, record_step, **_kwargs) -> str:
         record_step(Step(index=0, action="do_work", error=error_msg))
         raise RuntimeError(error_msg)
@@ -84,6 +87,7 @@ def _make_always_failing_agent(error_msg: str):
 
 
 # ── Run population ─────────────────────────────────────────────────────────────
+
 
 async def _run_population(
     exporter: InMemorySpanExporter,
@@ -167,6 +171,7 @@ async def _run_population(
 
 
 # ── Report builder ─────────────────────────────────────────────────────────────
+
 
 def _build_report(
     spans: list,
@@ -283,6 +288,7 @@ def _build_report(
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+
 
 async def main() -> None:
     if not _OTEL_AVAILABLE:

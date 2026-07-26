@@ -15,6 +15,7 @@ from triage.testing import RecordingAgent, assert_classifies_as, make_step
 
 # ── make_step ────────────────────────────────────────────────────────────────
 
+
 def test_make_step_defaults():
     s = make_step()
     assert s.index == 0
@@ -26,8 +27,9 @@ def test_make_step_defaults():
 
 
 def test_make_step_populates_fields():
-    s = make_step(index=3, tool_called="search", tool_input={"q": "x"},
-                  error="oops", llm_output="hello")
+    s = make_step(
+        index=3, tool_called="search", tool_input={"q": "x"}, error="oops", llm_output="hello"
+    )
     assert s.index == 3
     assert s.tool_called == "search"
     assert s.tool_input == {"q": "x"}
@@ -46,6 +48,7 @@ def test_make_step_returns_step_instance():
 
 # ── RecordingAgent ───────────────────────────────────────────────────────────
 
+
 async def test_recording_agent_succeeds_immediately():
     fn = RecordingAgent()
     result = await fn("task", record_step=lambda s: None, update_state=lambda d: None)
@@ -55,15 +58,19 @@ async def test_recording_agent_succeeds_immediately():
 
 async def test_recording_agent_records_kwargs():
     fn = RecordingAgent()
+
     def sentinel(s):
         return None
+
     await fn("task", record_step=sentinel, update_state=lambda d: None, extra="val")
     assert fn.calls[0]["extra"] == "val"
     assert fn.calls[0]["record_step"] is sentinel
 
 
 async def test_recording_agent_fails_then_succeeds():
-    async def retry(ctx): return RecoveryAction.RETRY()
+    async def retry(ctx):
+        return RecoveryAction.RETRY()
+
     fn = RecordingAgent(succeed_after=2)
     policy = FailurePolicy(default=FailurePolicy.escalate_by_default(), UNKNOWN=retry)
     ag = Agent(fn, policy, max_recovery_attempts=5)
@@ -79,7 +86,9 @@ async def test_recording_agent_custom_result():
 
 
 async def test_recording_agent_records_triage_context():
-    async def retry(ctx): return RecoveryAction.RETRY(hint="try again")
+    async def retry(ctx):
+        return RecoveryAction.RETRY(hint="try again")
+
     fn = RecordingAgent(succeed_after=1)
     policy = FailurePolicy(default=FailurePolicy.escalate_by_default(), UNKNOWN=retry)
     ag = Agent(fn, policy, max_recovery_attempts=3)
@@ -96,7 +105,9 @@ async def test_recording_agent_records_triage_context():
 
 
 async def test_recording_agent_custom_error():
-    async def retry(ctx): return RecoveryAction.RETRY()
+    async def retry(ctx):
+        return RecoveryAction.RETRY()
+
     fn = RecordingAgent(succeed_after=1, error=ValueError("bad input"))
     policy = FailurePolicy(default=FailurePolicy.escalate_by_default(), UNKNOWN=retry)
     ag = Agent(fn, policy, max_recovery_attempts=3)
@@ -105,6 +116,7 @@ async def test_recording_agent_custom_error():
 
 
 # ── assert_classifies_as ──────────────────────────────────────────────────────
+
 
 def test_assert_classifies_as_loop_detected():
     steps = [
@@ -137,6 +149,7 @@ def test_assert_classifies_as_unknown():
 
 def test_assert_classifies_as_custom_classifier():
     from triage.classifier.rules import RulesClassifier
+
     clf = RulesClassifier(loop_window=2)
     steps = [
         make_step(index=0, tool_called="search", tool_input={"q": "x"}),

@@ -54,6 +54,7 @@ def make_checkpoint(
 
 # ── Serialization helpers (used by SQLite and Redis backends) ─────────────────
 
+
 def _safe_json(val: Any) -> Any:
     """Convert a value to something JSON-serializable. Falls back to repr()."""
     if val is None or isinstance(val, (bool, int, float, str)):

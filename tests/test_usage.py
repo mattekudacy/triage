@@ -18,6 +18,7 @@ from triage.usage import Usage, UsageMeter
 
 # ── UsageMeter unit tests ─────────────────────────────────────────────────────
 
+
 def test_meter_starts_empty():
     m = UsageMeter()
     assert m.total.input_tokens == 0
@@ -89,6 +90,7 @@ def test_usage_total_tokens():
 
 # ── Agent integration — record_usage injection ────────────────────────────────
 
+
 async def test_agent_injects_record_usage():
     """record_usage kwarg is received and meter accumulates."""
 
@@ -104,6 +106,7 @@ async def test_agent_injects_record_usage():
 
 async def test_get_usage_recorder_works_inside_run():
     """get_usage_recorder() contextvar accessor records into the same meter."""
+
     async def my_agent(task: str, *, record_step, **kwargs) -> str:
         get_usage_recorder()(Usage(input_tokens=7))
         return "ok"
@@ -116,6 +119,7 @@ async def test_get_usage_recorder_works_inside_run():
 
 async def test_get_usage_recorder_raises_outside_run():
     from triage.agent import get_usage_recorder
+
     with pytest.raises(RuntimeError, match="outside a triage Agent.run"):
         get_usage_recorder()
 
@@ -135,6 +139,7 @@ async def test_meter_resets_between_runs():
 
 
 # ── Agent budgets — max_tokens ─────────────────────────────────────────────────
+
 
 async def test_max_tokens_escalates_when_exceeded():
     """After recording enough tokens, the second failure triggers escalation."""
@@ -176,6 +181,7 @@ async def test_max_tokens_none_does_not_escalate():
 
 # ── Agent budgets — max_cost_usd ───────────────────────────────────────────────
 
+
 async def test_max_cost_escalates_when_exceeded():
     call_count = 0
 
@@ -213,6 +219,7 @@ async def test_max_cost_none_does_not_escalate():
 
 # ── Concurrent run isolation ───────────────────────────────────────────────────
 
+
 async def test_concurrent_runs_have_independent_meters():
     """Two concurrent run() calls on the same Agent don't share usage totals."""
 
@@ -236,6 +243,7 @@ async def test_concurrent_runs_have_independent_meters():
 
 # ── Clone copies budget params ─────────────────────────────────────────────────
 
+
 def test_clone_copies_budget_params():
     async def noop(task, *, record_step, **kw):
         return "ok"
@@ -249,8 +257,11 @@ def test_clone_copies_budget_params():
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
+
 def _ret(action: RecoveryAction):
     """Wrap a RecoveryAction in a trivial async strategy."""
+
     async def _strategy(ctx):
         return action
+
     return _strategy

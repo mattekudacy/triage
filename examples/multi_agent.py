@@ -58,23 +58,27 @@ async def researcher_agent(
 
     # First two calls: simulate rate limiting
     if call <= 2:
-        record_step(Step(
-            index=0,
-            action="web_search",
-            tool_called="search",
-            tool_input={"q": task},
-            error="HTTP 429 Too Many Requests — rate limit exceeded",
-        ))
+        record_step(
+            Step(
+                index=0,
+                action="web_search",
+                tool_called="search",
+                tool_input={"q": task},
+                error="HTTP 429 Too Many Requests — rate limit exceeded",
+            )
+        )
         raise RuntimeError("HTTP 429 Too Many Requests — rate limit exceeded")
 
     # Third call (fallback strategy, different query): succeeds
-    record_step(Step(
-        index=0,
-        action="web_search",
-        tool_called="search",
-        tool_input={"q": f"cached: {task}"},
-        tool_output="research results from cache",
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="web_search",
+            tool_called="search",
+            tool_input={"q": f"cached: {task}"},
+            tool_output="research results from cache",
+        )
+    )
     return f"Research on '{task}': found 3 relevant papers (from cache)."
 
 
@@ -92,14 +96,17 @@ _researcher_agent = triage.Agent(
 
 # ── Writer: depends on researcher output ─────────────────────────────────────
 
+
 async def writer_agent(task: str, *, record_step, research: str = "", **_kwargs) -> str:
-    record_step(Step(
-        index=0,
-        action="draft_section",
-        tool_called="write",
-        tool_input={"topic": task, "research": research[:80]},
-        tool_output="draft written",
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="draft_section",
+            tool_called="write",
+            tool_input={"topic": task, "research": research[:80]},
+            tool_output="draft written",
+        )
+    )
     return f"Written section for '{task}' using: {research[:60]}..."
 
 
@@ -140,29 +147,31 @@ async def orchestrator_agent(
     except triage.TriageEscalationError as exc:
         # Re-raise as a chained exception so the outer triage agent can
         # inspect exc.__cause__ and reuse the child's failure_type.
-        raise RuntimeError(
-            f"Researcher pipeline exhausted: {exc}"
-        ) from exc
+        raise RuntimeError(f"Researcher pipeline exhausted: {exc}") from exc
 
-    record_step(Step(
-        index=0,
-        action="research_complete",
-        tool_called="researcher",
-        tool_input={"task": search_task},
-        tool_output=research[:80],
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="research_complete",
+            tool_called="researcher",
+            tool_input={"task": search_task},
+            tool_output=research[:80],
+        )
+    )
 
     # Step 2: delegate to writer
     print("  [orchestrator] launching writer")
     draft = await _writer_agent.clone().run(task, research=research)
 
-    record_step(Step(
-        index=1,
-        action="draft_complete",
-        tool_called="writer",
-        tool_input={"task": task},
-        tool_output=draft[:80],
-    ))
+    record_step(
+        Step(
+            index=1,
+            action="draft_complete",
+            tool_called="writer",
+            tool_input={"task": task},
+            tool_output=draft[:80],
+        )
+    )
 
     return draft
 
@@ -181,6 +190,7 @@ orchestrator = triage.Agent(
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────
+
 
 async def main() -> None:
     task = "recent advances in protein folding"

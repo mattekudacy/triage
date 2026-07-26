@@ -17,6 +17,7 @@ def make_ctx(failure_type: FailureType = FailureType.UNKNOWN) -> FailureContext:
 
 # ── RecoveryAction constructors ───────────────────────────────────────────────
 
+
 def test_recovery_action_retry():
     action = RecoveryAction.RETRY(hint="try again")
     assert action.kind == "retry"
@@ -72,6 +73,7 @@ def test_recovery_action_repr():
 
 # ── FailurePolicy.resolve ─────────────────────────────────────────────────────
 
+
 def test_resolve_exact_match():
     async def my_strategy(ctx):
         return RecoveryAction.RETRY()
@@ -107,6 +109,7 @@ def test_resolve_specific_beats_default():
 
 # ── FailurePolicy.dispatch ────────────────────────────────────────────────────
 
+
 async def test_dispatch_calls_strategy_and_returns_action():
     async def my_strategy(ctx):
         return RecoveryAction.REPLAN(hint="redo")
@@ -138,6 +141,7 @@ async def test_dispatch_uses_default_when_no_specific():
 
 # ── convenience factories ─────────────────────────────────────────────────────
 
+
 async def test_escalate_by_default_factory():
     strategy = FailurePolicy.escalate_by_default()
     ctx = make_ctx(FailureType.CONTEXT_OVERFLOW)
@@ -155,6 +159,7 @@ async def test_abort_by_default_factory():
 
 
 # ── FailurePolicy.chain ───────────────────────────────────────────────────────
+
 
 async def test_chain_uses_primary_when_not_escalating():
     async def primary(ctx):
@@ -216,9 +221,13 @@ async def test_chain_does_not_call_fallback_on_replan():
 
 # ── FailurePolicy.sequence ───────────────────────────────────────────────────
 
+
 async def test_sequence_first_strategy_on_first_failure():
-    async def s1(ctx): return RecoveryAction.RETRY(hint="s1")
-    async def s2(ctx): return RecoveryAction.REPLAN(hint="s2")
+    async def s1(ctx):
+        return RecoveryAction.RETRY(hint="s1")
+
+    async def s2(ctx):
+        return RecoveryAction.REPLAN(hint="s2")
 
     seq = FailurePolicy.sequence(s1, s2)
     ctx = make_ctx(FailureType.UNKNOWN)  # no prior attempts
@@ -228,8 +237,11 @@ async def test_sequence_first_strategy_on_first_failure():
 
 
 async def test_sequence_second_strategy_on_second_failure():
-    async def s1(ctx): return RecoveryAction.RETRY(hint="s1")
-    async def s2(ctx): return RecoveryAction.REPLAN(hint="s2")
+    async def s1(ctx):
+        return RecoveryAction.RETRY(hint="s1")
+
+    async def s2(ctx):
+        return RecoveryAction.REPLAN(hint="s2")
 
     seq = FailurePolicy.sequence(s1, s2)
     ctx = FailureContext(
@@ -245,7 +257,8 @@ async def test_sequence_second_strategy_on_second_failure():
 
 
 async def test_sequence_escalates_after_exhaustion():
-    async def s1(ctx): return RecoveryAction.RETRY()
+    async def s1(ctx):
+        return RecoveryAction.RETRY()
 
     seq = FailurePolicy.sequence(s1)
     ctx = FailureContext(
@@ -262,8 +275,12 @@ async def test_sequence_escalates_after_exhaustion():
 
 async def test_sequence_counts_only_matching_failure_type():
     """Prior attempts of a different failure type must not advance the index."""
-    async def s1(ctx): return RecoveryAction.RETRY(hint="s1")
-    async def s2(ctx): return RecoveryAction.REPLAN(hint="s2")
+
+    async def s1(ctx):
+        return RecoveryAction.RETRY(hint="s1")
+
+    async def s2(ctx):
+        return RecoveryAction.REPLAN(hint="s2")
 
     seq = FailurePolicy.sequence(s1, s2)
     ctx = FailureContext(
@@ -317,6 +334,7 @@ def test_sequence_requires_at_least_one_strategy():
 
 # ── TIMEOUT field ─────────────────────────────────────────────────────────────
 
+
 async def test_timeout_field_resolves_strategy():
     async def strategy(ctx):
         return RecoveryAction.RETRY()
@@ -334,8 +352,11 @@ def test_timeout_falls_through_to_default():
 
 # ── FailurePolicy.from_dict ───────────────────────────────────────────────────
 
+
 async def test_from_dict_resolves_strategy():
-    async def strategy(ctx): return RecoveryAction.RETRY()
+    async def strategy(ctx):
+        return RecoveryAction.RETRY()
+
     policy = FailurePolicy.from_dict({FailureType.EXTERNAL_FAULT: strategy})
     ctx = make_ctx(FailureType.EXTERNAL_FAULT)
     action = await policy.dispatch(ctx)
@@ -343,7 +364,9 @@ async def test_from_dict_resolves_strategy():
 
 
 async def test_from_dict_with_default():
-    async def strategy(ctx): return RecoveryAction.RETRY()
+    async def strategy(ctx):
+        return RecoveryAction.RETRY()
+
     policy = FailurePolicy.from_dict(
         {FailureType.EXTERNAL_FAULT: strategy},
         default=FailurePolicy.escalate_by_default(),
@@ -363,12 +386,16 @@ async def test_from_dict_unregistered_type_escalates_without_default():
 
 
 def test_from_dict_multiple_types():
-    async def s(ctx): return RecoveryAction.RETRY()
-    policy = FailurePolicy.from_dict({
-        FailureType.EXTERNAL_FAULT: s,
-        FailureType.TIMEOUT: s,
-        FailureType.SCHEMA_MISMATCH: s,
-    })
+    async def s(ctx):
+        return RecoveryAction.RETRY()
+
+    policy = FailurePolicy.from_dict(
+        {
+            FailureType.EXTERNAL_FAULT: s,
+            FailureType.TIMEOUT: s,
+            FailureType.SCHEMA_MISMATCH: s,
+        }
+    )
     assert policy.resolve(FailureType.EXTERNAL_FAULT) is s
     assert policy.resolve(FailureType.TIMEOUT) is s
     assert policy.resolve(FailureType.SCHEMA_MISMATCH) is s
@@ -376,6 +403,7 @@ def test_from_dict_multiple_types():
 
 
 # ── FailurePolicy.from_yaml ───────────────────────────────────────────────────
+
 
 def test_from_yaml_toml_format(tmp_path):
     config = tmp_path / "policy.toml"
@@ -398,6 +426,7 @@ def test_from_yaml_default_escalate(tmp_path):
 
 def test_from_yaml_unknown_strategy_raises(tmp_path):
     import pytest
+
     config = tmp_path / "policy.toml"
     config.write_text('[EXTERNAL_FAULT]\nstrategy = "does_not_exist"\n')
     with pytest.raises(ValueError, match="Unknown strategy"):
@@ -405,7 +434,9 @@ def test_from_yaml_unknown_strategy_raises(tmp_path):
 
 
 def test_from_yaml_custom_registry(tmp_path):
-    async def my_strategy(ctx): return RecoveryAction.RETRY()
+    async def my_strategy(ctx):
+        return RecoveryAction.RETRY()
+
     config = tmp_path / "policy.toml"
     config.write_text('[EXTERNAL_FAULT]\nstrategy = "my_custom"\n')
     policy = FailurePolicy.from_yaml(
@@ -416,6 +447,7 @@ def test_from_yaml_custom_registry(tmp_path):
 
 def test_from_yaml_unknown_failure_type_raises(tmp_path):
     import pytest
+
     config = tmp_path / "policy.toml"
     config.write_text('[NOT_A_REAL_TYPE]\nstrategy = "escalate"\n')
     with pytest.raises(ValueError, match="Unknown FailureType"):
@@ -424,7 +456,8 @@ def test_from_yaml_unknown_failure_type_raises(tmp_path):
 
 def test_from_yaml_unsupported_extension_raises(tmp_path):
     import pytest
+
     config = tmp_path / "policy.json"
-    config.write_text('{}')
+    config.write_text("{}")
     with pytest.raises(ValueError, match="Unsupported config file extension"):
         FailurePolicy.from_yaml(str(config))

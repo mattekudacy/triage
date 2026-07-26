@@ -59,22 +59,26 @@ async def flaky_agent(
     print(f"  [A] attempt {attempt}, hint={_triage_hint!r}")
 
     if _triage_hint and "backup" in _triage_hint.lower():
-        record_step(Step(
-            index=0,
-            action="fetch_from_backup",
-            tool_called="backup_api",
-            tool_input={"q": task},
-            tool_output="data from backup",
-        ))
+        record_step(
+            Step(
+                index=0,
+                action="fetch_from_backup",
+                tool_called="backup_api",
+                tool_input={"q": task},
+                tool_output="data from backup",
+            )
+        )
         return f"Completed via backup API: {task}"
 
-    record_step(Step(
-        index=0,
-        action="fetch_from_primary",
-        tool_called="primary_api",
-        tool_input={"q": task},
-        error="HTTP 503 Service Unavailable",
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="fetch_from_primary",
+            tool_called="primary_api",
+            tool_input={"q": task},
+            error="HTTP 503 Service Unavailable",
+        )
+    )
     raise RuntimeError("HTTP 503 Service Unavailable")
 
 
@@ -94,40 +98,45 @@ async def looping_agent(
 ) -> str:
     _b_attempt[0] += 1
     attempt = _b_attempt[0]
-    print(f"  [B] attempt {attempt}, hint={_triage_hint!r}, "
-          f"state_restored={bool(_triage_state)}")
+    print(f"  [B] attempt {attempt}, hint={_triage_hint!r}, state_restored={bool(_triage_state)}")
 
     if _triage_state:
         # Rolled back — pick up from saved checkpoint
         print(f"  [B] resuming from checkpoint state: {_triage_state}")
-        record_step(Step(
-            index=2,
-            action="finalize",
-            tool_called="summarize",
-            tool_input={"data": _triage_state.get("fetched")},
-            tool_output="summary complete",
-        ))
+        record_step(
+            Step(
+                index=2,
+                action="finalize",
+                tool_called="summarize",
+                tool_input={"data": _triage_state.get("fetched")},
+                tool_output="summary complete",
+            )
+        )
         return f"Completed from rollback checkpoint: {task}"
 
     # Phase 1: fetch succeeds — persist state so rollback has something to restore
-    record_step(Step(
-        index=0,
-        action="fetch_data",
-        tool_called="fetch",
-        tool_input={"q": task},
-        tool_output="raw data",
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="fetch_data",
+            tool_called="fetch",
+            tool_input={"q": task},
+            tool_output="raw data",
+        )
+    )
     update_state({"fetched": "raw data", "phase": "fetched"})
 
     # Phase 2: loop on the first two attempts regardless of hint
     if attempt <= 2:
         for i in range(3):
-            record_step(Step(
-                index=1 + i,
-                action="analyze",
-                tool_called="analyze",
-                tool_input={"method": "default"},  # identical inputs → LOOP_DETECTED
-            ))
+            record_step(
+                Step(
+                    index=1 + i,
+                    action="analyze",
+                    tool_called="analyze",
+                    tool_input={"method": "default"},  # identical inputs → LOOP_DETECTED
+                )
+            )
         raise RuntimeError("Analysis stuck: same tool called 3 times with identical inputs")
 
     return f"Done: {task}"
@@ -173,6 +182,7 @@ agent_b = triage.Agent(
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────
+
 
 async def main() -> None:
     print("\n── Scenario A: EXTERNAL_FAULT → backoff_and_retry → replan ─────────────────\n")

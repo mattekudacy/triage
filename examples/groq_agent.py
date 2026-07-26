@@ -57,6 +57,7 @@ def web_search(query: str) -> str:
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
+
 async def groq_agent(
     task: str,
     *,
@@ -82,9 +83,7 @@ async def groq_agent(
                 "description": "Search the web for current information.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"}
-                    },
+                    "properties": {"query": {"type": "string", "description": "Search query"}},
                     "required": ["query"],
                 },
             },
@@ -108,28 +107,33 @@ async def groq_agent(
         return message.content or ""
 
     import json
+
     tool_call = message.tool_calls[0]
     args = json.loads(tool_call.function.arguments)
 
     try:
         result = web_search(args["query"])
     except RuntimeError as exc:
-        record_step(Step(
+        record_step(
+            Step(
+                index=0,
+                action="tool_call:web_search",
+                tool_called="web_search",
+                tool_input=args,
+                error=str(exc),
+            )
+        )
+        raise
+
+    record_step(
+        Step(
             index=0,
             action="tool_call:web_search",
             tool_called="web_search",
             tool_input=args,
-            error=str(exc),
-        ))
-        raise
-
-    record_step(Step(
-        index=0,
-        action="tool_call:web_search",
-        tool_called="web_search",
-        tool_input=args,
-        tool_output=result,
-    ))
+            tool_output=result,
+        )
+    )
 
     # Get final answer from the model
     followup = client.chat.completions.create(
@@ -149,6 +153,7 @@ async def groq_agent(
 
 
 # ── Wire up triage ────────────────────────────────────────────────────────────
+
 
 def _make_classifier() -> LLMClassifier:
     api_key = os.environ.get("GROQ_API_KEY", "")

@@ -208,6 +208,7 @@ class CircuitBreaker:
         with self._lock:
             if self.store is not None:
                 from triage.breaker_store import BreakerSnapshot
+
                 self.store.evict_before(float("inf"))
                 self.store.save(BreakerSnapshot())
             else:

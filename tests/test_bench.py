@@ -1,25 +1,31 @@
 """Tests for triage.bench — BenchResult, BenchReport, run_benchmark."""
 
-
 from triage.bench import BenchReport, BenchResult, run_benchmark
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.taxonomy import Step
 
 # ── BenchReport properties ────────────────────────────────────────────────────
 
+
 def test_bench_report_success_rate_all_pass():
-    report = BenchReport(label="test", results=[
-        BenchResult(task="t", success=True, duration_s=1.0, recoveries=0),
-        BenchResult(task="t", success=True, duration_s=1.0, recoveries=0),
-    ])
+    report = BenchReport(
+        label="test",
+        results=[
+            BenchResult(task="t", success=True, duration_s=1.0, recoveries=0),
+            BenchResult(task="t", success=True, duration_s=1.0, recoveries=0),
+        ],
+    )
     assert report.success_rate == 1.0
 
 
 def test_bench_report_success_rate_half():
-    report = BenchReport(label="test", results=[
-        BenchResult(task="t", success=True, duration_s=1.0, recoveries=0),
-        BenchResult(task="t", success=False, duration_s=1.0, recoveries=0),
-    ])
+    report = BenchReport(
+        label="test",
+        results=[
+            BenchResult(task="t", success=True, duration_s=1.0, recoveries=0),
+            BenchResult(task="t", success=False, duration_s=1.0, recoveries=0),
+        ],
+    )
     assert report.success_rate == 0.5
 
 
@@ -29,10 +35,13 @@ def test_bench_report_success_rate_empty():
 
 
 def test_bench_report_mean_latency():
-    report = BenchReport(label="test", results=[
-        BenchResult(task="t", success=True, duration_s=1.0, recoveries=0),
-        BenchResult(task="t", success=True, duration_s=3.0, recoveries=0),
-    ])
+    report = BenchReport(
+        label="test",
+        results=[
+            BenchResult(task="t", success=True, duration_s=1.0, recoveries=0),
+            BenchResult(task="t", success=True, duration_s=3.0, recoveries=0),
+        ],
+    )
     assert report.mean_latency_s == 2.0
 
 
@@ -42,23 +51,30 @@ def test_bench_report_mean_latency_empty():
 
 
 def test_bench_report_total_recoveries():
-    report = BenchReport(label="test", results=[
-        BenchResult(task="t", success=True, duration_s=1.0, recoveries=2),
-        BenchResult(task="t", success=True, duration_s=1.0, recoveries=3),
-    ])
+    report = BenchReport(
+        label="test",
+        results=[
+            BenchResult(task="t", success=True, duration_s=1.0, recoveries=2),
+            BenchResult(task="t", success=True, duration_s=1.0, recoveries=3),
+        ],
+    )
     assert report.total_recoveries == 5
 
 
 def test_bench_report_summary_contains_label():
-    report = BenchReport(label="my-experiment", results=[
-        BenchResult(task="t", success=True, duration_s=0.1, recoveries=0),
-    ])
+    report = BenchReport(
+        label="my-experiment",
+        results=[
+            BenchResult(task="t", success=True, duration_s=0.1, recoveries=0),
+        ],
+    )
     summary = report.summary()
     assert "my-experiment" in summary
     assert "100.0%" in summary
 
 
 # ── run_benchmark ─────────────────────────────────────────────────────────────
+
 
 async def test_run_benchmark_all_success():
     async def agent(task: str, *, record_step, update_state, **kwargs) -> str:
@@ -136,6 +152,7 @@ async def test_run_benchmark_label_in_report():
 
 # ── baseline comparison ───────────────────────────────────────────────────────
 
+
 async def test_run_benchmark_with_baseline_fn():
     async def agent(task: str, *, record_step, update_state, **kwargs) -> str:
         return "ok"
@@ -144,9 +161,7 @@ async def test_run_benchmark_with_baseline_fn():
         return "ok"
 
     policy = FailurePolicy()
-    report = await run_benchmark(
-        agent, tasks=["t1", "t2"], policy=policy, baseline_fn=baseline
-    )
+    report = await run_benchmark(agent, tasks=["t1", "t2"], policy=policy, baseline_fn=baseline)
     assert len(report.baseline_results) == 2
     assert all(r.success for r in report.baseline_results)
 
@@ -170,8 +185,8 @@ async def test_bench_report_compare_output():
     cmp = report.compare()
     assert "triage" in cmp
     assert "raw" in cmp
-    assert "100.0%" in cmp   # triage success rate
-    assert "0.0%" in cmp     # baseline failure rate
+    assert "100.0%" in cmp  # triage success rate
+    assert "0.0%" in cmp  # baseline failure rate
 
 
 async def test_bench_report_compare_no_baseline_returns_empty():

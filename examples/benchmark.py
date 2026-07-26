@@ -32,6 +32,7 @@ from triage.trajectory import Trajectory
 
 # ── Test case definition ──────────────────────────────────────────────────────
 
+
 @dataclass
 class Case:
     label: str
@@ -75,10 +76,7 @@ CASES: list[Case] = [
     Case(
         label="loop: 5 identical steps (loop_window=5)",
         expected=FailureType.LOOP_DETECTED,
-        steps=[
-            make_step(i, tool_called="fetch", tool_input={"url": "http://x"})
-            for i in range(5)
-        ],
+        steps=[make_step(i, tool_called="fetch", tool_input={"url": "http://x"}) for i in range(5)],
     ),
     # ── NOT LOOP ───────────────────────────────────────────────────────────────
     Case(
@@ -98,7 +96,6 @@ CASES: list[Case] = [
             make_step(2, tool_called="search", tool_input={"q": "Tokyo"}),
         ],
     ),
-
     # ── WRONG_TOOL_CALLED ──────────────────────────────────────────────────────
     Case(
         label="wrong-tool: 'no tool named X'",
@@ -126,7 +123,6 @@ CASES: list[Case] = [
         expected=FailureType.UNKNOWN,
         steps=[make_step(0, error="connection refused")],
     ),
-
     # ── SCHEMA_MISMATCH ────────────────────────────────────────────────────────
     Case(
         label="schema: JSONDecodeError",
@@ -154,7 +150,6 @@ CASES: list[Case] = [
         expected=FailureType.UNKNOWN,
         steps=[make_step(0, error="connection error: host unreachable")],
     ),
-
     # ── EXTERNAL_FAULT ─────────────────────────────────────────────────────────
     Case(
         label="external: HTTP 429 rate limit",
@@ -187,7 +182,6 @@ CASES: list[Case] = [
         expected=FailureType.UNKNOWN,
         steps=[make_step(0, error="connection refused on port 5000")],
     ),
-
     # ── CONSTRAINT_IGNORED ────────────────────────────────────────────────────
     Case(
         label="constraint: output contains forbidden word",
@@ -198,8 +192,11 @@ CASES: list[Case] = [
     Case(
         label="constraint: case-insensitive match",
         expected=FailureType.CONSTRAINT_IGNORED,
-        steps=[make_step(0, llm_output="DO NOT USE MARKDOWN is what I should avoid"
-                                       " but here it is anyway.")],
+        steps=[
+            make_step(
+                0, llm_output="DO NOT USE MARKDOWN is what I should avoid but here it is anyway."
+            )
+        ],
         task="do not use markdown",  # constraint lowercase, matched case-insensitively
     ),
     # ── NOT CONSTRAINT ─────────────────────────────────────────────────────────
@@ -209,7 +206,6 @@ CASES: list[Case] = [
         steps=[make_step(0, llm_output="Here is a plain text answer.")],
         task="markdown",  # constraint = "markdown", NOT present in output
     ),
-
     # ── UNKNOWN — types RulesClassifier cannot detect ─────────────────────────
     Case(
         label="unknown: hallucinated state (semantic — needs LLM)",
@@ -223,8 +219,12 @@ CASES: list[Case] = [
         label="unknown: goal drift (semantic — needs LLM)",
         expected=FailureType.UNKNOWN,
         steps=[
-            make_step(0, tool_called="search", tool_input={"q": "off-topic"},
-                      llm_output="I started researching something else entirely."),
+            make_step(
+                0,
+                tool_called="search",
+                tool_input={"q": "off-topic"},
+                llm_output="I started researching something else entirely.",
+            ),
         ],
     ),
     Case(
@@ -244,8 +244,12 @@ SEMANTIC_CASES: list[Case] = [
         label="plan-incomplete: sub-goal never attempted",
         expected=FailureType.PLAN_INCOMPLETE,
         steps=[
-            make_step(0, tool_called="search", tool_input={"q": "Paris weather"},
-                      tool_output='{"temp": "22C"}'),
+            make_step(
+                0,
+                tool_called="search",
+                tool_input={"q": "Paris weather"},
+                tool_output='{"temp": "22C"}',
+            ),
             make_step(1, llm_output="I found the weather. Task complete."),
         ],
         task="Find the weather in Paris AND book a hotel. Report both.",
@@ -255,8 +259,12 @@ SEMANTIC_CASES: list[Case] = [
         expected=FailureType.PLAN_INCOMPLETE,
         steps=[
             make_step(0, tool_called="list_files", tool_output='["a.py","b.py","c.py"]'),
-            make_step(1, tool_called="read_file", tool_input={"path": "a.py"},
-                      tool_output="# file a contents"),
+            make_step(
+                1,
+                tool_called="read_file",
+                tool_input={"path": "a.py"},
+                tool_output="# file a contents",
+            ),
             make_step(2, llm_output="I read file a.py. Done."),
         ],
         task="Read all Python files in the directory and summarize each one.",
@@ -265,14 +273,16 @@ SEMANTIC_CASES: list[Case] = [
         label="plan-incomplete: agent declares success with missing steps",
         expected=FailureType.PLAN_INCOMPLETE,
         steps=[
-            make_step(0, tool_called="send_email",
-                      tool_input={"to": "alice@example.com", "body": "Hello"},
-                      tool_output="sent"),
+            make_step(
+                0,
+                tool_called="send_email",
+                tool_input={"to": "alice@example.com", "body": "Hello"},
+                tool_output="sent",
+            ),
             make_step(1, llm_output="Email sent. All tasks are complete."),
         ],
         task="Send an email to alice@example.com and then log the sent timestamp to audit.log.",
     ),
-
     # ── CONTEXT_OVERFLOW ───────────────────────────────────────────────────────
     Case(
         label="context-overflow: agent forgets early constraint",
@@ -284,8 +294,11 @@ SEMANTIC_CASES: list[Case] = [
             make_step(3, tool_called="search", tool_input={"q": "profit margins"}),
             make_step(4, tool_called="search", tool_input={"q": "quarterly trends"}),
             make_step(5, tool_called="search", tool_input={"q": "year over year"}),
-            make_step(6, llm_output="Here is the analysis: Revenue grew by 12%. Costs rose 8%. "
-                      "Profit margins improved. The company performed well overall this year."),
+            make_step(
+                6,
+                llm_output="Here is the analysis: Revenue grew by 12%. Costs rose 8%. "
+                "Profit margins improved. The company performed well overall this year.",
+            ),
         ],
         task="Analyze business performance. Output must be in JSON format only.",
     ),
@@ -293,18 +306,24 @@ SEMANTIC_CASES: list[Case] = [
         label="context-overflow: loses track of what was already processed",
         expected=FailureType.CONTEXT_OVERFLOW,
         steps=[
-            make_step(0, tool_called="list_items",
-                      tool_output='["item1","item2","item3","item4","item5"]'),
-            make_step(1, tool_called="process_item",
-                      tool_input={"id": "item1"}, tool_output="done"),
-            make_step(2, tool_called="process_item",
-                      tool_input={"id": "item2"}, tool_output="done"),
-            make_step(3, tool_called="process_item",
-                      tool_input={"id": "item3"}, tool_output="done"),
-            make_step(4, tool_called="process_item",
-                      tool_input={"id": "item4"}, tool_output="done"),
-            make_step(5, tool_called="process_item",
-                      tool_input={"id": "item1"}, tool_output="done"),
+            make_step(
+                0, tool_called="list_items", tool_output='["item1","item2","item3","item4","item5"]'
+            ),
+            make_step(
+                1, tool_called="process_item", tool_input={"id": "item1"}, tool_output="done"
+            ),
+            make_step(
+                2, tool_called="process_item", tool_input={"id": "item2"}, tool_output="done"
+            ),
+            make_step(
+                3, tool_called="process_item", tool_input={"id": "item3"}, tool_output="done"
+            ),
+            make_step(
+                4, tool_called="process_item", tool_input={"id": "item4"}, tool_output="done"
+            ),
+            make_step(
+                5, tool_called="process_item", tool_input={"id": "item1"}, tool_output="done"
+            ),
             make_step(6, llm_output="Processed items. I think I got them all."),
         ],
         task="Process each item exactly once and confirm all five are done.",
@@ -313,6 +332,7 @@ SEMANTIC_CASES: list[Case] = [
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
+
 
 def run_cases(classifier: object, cases: list[Case]) -> tuple[int, int]:
     """Returns (passed, total)."""
@@ -393,10 +413,16 @@ def _load_llm_classifier() -> object:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="triage classifier benchmark")
-    parser.add_argument("--llm", action="store_true",
-                        help="Also benchmark LLMClassifier (requires ANTHROPIC_API_KEY)")
-    parser.add_argument("--hybrid", action="store_true",
-                        help="Also benchmark HybridClassifier (requires ANTHROPIC_API_KEY)")
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="Also benchmark LLMClassifier (requires ANTHROPIC_API_KEY)",
+    )
+    parser.add_argument(
+        "--hybrid",
+        action="store_true",
+        help="Also benchmark HybridClassifier (requires ANTHROPIC_API_KEY)",
+    )
     args = parser.parse_args()
 
     print("=" * 80)
@@ -411,8 +437,9 @@ def main() -> None:
 
     # ── LLMClassifier (optional) ──────────────────────────────────────────────
     if args.llm:
-        print("\n\n── LLMClassifier (claude-haiku-4-5-20251001) "
-              "─────────────────────────────────\n")
+        print(
+            "\n\n── LLMClassifier (claude-haiku-4-5-20251001) ─────────────────────────────────\n"
+        )
         llm_clf = _load_llm_classifier()
         all_llm_cases = CASES + SEMANTIC_CASES
         run_cases(llm_clf, all_llm_cases)
@@ -424,8 +451,9 @@ def main() -> None:
 
     # ── HybridClassifier (optional) ───────────────────────────────────────────
     if args.hybrid:
-        print("\n\n── HybridClassifier (rules + claude-haiku-4-5-20251001) "
-              "───────────────────────\n")
+        print(
+            "\n\n── HybridClassifier (rules + claude-haiku-4-5-20251001) ───────────────────────\n"
+        )
         try:
             from triage.classifier.hybrid import HybridClassifier
         except ImportError:

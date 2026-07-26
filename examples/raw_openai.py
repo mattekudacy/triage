@@ -74,6 +74,7 @@ def run_calculator(expression: str) -> str:
 
 # ── Agent function ────────────────────────────────────────────────────────────
 
+
 async def openai_agent(
     task: str,
     *,

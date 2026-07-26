@@ -51,13 +51,15 @@ class RedisCheckpointStore:
         self._redis = redis
 
     async def save(self, checkpoint: Checkpoint) -> None:
-        data = json.dumps({
-            "id": checkpoint.id,
-            "timestamp": checkpoint.timestamp,
-            "state": _safe_json(checkpoint.state),
-            "trajectory": [_step_to_dict(s) for s in checkpoint.trajectory_snapshot],
-            "run_id": checkpoint.run_id,
-        })
+        data = json.dumps(
+            {
+                "id": checkpoint.id,
+                "timestamp": checkpoint.timestamp,
+                "state": _safe_json(checkpoint.state),
+                "trajectory": [_step_to_dict(s) for s in checkpoint.trajectory_snapshot],
+                "run_id": checkpoint.run_id,
+            }
+        )
         key = _KEY_PREFIX + checkpoint.id
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.set(key, data)

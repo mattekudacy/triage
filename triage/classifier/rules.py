@@ -25,11 +25,11 @@ from triage.trajectory import Trajectory
 # prevent false matches on e.g. "tooltip not found".
 _WRONG_TOOL_RE = re.compile(
     r"(?:"
-    r"tool[_\s]['\"]?\w+['\"]?\s+not\s+found"      # 'tool foo not found'
-    r"|no\s+tool\s+named"                            # 'no tool named X'
-    r"|tool_not_found"                               # OpenAI structured error code
+    r"tool[_\s]['\"]?\w+['\"]?\s+not\s+found"  # 'tool foo not found'
+    r"|no\s+tool\s+named"  # 'no tool named X'
+    r"|tool_not_found"  # OpenAI structured error code
     r"|function\s+['\"]?\w+['\"]?\s+does\s+not\s+exist"  # Anthropic-style
-    r"|unknown\s+tool\s+['\"]?\w+"                   # generic
+    r"|unknown\s+tool\s+['\"]?\w+"  # generic
     r")",
     re.IGNORECASE,
 )
@@ -61,6 +61,8 @@ def _external_code_match(text: str) -> bool:
         return False
     # Exclude matches where the code is preceded by a quantity/ordinal word.
     return not _EXTERNAL_CODE_PRECEDING_RE.search(text)
+
+
 _TIMEOUT_RE = re.compile(
     r"\btimeout\b|\btimed[\s_]?out\b|\bdeadline[\s_]?exceeded\b|\btime[\s_]?limit\b",
     re.IGNORECASE,
@@ -214,7 +216,7 @@ class RulesClassifier:
         # and either identical (default) or fuzzy-similar (loop_similarity_threshold)
         # tool_input.
         if len(steps) >= self.loop_window:
-            window = steps[-self.loop_window:]
+            window = steps[-self.loop_window :]
             if _is_loop_window(window, self.loop_similarity_threshold):
                 return FailureType.LOOP_DETECTED
 
@@ -229,16 +231,14 @@ class RulesClassifier:
         # 3. SCHEMA_MISMATCH
         for step in steps:
             if step.error and (
-                _SCHEMA_RE.search(step.error)
-                or self._fw_match(step.error, _SCHEMA_FRAMEWORK)
+                _SCHEMA_RE.search(step.error) or self._fw_match(step.error, _SCHEMA_FRAMEWORK)
             ):
                 return FailureType.SCHEMA_MISMATCH
 
         # 4. EXTERNAL_FAULT — HTTP status codes as whole tokens
         for step in steps:
             if step.error and (
-                _external_code_match(step.error)
-                or self._fw_match(step.error, _EXTERNAL_FRAMEWORK)
+                _external_code_match(step.error) or self._fw_match(step.error, _EXTERNAL_FRAMEWORK)
             ):
                 return FailureType.EXTERNAL_FAULT
 

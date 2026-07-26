@@ -16,15 +16,15 @@ def replan(hint: str | None = None, max_replans: int = 3) -> StrategyFn:
     Escalates after ``max_replans`` replan attempts rather than deferring
     entirely to ``Agent(max_recovery_attempts=...)``.
     """
+
     async def _strategy(ctx: FailureContext) -> RecoveryAction:
         prior = sum(1 for _, kind in ctx.attempt_history if kind == "replan")
         if prior >= max_replans:
-            return RecoveryAction.ESCALATE(
-                f"replan: max_replans ({max_replans}) reached."
-            )
+            return RecoveryAction.ESCALATE(f"replan: max_replans ({max_replans}) reached.")
         return RecoveryAction.REPLAN(
             hint=hint or "Generate a new plan. The previous approach failed.",
         )
+
     return _strategy
 
 
@@ -35,6 +35,7 @@ def resume_from_subgoal() -> StrategyFn:
     before raising. If the key is missing, escalates rather than silently
     performing a no-op retry.
     """
+
     async def _strategy(ctx: FailureContext) -> RecoveryAction:
         subgoal = ctx.metadata.get("incomplete_subgoal")
         if subgoal is None:
@@ -43,4 +44,5 @@ def resume_from_subgoal() -> StrategyFn:
                 "ctx.metadata. Set it before raising to enable resume recovery."
             )
         return RecoveryAction.RESUME(from_subgoal=subgoal)
+
     return _strategy

@@ -60,6 +60,7 @@ async def test_latest_returns_none_when_empty(tmp_path):
 
 async def test_latest_returns_most_recent(tmp_path):
     import time
+
     db = str(tmp_path / "checkpoints.db")
     store = SQLiteCheckpointStore(db)
 

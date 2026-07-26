@@ -35,10 +35,7 @@ from triage.taxonomy import Step  # noqa: E402
 try:
     from triage.checkpoint.sqlite import SQLiteCheckpointStore
 except ImportError:
-    raise SystemExit(
-        "Missing dependency. Run:\n"
-        "  pip install 'triage-agent[sqlite]'"
-    ) from None
+    raise SystemExit("Missing dependency. Run:\n  pip install 'triage-agent[sqlite]'") from None
 
 # ── Synthetic multi-phase agent ───────────────────────────────────────────────
 
@@ -60,51 +57,58 @@ async def multi_phase_agent(
 
     # Phase 1 — always succeeds
     print("  [agent] Phase 1: fetching data...")
-    record_step(Step(
-        index=0,
-        action="fetch_data",
-        tool_called="fetch",
-        tool_input={"url": "https://api.example.com/data"},
-        tool_output='{"records": 42}',
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="fetch_data",
+            tool_called="fetch",
+            tool_input={"url": "https://api.example.com/data"},
+            tool_output='{"records": 42}',
+        )
+    )
 
     # Phase 2 — fails on first attempt with a hallucinated-state-style error
     print("  [agent] Phase 2: processing data...")
     if _attempt[0] == 1:
-        record_step(Step(
+        record_step(
+            Step(
+                index=1,
+                action="process_data",
+                tool_called="process",
+                error="AssertionError: agent claimed 100 records but tool returned 42",
+                llm_output="I have processed all 100 records successfully.",
+            )
+        )
+        raise RuntimeError("AssertionError: agent claimed 100 records but tool returned 42")
+
+    # Phase 2 succeeds on retry (with hint)
+    record_step(
+        Step(
             index=1,
             action="process_data",
             tool_called="process",
-            error="AssertionError: agent claimed 100 records but tool returned 42",
-            llm_output="I have processed all 100 records successfully.",
-        ))
-        raise RuntimeError(
-            "AssertionError: agent claimed 100 records but tool returned 42"
+            tool_input={"records": 42},
+            tool_output="processed 42 records",
         )
-
-    # Phase 2 succeeds on retry (with hint)
-    record_step(Step(
-        index=1,
-        action="process_data",
-        tool_called="process",
-        tool_input={"records": 42},
-        tool_output="processed 42 records",
-    ))
+    )
 
     # Phase 3
     print("  [agent] Phase 3: generating report...")
-    record_step(Step(
-        index=2,
-        action="generate_report",
-        tool_called="report",
-        tool_input={"count": 42},
-        tool_output="Report generated.",
-    ))
+    record_step(
+        Step(
+            index=2,
+            action="generate_report",
+            tool_called="report",
+            tool_input={"count": 42},
+            tool_output="Report generated.",
+        )
+    )
 
     return f"Done. Processed 42 records for task: {task}"
 
 
 # ── Wire up triage with SQLite checkpoints ────────────────────────────────────
+
 
 async def main() -> None:
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

@@ -7,6 +7,7 @@ failures, dispatches recovery actions, and executes them.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import functools
 import inspect
@@ -58,18 +59,22 @@ def _safe_hook(fn: Callable[..., None], *args: Any) -> None:
             extra={"triage_event": "hook_error", "error": str(exc)},
         )
 
+
 logger = logging.getLogger("triage")
 
 # ── contextvars for zero-signature-change injection ───────────────────────────
 
-_record_step_var: contextvars.ContextVar[Callable[[Step], None] | None] = \
-    contextvars.ContextVar("triage_record_step", default=None)
+_record_step_var: contextvars.ContextVar[Callable[[Step], None] | None] = contextvars.ContextVar(
+    "triage_record_step", default=None
+)
 
-_update_state_var: contextvars.ContextVar[Callable[[dict[str, Any]], None] | None] = \
+_update_state_var: contextvars.ContextVar[Callable[[dict[str, Any]], None] | None] = (
     contextvars.ContextVar("triage_update_state", default=None)
+)
 
-_record_usage_var: contextvars.ContextVar[Callable[[Usage], None] | None] = \
-    contextvars.ContextVar("triage_record_usage", default=None)
+_record_usage_var: contextvars.ContextVar[Callable[[Usage], None] | None] = contextvars.ContextVar(
+    "triage_record_usage", default=None
+)
 
 
 def get_recorder() -> Callable[[Step], None]:
@@ -105,9 +110,7 @@ def get_state_updater() -> Callable[[dict[str, Any]], None]:
     """
     fn = _update_state_var.get()
     if fn is None:
-        raise RuntimeError(
-            "get_state_updater() called outside a triage Agent.run() context."
-        )
+        raise RuntimeError("get_state_updater() called outside a triage Agent.run() context.")
     return fn
 
 
@@ -131,9 +134,7 @@ def get_usage_recorder() -> Callable[[Usage], None]:
     """
     fn = _record_usage_var.get()
     if fn is None:
-        raise RuntimeError(
-            "get_usage_recorder() called outside a triage Agent.run() context."
-        )
+        raise RuntimeError("get_usage_recorder() called outside a triage Agent.run() context.")
     return fn
 
 
@@ -157,6 +158,7 @@ class _RunState:
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
+
 
 class TriageEscalationError(Exception):
     """Raised when a strategy returns RecoveryAction.ESCALATE or max attempts exceeded."""
@@ -190,6 +192,7 @@ class TriageSuspendedError(Exception):
 
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
+
 
 class Agent:
     """Wraps any async callable and adds failure classification + recovery.
@@ -332,12 +335,8 @@ class Agent:
         self._fn_is_async_gen = inspect.isasyncgenfunction(fn) or inspect.isasyncgenfunction(
             type(fn).__call__
         )
-        self._fn_is_async = (
-            not self._fn_is_async_gen
-            and (
-                inspect.iscoroutinefunction(fn)
-                or inspect.iscoroutinefunction(type(fn).__call__)
-            )
+        self._fn_is_async = not self._fn_is_async_gen and (
+            inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(type(fn).__call__)
         )
         self._policy = policy
         self._classifier: Classifier = classifier or RulesClassifier()
@@ -358,9 +357,7 @@ class Agent:
         self._otel_meter = resolve_meter(meter)
         self._circuit_breakers: list[CircuitBreaker] = list(circuit_breakers or [])
         self._on_escalate = on_escalate
-        self._suspension_store: SuspensionStore = (
-            suspension_store or InMemorySuspensionStore()
-        )
+        self._suspension_store: SuspensionStore = suspension_store or InMemorySuspensionStore()
         self._max_tokens = max_tokens
         self._max_cost_usd = max_cost_usd
 
@@ -518,19 +515,23 @@ class Agent:
         """
         # Synthesize a sentinel step if the agent raised before calling record_step().
         if not self._trajectory.steps:
-            self._trajectory.append(Step(
-                index=0,
-                action="<no steps recorded>",
-                error=str(exc),
-            ))
+            self._trajectory.append(
+                Step(
+                    index=0,
+                    action="<no steps recorded>",
+                    error=str(exc),
+                )
+            )
 
         steps = self._trajectory.steps
 
         # Reuse a child triage agent's classification rather than re-classifying.
         _triage_exc = (TriageEscalationError, TriageAbortError)
         child_escalation = (
-            exc.__cause__ if isinstance(exc.__cause__, _triage_exc)
-            else exc.__context__ if isinstance(exc.__context__, _triage_exc)
+            exc.__cause__
+            if isinstance(exc.__cause__, _triage_exc)
+            else exc.__context__
+            if isinstance(exc.__context__, _triage_exc)
             else None
         )
 
@@ -547,8 +548,7 @@ class Agent:
                     )
                 set_span_classify_result(_classify_span, failure_type.value)
 
-        ctx = self._build_failure_context(failure_type, steps, task, attempt,
-                                          attempt_history, exc)
+        ctx = self._build_failure_context(failure_type, steps, task, attempt, attempt_history, exc)
         self._last_ctx = ctx
 
         logger.info(
@@ -576,9 +576,7 @@ class Agent:
                 if total_exceeded
                 else f"max_recovery_attempts ({self._max_recovery_attempts})"
             )
-            raise TriageEscalationError(
-                f"{cap} exceeded after {failure_type.value}.", ctx
-            ) from exc
+            raise TriageEscalationError(f"{cap} exceeded after {failure_type.value}.", ctx) from exc
 
         # Wall-clock recovery budget
         if self._max_recovery_seconds is not None:
@@ -603,8 +601,7 @@ class Agent:
             spent = self._meter.cost_usd
             if spent >= self._max_cost_usd:
                 raise TriageEscalationError(
-                    f"max_cost_usd ({self._max_cost_usd:.6f}) exceeded "
-                    f"(spent ${spent:.6f}).",
+                    f"max_cost_usd ({self._max_cost_usd:.6f}) exceeded (spent ${spent:.6f}).",
                     ctx,
                 ) from exc
 
@@ -648,13 +645,22 @@ class Agent:
         )
         return new_kwargs, attempt, attempt_history, retry_event
 
-    def _setup_run(
+    @contextlib.asynccontextmanager
+    async def _orchestrate(
         self,
+        task: str,
         *,
         run_id: str | None = None,
         restore_usage: Usage | None = None,
-    ) -> tuple[contextvars.Token[Any], contextvars.Token[Any], contextvars.Token[Any]]:
-        """Shared preamble: assign run_id, reset meter, reset classifier budget, set contextvars."""
+    ) -> AsyncGenerator[None, None]:
+        """Shared setup/teardown for run(), stream(), and resume().
+
+        Sets up the run_id, resets the meter and classifier budget, binds the
+        three contextvars, wraps the body in the root OTel span, and on the way
+        out records span outcome, calls breaker.record_success() on every
+        circuit breaker, emits the metrics run-end event, and resets the
+        contextvars — regardless of whether the body succeeded or raised.
+        """
         self._run_id = run_id if run_id is not None else str(uuid.uuid4())
         self._meter.reset()
         if restore_usage is not None:
@@ -665,24 +671,11 @@ class Agent:
         rec_token = _record_step_var.set(self._record_step)
         upd_token = _update_state_var.set(self._update_state)
         usg_token = _record_usage_var.set(self._record_usage)
-        return rec_token, upd_token, usg_token
-
-    async def run(self, task: str, **kwargs: Any) -> Any:
-        """Run the wrapped agent, recovering from failures per the policy."""
-        if self._fn_is_async_gen:
-            raise TypeError(
-                "Agent.run() cannot be used with async-generator callables. "
-                "Use agent.stream() instead."
-            )
-        attempt = 0
-        attempt_history: list[tuple[Any, str]] = []
-
-        rec_token, upd_token, usg_token = self._setup_run()
         _run_start = time.monotonic()
         try:
             async with run_span(self._tracer, self._run_id, task) as _root_span:
                 try:
-                    result = await self._run_loop(task, attempt, attempt_history, kwargs)
+                    yield
                     set_span_run_outcome(_root_span)
                     for breaker in self._circuit_breakers:
                         breaker.record_success()
@@ -691,7 +684,6 @@ class Agent:
                         outcome="success",
                         duration_s=time.monotonic() - _run_start,
                     )
-                    return result
                 except Exception as exc:
                     set_span_run_outcome(_root_span, error=exc)
                     metrics_record_run_end(
@@ -705,9 +697,20 @@ class Agent:
             _update_state_var.reset(upd_token)
             _record_usage_var.reset(usg_token)
 
-    async def stream(
-        self, task: str, **kwargs: Any
-    ) -> AsyncGenerator[Any, None]:
+    async def run(self, task: str, **kwargs: Any) -> Any:
+        """Run the wrapped agent, recovering from failures per the policy."""
+        if self._fn_is_async_gen:
+            raise TypeError(
+                "Agent.run() cannot be used with async-generator callables. "
+                "Use agent.stream() instead."
+            )
+        attempt = 0
+        attempt_history: list[tuple[Any, str]] = []
+
+        async with self._orchestrate(task):
+            return await self._run_loop(task, attempt, attempt_history, kwargs)
+
+    async def stream(self, task: str, **kwargs: Any) -> AsyncGenerator[Any, None]:
         """Run the wrapped async-generator callable, yielding its output.
 
         On failure, classifies the exception, dispatches a recovery action,
@@ -733,35 +736,9 @@ class Agent:
         attempt = 0
         attempt_history: list[tuple[Any, str]] = []
 
-        rec_token, upd_token, usg_token = self._setup_run()
-        _run_start = time.monotonic()
-        try:
-            async with run_span(self._tracer, self._run_id, task) as _root_span:
-                try:
-                    async for item in self._stream_loop(
-                        task, attempt, attempt_history, kwargs
-                    ):
-                        yield item
-                    set_span_run_outcome(_root_span)
-                    for breaker in self._circuit_breakers:
-                        breaker.record_success()
-                    metrics_record_run_end(
-                        self._otel_meter,
-                        outcome="success",
-                        duration_s=time.monotonic() - _run_start,
-                    )
-                except Exception as exc:
-                    set_span_run_outcome(_root_span, error=exc)
-                    metrics_record_run_end(
-                        self._otel_meter,
-                        outcome="error",
-                        duration_s=time.monotonic() - _run_start,
-                    )
-                    raise
-        finally:
-            _record_step_var.reset(rec_token)
-            _update_state_var.reset(upd_token)
-            _record_usage_var.reset(usg_token)
+        async with self._orchestrate(task):
+            async for item in self._stream_loop(task, attempt, attempt_history, kwargs):
+                yield item
 
     async def _stream_loop(
         self,
@@ -847,44 +824,15 @@ class Agent:
         # Restore run_id so any new checkpoints join the same scoped run;
         # restore usage so budget caps remain accurate across the suspension pause.
         restored_run_id = ctx.metadata.get("run_id") or str(uuid.uuid4())
-        rec_token, upd_token, usg_token = self._setup_run(
+        async with self._orchestrate(
+            task,
             run_id=restored_run_id,
             restore_usage=suspended.usage_snapshot,
-        )
-
-        _run_start = time.monotonic()
-        try:
-            async with run_span(self._tracer, self._run_id, task) as _root_span:
-                try:
-                    # Execute the human-supplied action first, then continue
-                    # the loop exactly as if this were a normal recovery attempt.
-                    kwargs = await self._execute_action(
-                        action, ctx, task, suspended.kwargs
-                    )
-                    result = await self._run_loop(
-                        task, attempt, attempt_history, kwargs
-                    )
-                    set_span_run_outcome(_root_span)
-                    for breaker in self._circuit_breakers:
-                        breaker.record_success()
-                    metrics_record_run_end(
-                        self._otel_meter,
-                        outcome="success",
-                        duration_s=time.monotonic() - _run_start,
-                    )
-                    return result
-                except Exception as exc:
-                    set_span_run_outcome(_root_span, error=exc)
-                    metrics_record_run_end(
-                        self._otel_meter,
-                        outcome="error",
-                        duration_s=time.monotonic() - _run_start,
-                    )
-                    raise
-        finally:
-            _record_step_var.reset(rec_token)
-            _update_state_var.reset(upd_token)
-            _record_usage_var.reset(usg_token)
+        ):
+            # Execute the human-supplied action first, then continue
+            # the loop exactly as if this were a normal recovery attempt.
+            kwargs = await self._execute_action(action, ctx, task, suspended.kwargs)
+            return await self._run_loop(task, attempt, attempt_history, kwargs)
 
     async def _run_loop(
         self,
@@ -968,9 +916,7 @@ class Agent:
             if self._strict_idempotency:
                 non_idempotent = [s for s in ctx.trajectory if not s.idempotent]
                 if non_idempotent:
-                    names = ", ".join(
-                        f"step[{s.index}] {s.action!r}" for s in non_idempotent
-                    )
+                    names = ", ".join(f"step[{s.index}] {s.action!r}" for s in non_idempotent)
                     raise TriageEscalationError(
                         f"strict_idempotency: cannot retry — non-idempotent steps "
                         f"in trajectory: {names}",
@@ -1030,14 +976,10 @@ class Agent:
             raise TriageSuspendedError(token, suspended)
 
         elif action.kind == "escalate":
-            raise TriageEscalationError(
-                action.params.get("message", "Escalated by policy."), ctx
-            )
+            raise TriageEscalationError(action.params.get("message", "Escalated by policy."), ctx)
 
         elif action.kind == "abort":
-            raise TriageAbortError(
-                action.params.get("reason", "Aborted by policy."), ctx
-            )
+            raise TriageAbortError(action.params.get("reason", "Aborted by policy."), ctx)
 
         # Inject structured TriageContext alongside the legacy scalar kwargs.
         # Agents can use either form; both are always present after a failure.
@@ -1087,6 +1029,7 @@ class Agent:
             )
         from triage.feedback import record_correction
         from triage.taxonomy import FailureType  # local import avoids any circularity
+
         if not isinstance(expected_type, FailureType):
             raise TypeError(f"expected_type must be a FailureType, got {type(expected_type)!r}")
         record_correction(self._last_ctx, expected_type, store_path=store_path)
@@ -1164,6 +1107,8 @@ def agent(policy: FailurePolicy, **kwargs: Any) -> Callable[[Callable[..., Any]]
         def my_sync_agent(task: str, *, record_step, **kwargs) -> str:
             ...
     """
+
     def decorator(fn: Callable[..., Any]) -> Agent:
         return Agent(fn, policy=policy, **kwargs)
+
     return decorator

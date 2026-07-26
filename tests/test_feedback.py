@@ -26,6 +26,7 @@ def make_ctx(
 
 # ── record_correction ─────────────────────────────────────────────────────────
 
+
 def test_record_correction_writes_to_file(tmp_path: Any):
     store = str(tmp_path / "corrections.jsonl")
     ctx = make_ctx(FailureType.WRONG_TOOL_CALLED)
@@ -67,6 +68,7 @@ def test_record_correction_fields(tmp_path: Any):
 
 
 # ── rotation ───────────────────────────────────────────────────────────────────
+
 
 def test_record_correction_does_not_rotate_below_threshold(tmp_path: Any):
     store = str(tmp_path / "corrections.jsonl")
@@ -155,6 +157,7 @@ def test_load_corrections_round_trips(tmp_path: Any):
 
 # ── RulesClassifier.fit() ────────────────────────────────────────────────────
 
+
 def test_fit_warns_on_misclassification(tmp_path: Any, caplog: Any):
     store = str(tmp_path / "corrections.jsonl")
     # Write a correction where rules would classify WRONG_TOOL_CALLED but
@@ -192,7 +195,7 @@ def test_fit_returns_coverage_dict(tmp_path: Any):
     store = str(tmp_path / "corrections.jsonl")
     ctx = make_ctx(FailureType.WRONG_TOOL_CALLED)
     record_correction(ctx, FailureType.WRONG_TOOL_CALLED, store_path=store)  # correct
-    record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store)    # wrong
+    record_correction(ctx, FailureType.EXTERNAL_FAULT, store_path=store)  # wrong
 
     clf = RulesClassifier()
     coverage = clf.fit(store)
@@ -213,23 +216,36 @@ def test_fit_empty_file(tmp_path: Any):
 
 # ── coverage_report ───────────────────────────────────────────────────────────
 
+
 def test_coverage_report_counts_correct_and_wrong():
     corrections = [
         Correction(
-            task="t", steps_summary=[],
-            expected_type="external_fault", observed_type="external_fault", timestamp=0.0,
+            task="t",
+            steps_summary=[],
+            expected_type="external_fault",
+            observed_type="external_fault",
+            timestamp=0.0,
         ),
         Correction(
-            task="t", steps_summary=[],
-            expected_type="external_fault", observed_type="unknown", timestamp=0.0,
+            task="t",
+            steps_summary=[],
+            expected_type="external_fault",
+            observed_type="unknown",
+            timestamp=0.0,
         ),
         Correction(
-            task="t", steps_summary=[],
-            expected_type="external_fault", observed_type="unknown", timestamp=0.0,
+            task="t",
+            steps_summary=[],
+            expected_type="external_fault",
+            observed_type="unknown",
+            timestamp=0.0,
         ),
         Correction(
-            task="t", steps_summary=[],
-            expected_type="timeout", observed_type="timeout", timestamp=0.0,
+            task="t",
+            steps_summary=[],
+            expected_type="timeout",
+            observed_type="timeout",
+            timestamp=0.0,
         ),
     ]
     report = coverage_report(corrections)
@@ -244,12 +260,18 @@ def test_coverage_report_empty_list():
 def test_coverage_report_all_correct():
     corrections = [
         Correction(
-            task="t", steps_summary=[],
-            expected_type="timeout", observed_type="timeout", timestamp=0.0,
+            task="t",
+            steps_summary=[],
+            expected_type="timeout",
+            observed_type="timeout",
+            timestamp=0.0,
         ),
         Correction(
-            task="t", steps_summary=[],
-            expected_type="timeout", observed_type="timeout", timestamp=0.0,
+            task="t",
+            steps_summary=[],
+            expected_type="timeout",
+            observed_type="timeout",
+            timestamp=0.0,
         ),
     ]
     report = coverage_report(corrections)

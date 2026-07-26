@@ -44,6 +44,7 @@ def traj(*steps: Step) -> Trajectory:
 
 # ── Anthropic mock helpers ────────────────────────────────────────────────────
 
+
 def _anthropic_response(text: str) -> MagicMock:
     msg = MagicMock()
     msg.content = [MagicMock(text=text)]
@@ -63,6 +64,7 @@ def _anthropic_async_client(response_text: str) -> MagicMock:
 
 
 # ── OpenAI-compatible mock helpers ───────────────────────────────────────────
+
 
 def _openai_response(text: str) -> MagicMock:
     choice = MagicMock()
@@ -85,6 +87,7 @@ def _openai_async_client(response_text: str) -> MagicMock:
 
 
 # ── Anthropic backend ─────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("ft", list(FailureType))
 def test_anthropic_classifies_each_failure_type(ft):
@@ -153,6 +156,7 @@ def test_anthropic_classify_is_case_insensitive():
 
 # ── Anthropic backend: aclassify() (native async client) ──────────────────────
 
+
 @pytest.mark.parametrize("ft", list(FailureType))
 async def test_anthropic_aclassify_classifies_each_failure_type(ft):
     clf = LLMClassifier()
@@ -175,8 +179,10 @@ async def test_anthropic_aclassify_returns_unknown_on_api_exception():
 async def test_anthropic_aclassify_uses_async_client_not_sync():
     """aclassify() must build/use AsyncAnthropic, never the sync Anthropic client."""
     clf = LLMClassifier()
-    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic, \
-         patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+    with (
+        patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic,
+        patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic,
+    ):
         MockAsyncAnthropic.return_value = _anthropic_async_client("unknown")
         await clf.aclassify(traj(make_step(0)), "task")
     MockAsyncAnthropic.assert_called_once()
@@ -195,8 +201,10 @@ async def test_anthropic_aclassify_async_client_created_once_and_reused():
 async def test_sync_and_async_clients_are_independent():
     """Calling both classify() and aclassify() builds separate sync/async clients."""
     clf = LLMClassifier()
-    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic, \
-         patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+    with (
+        patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic,
+        patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic,
+    ):
         MockAnthropic.return_value = _anthropic_client("unknown")
         MockAsyncAnthropic.return_value = _anthropic_async_client("unknown")
         clf.classify(traj(make_step(0)), "task")
@@ -331,6 +339,7 @@ async def test_openai_compat_aclassify_uses_async_client_not_sync():
 # APITimeoutError, APIConnectionError, InternalServerError) — checked structurally
 # so this works without importing the real anthropic/openai exception classes.
 
+
 class RateLimitError(Exception):
     """Mimics the real anthropic/openai RateLimitError by class name only —
     _is_retryable() checks type(exc).__name__, not isinstance."""
@@ -371,8 +380,10 @@ def test_classify_gives_up_after_max_retries_exhausted(monkeypatch):
 
 def test_classify_retries_on_retryable_status_code():
     clf = LLMClassifier()
-    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic, \
-         patch("time.sleep") as mock_sleep:
+    with (
+        patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic,
+        patch("time.sleep") as mock_sleep,
+    ):
         client = MagicMock()
         client.messages.create.side_effect = [
             _FakeStatusError("service unavailable", status_code=503),
@@ -409,8 +420,10 @@ def test_classify_max_retries_zero_disables_retry():
 
 async def test_aclassify_retries_once_on_rate_limit_then_succeeds(monkeypatch):
     import anyio as _anyio
+
     async def _no_sleep(*_a, **_kw):
         return None
+
     monkeypatch.setattr(_anyio, "sleep", _no_sleep)
 
     clf = LLMClassifier()
@@ -427,8 +440,10 @@ async def test_aclassify_retries_once_on_rate_limit_then_succeeds(monkeypatch):
 
 async def test_aclassify_gives_up_after_max_retries_exhausted(monkeypatch):
     import anyio as _anyio
+
     async def _no_sleep(*_a, **_kw):
         return None
+
     monkeypatch.setattr(_anyio, "sleep", _no_sleep)
 
     clf = LLMClassifier(max_retries=1)
@@ -453,6 +468,7 @@ async def test_aclassify_does_not_retry_non_retryable_error():
 
 
 # ── Shared: prompt construction ───────────────────────────────────────────────
+
 
 def test_prompt_includes_task_and_step_info():
     clf = LLMClassifier()
@@ -480,6 +496,7 @@ def test_max_trajectory_steps_limits_prompt():
 
 
 # ── BYOK env vars ─────────────────────────────────────────────────────────────
+
 
 def test_env_var_base_url_used_when_no_arg(monkeypatch):
     monkeypatch.setenv("TRIAGE_LLM_BASE_URL", "http://localhost:11434/v1")

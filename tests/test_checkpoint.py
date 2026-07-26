@@ -17,6 +17,7 @@ def make_step(index: int = 0) -> Step:
 
 # ── make_checkpoint helper ────────────────────────────────────────────────────
 
+
 def test_make_checkpoint_generates_id():
     cp = make_checkpoint(state={}, trajectory_steps=[])
     assert isinstance(cp.id, str)
@@ -37,6 +38,7 @@ def test_make_checkpoint_copies_steps():
 
 # ── save / load round-trip ────────────────────────────────────────────────────
 
+
 async def test_save_and_load():
     store = InMemoryCheckpointStore()
     cp = make_checkpoint(state={"key": "val"}, trajectory_steps=[make_step()])
@@ -54,6 +56,7 @@ async def test_load_missing_raises_key_error():
 
 
 # ── latest() ─────────────────────────────────────────────────────────────────
+
 
 async def test_latest_empty_store():
     store = InMemoryCheckpointStore()
@@ -79,6 +82,7 @@ async def test_latest_returns_most_recent_by_timestamp():
 
 # ── snapshot isolation ────────────────────────────────────────────────────────
 
+
 async def test_snapshot_copy_on_save():
     store = InMemoryCheckpointStore()
     steps = [make_step(0)]
@@ -93,6 +97,7 @@ async def test_snapshot_copy_on_save():
 
 
 # ── concurrency ───────────────────────────────────────────────────────────────
+
 
 async def test_concurrent_saves_all_persisted():
     """Many concurrent save() calls on distinct ids must not lose any writes."""
@@ -140,6 +145,7 @@ async def test_concurrent_save_and_latest_do_not_raise():
 
 # ── run-scoped latest() ───────────────────────────────────────────────────────
 
+
 async def test_latest_scoped_to_run_id():
     """latest(run_id=X) must return only checkpoints tagged with that run_id."""
     store = InMemoryCheckpointStore()
@@ -185,6 +191,7 @@ async def test_concurrent_runs_rollback_to_own_checkpoints():
         return kw["_triage_hint"]
 
     from triage.strategies.rollback import rollback_to_checkpoint
+
     policy = FailurePolicy(UNKNOWN=rollback_to_checkpoint())
 
     async def run_one(task: str) -> None:

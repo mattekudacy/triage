@@ -41,11 +41,13 @@ class RulesRiskScorer:
         extra_med = "|".join(re.escape(p) for p in (medium_risk_patterns or []))
         self._high_re = (
             re.compile(f"{_HIGH_RISK_RE.pattern}|{extra_high}", re.IGNORECASE)
-            if extra_high else _HIGH_RISK_RE
+            if extra_high
+            else _HIGH_RISK_RE
         )
         self._med_re = (
             re.compile(f"{_MEDIUM_RISK_RE.pattern}|{extra_med}", re.IGNORECASE)
-            if extra_med else _MEDIUM_RISK_RE
+            if extra_med
+            else _MEDIUM_RISK_RE
         )
 
     def __call__(self, step: Step, trajectory: Trajectory) -> RiskScore:

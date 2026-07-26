@@ -18,6 +18,7 @@ from triage.taxonomy import FailureContext, FailureType, Step
 
 # ── CircuitBreaker unit tests ─────────────────────────────────────────────────
 
+
 def test_initial_state_is_closed():
     b = CircuitBreaker()
     assert b.state(_now=0.0) == BreakerState.CLOSED
@@ -156,6 +157,7 @@ def test_success_in_closed_state_is_noop():
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
+
 def test_invalid_failure_threshold_raises():
     with pytest.raises(ValueError, match="failure_threshold"):
         CircuitBreaker(failure_threshold=0)
@@ -172,6 +174,7 @@ def test_invalid_cooldown_seconds_raises():
 
 
 # ── Thread safety ─────────────────────────────────────────────────────────────
+
 
 def test_concurrent_record_failure_is_threadsafe():
     b = CircuitBreaker(failure_threshold=1000, window_seconds=60, cooldown_seconds=5)
@@ -192,9 +195,11 @@ def test_concurrent_record_failure_is_threadsafe():
 
 # ── circuit_breaker() strategy ────────────────────────────────────────────────
 
+
 def _retry_strategy():
     async def _s(ctx):
         return RecoveryAction.RETRY()
+
     return _s
 
 
@@ -308,6 +313,7 @@ async def test_record_success_closes_breaker_after_probe():
 
 # ── Agent integration ─────────────────────────────────────────────────────────
 
+
 async def test_agent_escalates_when_breaker_open():
     """When the breaker is already OPEN, the agent escalates on first failure."""
     b = CircuitBreaker(failure_threshold=1, window_seconds=60, cooldown_seconds=300)
@@ -322,6 +328,7 @@ async def test_agent_escalates_when_breaker_open():
         raise RuntimeError("service down")
 
     from triage.strategies.retry import backoff_and_retry
+
     policy = FailurePolicy(
         EXTERNAL_FAULT=circuit_breaker(b, backoff_and_retry(max_attempts=3)),
     )
@@ -340,7 +347,6 @@ async def test_agent_trips_breaker_after_threshold():
     async def always_fail(task: str, *, record_step, **kwargs) -> str:
         record_step(Step(index=0, action="step", error="HTTP 503"))
         raise RuntimeError("down")
-
 
     async def _single_retry(ctx):
         return RecoveryAction.RETRY()

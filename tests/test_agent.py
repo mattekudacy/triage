@@ -44,51 +44,60 @@ def make_step(
 # Strategy helpers (must be async per StrategyFn type)
 # ---------------------------------------------------------------------------
 
+
 def retry_strategy():
     async def _fn(ctx):
         return RecoveryAction.RETRY()
+
     return _fn
 
 
 def retry_with_hint(hint: str):
     async def _fn(ctx):
         return RecoveryAction.RETRY(hint=hint)
+
     return _fn
 
 
 def replan_strategy(hint: str = "new plan"):
     async def _fn(ctx):
         return RecoveryAction.REPLAN(hint=hint)
+
     return _fn
 
 
 def rollback_strategy():
     async def _fn(ctx):
         return RecoveryAction.ROLLBACK(checkpoint_id=None)
+
     return _fn
 
 
 def resume_strategy(subgoal: str):
     async def _fn(ctx):
         return RecoveryAction.RESUME(from_subgoal=subgoal)
+
     return _fn
 
 
 def escalate_strategy(message: str = "give up"):
     async def _fn(ctx):
         return RecoveryAction.ESCALATE(message=message)
+
     return _fn
 
 
 def abort_strategy(reason: str = "no way"):
     async def _fn(ctx):
         return RecoveryAction.ABORT(reason=reason)
+
     return _fn
 
 
 # ---------------------------------------------------------------------------
 # Basic run
 # ---------------------------------------------------------------------------
+
 
 async def test_run_returns_result_on_success():
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
@@ -112,6 +121,7 @@ async def test_call_delegates_to_run():
 # ---------------------------------------------------------------------------
 # auto_checkpoint drain
 # ---------------------------------------------------------------------------
+
 
 async def test_auto_checkpoint_saves_after_successful_run():
     store = InMemoryCheckpointStore()
@@ -194,8 +204,8 @@ async def test_auto_checkpoint_carries_state_forward_when_no_update():
 
     async def agent_fn(task: str, *, record_step: Any, update_state: Any, **kw: Any) -> str:
         update_state({"phase": 1})
-        record_step(Step(index=0, action="phase-1"))   # state set BEFORE record_step
-        record_step(Step(index=1, action="phase-2"))   # no update_state after — carry forward
+        record_step(Step(index=0, action="phase-1"))  # state set BEFORE record_step
+        record_step(Step(index=1, action="phase-2"))  # no update_state after — carry forward
         return "ok"
 
     ag = Agent(agent_fn, FailurePolicy(), checkpoint_store=store, auto_checkpoint=True)
@@ -230,6 +240,7 @@ async def test_auto_checkpoint_state_snapshot_isolated_from_later_mutation():
 # ---------------------------------------------------------------------------
 # Recovery — RETRY
 # ---------------------------------------------------------------------------
+
 
 async def test_retry_recovers_on_first_failure():
     call_count = [0]
@@ -266,6 +277,7 @@ async def test_hint_injected_on_retry():
 # Recovery — REPLAN
 # ---------------------------------------------------------------------------
 
+
 async def test_replan_injects_triage_hint():
     received: list[str | None] = []
 
@@ -284,6 +296,7 @@ async def test_replan_injects_triage_hint():
 # ---------------------------------------------------------------------------
 # Recovery — ROLLBACK
 # ---------------------------------------------------------------------------
+
 
 async def test_rollback_loads_latest_checkpoint():
     store = InMemoryCheckpointStore()
@@ -316,6 +329,7 @@ async def test_rollback_escalates_when_no_checkpoint():
 # Recovery — RESUME
 # ---------------------------------------------------------------------------
 
+
 async def test_resume_injects_subgoal():
     received: list[str | None] = []
 
@@ -334,6 +348,7 @@ async def test_resume_injects_subgoal():
 # ---------------------------------------------------------------------------
 # Recovery — ESCALATE / ABORT
 # ---------------------------------------------------------------------------
+
 
 async def test_escalate_raises_triage_escalation_error():
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
@@ -358,6 +373,7 @@ async def test_abort_raises_triage_abort_error():
 # ---------------------------------------------------------------------------
 # Max attempts / escalation
 # ---------------------------------------------------------------------------
+
 
 async def test_escalates_after_max_recovery_attempts():
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
@@ -384,6 +400,7 @@ async def test_escalation_error_carries_context():
 # Zero-trajectory fallback
 # ---------------------------------------------------------------------------
 
+
 async def test_zero_trajectory_fallback_synthesizes_step():
     """Agent raises before any record_step call — trajectory must not be empty."""
     captured_trajectories: list = []
@@ -409,6 +426,7 @@ async def test_zero_trajectory_fallback_synthesizes_step():
 
 async def test_zero_trajectory_external_fault_detected():
     """Sentinel step's error text feeds RulesClassifier — EXTERNAL_FAULT detected."""
+
     async def agent_fn(task: str, *, record_step, **kw) -> str:
         raise RuntimeError("HTTP 503 Service Unavailable")
 
@@ -429,6 +447,7 @@ async def test_zero_trajectory_external_fault_detected():
 # ---------------------------------------------------------------------------
 # Trajectory reset between attempts
 # ---------------------------------------------------------------------------
+
 
 async def test_trajectory_resets_each_attempt():
     call_count = [0]
@@ -451,6 +470,7 @@ async def test_trajectory_resets_each_attempt():
 # ---------------------------------------------------------------------------
 # Fix 1: async classify — classifier runs in a thread, not blocking the loop
 # ---------------------------------------------------------------------------
+
 
 async def test_classify_called_in_thread():
     """classify() must be called via anyio.to_thread, not directly."""
@@ -481,6 +501,7 @@ async def test_classify_called_in_thread():
 
 async def test_classify_thread_failure_falls_back_to_unknown():
     """If classify() raises inside the thread, triage still handles the failure."""
+
     class BrokenClassifier:
         def classify(self, trajectory, task):
             raise RuntimeError("classifier exploded")
@@ -579,6 +600,7 @@ async def test_run_resets_classifier_call_count_when_present():
 
 async def test_run_does_not_require_reset_call_count():
     """Classifiers without reset_call_count() (e.g. RulesClassifier) are unaffected."""
+
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
         return "ok"
 
@@ -591,6 +613,7 @@ async def test_run_does_not_require_reset_call_count():
 # ---------------------------------------------------------------------------
 # Fix 2: agent state in checkpoints — update_state / _triage_state
 # ---------------------------------------------------------------------------
+
 
 async def test_update_state_persisted_in_checkpoint():
     store = InMemoryCheckpointStore()
@@ -715,6 +738,7 @@ async def test_update_state_resets_each_attempt():
 # attempt_history on FailureContext
 # ---------------------------------------------------------------------------
 
+
 async def test_attempt_history_empty_on_first_failure():
     received_history: list = []
 
@@ -787,6 +811,7 @@ async def test_attempt_history_records_action_kind():
 # max_total_attempts — cross-type global cap
 # ---------------------------------------------------------------------------
 
+
 async def test_max_total_attempts_escalates_before_loop_cap():
     """max_total_attempts=1 should escalate on the second failure, regardless of type."""
     call_count = [0]
@@ -822,6 +847,7 @@ async def test_max_total_attempts_none_disables_global_cap():
 # ---------------------------------------------------------------------------
 # Agent.clone()
 # ---------------------------------------------------------------------------
+
 
 async def test_clone_shares_policy_and_classifier():
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
@@ -865,6 +891,7 @@ async def test_clone_inherits_max_total_attempts():
 # ---------------------------------------------------------------------------
 # _triage_context injection
 # ---------------------------------------------------------------------------
+
 
 async def test_triage_context_injected_on_retry():
     received: list[Any] = []
@@ -930,6 +957,7 @@ async def test_triage_context_state_on_rollback():
 # ---------------------------------------------------------------------------
 # get_recorder() / get_state_updater() — contextvars injection
 # ---------------------------------------------------------------------------
+
 
 async def test_get_recorder_works_inside_run():
     recorded: list[Step] = []
@@ -1024,6 +1052,7 @@ async def test_cancelled_error_propagates_without_recovery():
 
 # ── Lifecycle hooks ───────────────────────────────────────────────────────────
 
+
 async def test_on_step_called_for_each_recorded_step():
     received: list[Step] = []
 
@@ -1094,9 +1123,7 @@ async def test_hooks_not_called_on_clean_success():
         return "ok"
 
     policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
-    ag = Agent(agent_fn, policy,
-               on_failure=failure_calls.append,
-               on_recovery=recovery_calls.append)
+    ag = Agent(agent_fn, policy, on_failure=failure_calls.append, on_recovery=recovery_calls.append)
     await ag.run("task")
 
     assert failure_calls == []
@@ -1134,6 +1161,7 @@ async def test_clone_copies_hooks():
 
 # ── Step.idempotent is informational, not enforced by agent.py ────────────────
 
+
 async def test_retry_does_not_check_idempotency_automatically():
     """Agents that mark steps non-idempotent still get retried.
     The idempotent flag is informational — strategies must check it explicitly.
@@ -1142,8 +1170,9 @@ async def test_retry_does_not_check_idempotency_automatically():
 
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
         calls.append(1)
-        record_step(Step(index=0, action="charge_card", idempotent=False,
-                         error="tool foo not found"))
+        record_step(
+            Step(index=0, action="charge_card", idempotent=False, error="tool foo not found")
+        )
         if len(calls) == 1:
             raise RuntimeError("tool foo not found")
         return "ok"
@@ -1160,10 +1189,12 @@ async def test_retry_does_not_check_idempotency_automatically():
 
 # ── strict_idempotency ────────────────────────────────────────────────────────
 
+
 async def test_strict_idempotency_escalates_on_non_idempotent_step():
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
-        record_step(Step(index=0, action="charge_card", idempotent=False,
-                         error="tool foo not found"))
+        record_step(
+            Step(index=0, action="charge_card", idempotent=False, error="tool foo not found")
+        )
         raise RuntimeError("tool foo not found")
 
     async def retry_strategy(ctx: Any) -> Any:
@@ -1177,8 +1208,9 @@ async def test_strict_idempotency_escalates_on_non_idempotent_step():
 
 async def test_strict_idempotency_message_lists_non_idempotent_steps():
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
-        record_step(Step(index=0, action="send_email", idempotent=False,
-                         error="tool foo not found"))
+        record_step(
+            Step(index=0, action="send_email", idempotent=False, error="tool foo not found")
+        )
         raise RuntimeError("tool foo not found")
 
     async def retry_strategy(ctx: Any) -> Any:
@@ -1195,8 +1227,9 @@ async def test_strict_idempotency_false_allows_retry():
 
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
         calls.append(1)
-        record_step(Step(index=0, action="charge_card", idempotent=False,
-                         error="tool foo not found"))
+        record_step(
+            Step(index=0, action="charge_card", idempotent=False, error="tool foo not found")
+        )
         if len(calls) == 1:
             raise RuntimeError("tool foo not found")
         return "ok"
@@ -1213,6 +1246,7 @@ async def test_strict_idempotency_false_allows_retry():
 
 async def test_strict_idempotency_only_checks_on_retry():
     """Non-retry actions (replan) are not blocked by strict_idempotency."""
+
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(Step(index=0, action="charge_card", idempotent=False))
         raise RuntimeError("plan failed")
@@ -1247,8 +1281,10 @@ async def test_clone_copies_strict_idempotency():
 
 # ── max_recovery_seconds ──────────────────────────────────────────────────────
 
+
 async def test_max_recovery_seconds_escalates_when_exceeded(monkeypatch: Any):
     import time as _time
+
     calls: list[float] = [0.0]
 
     def fake_monotonic() -> float:
@@ -1307,6 +1343,7 @@ async def test_clone_copies_max_recovery_seconds():
 
 # ── structured logs ───────────────────────────────────────────────────────────
 
+
 async def test_structured_log_failure_classified(caplog: Any):
     import logging
 
@@ -1352,6 +1389,7 @@ async def test_structured_log_action_dispatched(caplog: Any):
 
 
 # ── multi-agent context propagation ──────────────────────────────────────────
+
 
 async def test_child_triage_escalation_propagates_to_parent():
     """Child TriageEscalationError propagates unchanged through the parent agent.
@@ -1422,6 +1460,7 @@ async def test_child_triage_context_reused_when_chained_exception():
 
 # ── report_misclassification ──────────────────────────────────────────────────
 
+
 async def test_report_misclassification_raises_when_no_context():
     async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
         return "ok"
@@ -1433,6 +1472,7 @@ async def test_report_misclassification_raises_when_no_context():
 
 
 # ── step risk scoring ─────────────────────────────────────────────────────────
+
 
 async def test_risk_scorer_aborts_on_high_score():
     from triage.scorer.base import RiskScore
@@ -1483,6 +1523,7 @@ async def test_risk_scorer_receives_trajectory():
 
     def capture_scorer(step, trajectory):
         from triage.scorer.base import RiskScore
+
         received.append(len(trajectory.steps))
         return RiskScore(score=0.0)
 
@@ -1512,6 +1553,7 @@ def test_clone_copies_risk_scorer_and_threshold():
 
 async def test_risk_scorer_exception_is_sandboxed():
     """A buggy scorer that raises must not crash the run — skip score check and continue."""
+
     def buggy_scorer(step, trajectory):
         raise RuntimeError("scorer bug")
 
@@ -1528,6 +1570,7 @@ async def test_risk_scorer_exception_is_sandboxed():
 # ---------------------------------------------------------------------------
 # Concurrent run() calls on a single Agent instance
 # ---------------------------------------------------------------------------
+
 
 async def test_concurrent_runs_do_not_share_trajectory():
     """Two run() calls in flight at once on the same Agent must not see each
@@ -1623,6 +1666,7 @@ async def test_concurrent_runs_recover_independently():
 # on_escalate — human-in-the-loop hook
 # ---------------------------------------------------------------------------
 
+
 async def test_on_escalate_receives_failure_context():
     """on_escalate is called with the FailureContext when policy returns ESCALATE."""
     received: list[Any] = []
@@ -1647,6 +1691,7 @@ async def test_on_escalate_receives_failure_context():
 
 async def test_on_escalate_returning_none_raises():
     """on_escalate returning None means 'proceed with escalation'."""
+
     async def noop_escalate(ctx: Any) -> Any:
         return None
 
@@ -1724,6 +1769,7 @@ async def test_on_escalate_not_called_for_abort():
 
 async def test_on_escalate_exception_propagates():
     """Exceptions from on_escalate propagate directly (not swallowed like hooks)."""
+
     async def bad_escalate(ctx: Any) -> Any:
         raise ValueError("escalation handler failed")
 
@@ -1762,6 +1808,7 @@ async def test_on_escalate_copied_by_clone():
 # ---------------------------------------------------------------------------
 # circuit_breakers auto-signaling
 # ---------------------------------------------------------------------------
+
 
 async def test_circuit_breakers_record_success_on_clean_run():
     """Agent.run() calls record_success() on all registered breakers after a clean return."""
@@ -1835,8 +1882,10 @@ async def test_circuit_breakers_copied_by_clone():
 
 # ── sync agent support ────────────────────────────────────────────────────────
 
+
 async def test_sync_agent_basic():
     """A plain def callable should run via anyio.to_thread.run_sync and return correctly."""
+
     def sync_agent(task: str, *, record_step: Any, **_kw: Any) -> str:
         record_step(make_step(0))
         return f"sync:{task}"
@@ -1925,6 +1974,7 @@ async def test_async_callable_instance_detected_as_async():
 
 async def test_sync_callable_instance_runs_in_thread():
     """A callable class with plain def __call__ must be run via run_sync."""
+
     class SyncCallable:
         def __call__(self, task: str, *, record_step: Any, **_kw: Any) -> str:
             record_step(make_step(0))

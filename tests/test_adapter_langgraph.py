@@ -32,8 +32,10 @@ def _make_graph(events: list[dict]) -> MagicMock:
 # Basic wrapping
 # ---------------------------------------------------------------------------
 
+
 async def test_wrap_langgraph_returns_agent():
     from triage.agent import Agent
+
     graph = _make_graph([])
     ag = wrap_langgraph(graph, FailurePolicy())
     assert isinstance(ag, Agent)
@@ -80,6 +82,7 @@ async def test_tool_start_recorded_as_step():
     async def capturing_fn(task, *, record_step, **kw):
         def capturing_record(step):
             recorded_steps.append(step)
+
         return await original_fn(task, record_step=capturing_record, **kw)
 
     ag._fn = capturing_fn
@@ -112,6 +115,7 @@ async def test_tool_end_recorded_as_step():
     async def capturing_fn(task, *, record_step, **kw):
         def capturing_record(step):
             recorded_steps.append(step)
+
         return await original_fn(task, record_step=capturing_record, **kw)
 
     ag._fn = capturing_fn
@@ -146,6 +150,7 @@ async def test_llm_turn_recorded_as_step():
     async def capturing_fn(task, *, record_step, **kw):
         def capturing_record(step):
             recorded_steps.append(step)
+
         return await original_fn(task, record_step=capturing_record, **kw)
 
     ag._fn = capturing_fn
@@ -178,6 +183,7 @@ async def test_tool_end_with_error_sets_error_field():
     async def capturing_fn(task, *, record_step, **kw):
         def capturing_record(step):
             recorded_steps.append(step)
+
         return await original_fn(task, record_step=capturing_record, **kw)
 
     ag._fn = capturing_fn

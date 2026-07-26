@@ -40,6 +40,7 @@ def make_step(
 
 # ── InMemorySuspensionStore ───────────────────────────────────────────────────
 
+
 async def test_store_save_and_load():
     store = InMemorySuspensionStore()
     run = SuspendedRun(
@@ -89,6 +90,7 @@ def test_suspension_store_protocol():
 
 # ── RecoveryAction.SUSPEND ────────────────────────────────────────────────────
 
+
 def test_suspend_action_kind():
     a = RecoveryAction.SUSPEND()
     assert a.kind == "suspend"
@@ -111,8 +113,10 @@ def test_suspend_action_no_message_is_excluded():
 
 # ── TriageSuspendedError ──────────────────────────────────────────────────────
 
+
 async def test_suspend_raises_triage_suspended_error():
     """Policy returning SUSPEND raises TriageSuspendedError with a token."""
+
     async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(make_step(0, error="needs human"))
         raise RuntimeError("needs human")
@@ -135,6 +139,7 @@ async def test_suspend_raises_triage_suspended_error():
 
 async def test_suspend_stores_run_in_store():
     """The SuspendedRun is persisted before TriageSuspendedError is raised."""
+
     async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(make_step(0, error="down"))
         raise RuntimeError("down")
@@ -159,6 +164,7 @@ async def test_suspend_stores_run_in_store():
 
 async def test_suspend_carries_failure_context():
     """SuspendedRun.context has the correct failure type."""
+
     async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(make_step(0, error="HTTP 503"))
         raise RuntimeError("HTTP 503")
@@ -178,6 +184,7 @@ async def test_suspend_carries_failure_context():
 
 async def test_suspend_metadata_stored():
     """Metadata from SUSPEND() is preserved in the SuspendedRun."""
+
     async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(make_step(0, error="boom"))
         raise RuntimeError("boom")
@@ -196,6 +203,7 @@ async def test_suspend_metadata_stored():
 
 
 # ── Agent.resume ──────────────────────────────────────────────────────────────
+
 
 async def test_resume_with_retry_completes_run():
     """Human approves RETRY → agent continues and succeeds."""
@@ -226,6 +234,7 @@ async def test_resume_with_retry_completes_run():
 
 async def test_resume_with_abort_raises_triage_abort():
     """Human chooses ABORT → TriageAbortError is raised."""
+
     async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(make_step(0, error="boom"))
         raise RuntimeError("boom")
@@ -249,6 +258,7 @@ async def test_resume_with_abort_raises_triage_abort():
 
 async def test_resume_deletes_token_after_load():
     """Token is single-use — second resume raises KeyError."""
+
     async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(make_step(0, error="boom"))
         raise RuntimeError("boom")
@@ -319,6 +329,7 @@ async def test_resume_with_replan_hint():
 
 async def test_suspend_does_not_fire_for_normal_escalate():
     """ESCALATE (not SUSPEND) raises TriageEscalationError, not TriageSuspendedError."""
+
     async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(make_step(0, error="boom"))
         raise RuntimeError("boom")
@@ -333,6 +344,7 @@ async def test_suspend_does_not_fire_for_normal_escalate():
 
 async def test_suspension_store_copied_by_clone():
     """clone() uses the same suspension_store so tokens work across clones."""
+
     async def always_fails(task: str, *, record_step: Any, **kw: Any) -> str:
         record_step(make_step(0, error="boom"))
         raise RuntimeError("boom")
@@ -357,6 +369,7 @@ async def test_suspension_store_copied_by_clone():
 
 
 # ── serialize_run / deserialize_run round-trip ────────────────────────────────
+
 
 def _make_suspended_run(*, kwargs: dict[str, Any] | None = None) -> SuspendedRun:
     # Sets every non-default field so the round-trip test exercises the full surface.

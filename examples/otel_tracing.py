@@ -39,6 +39,7 @@ try:
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
     _OTEL_AVAILABLE = True
 except ImportError:
     _OTEL_AVAILABLE = False
@@ -62,14 +63,16 @@ async def flaky_agent(
     _attempt[0] += 1
     attempt = _attempt[0]
 
-    record_step(Step(
-        index=0,
-        action="fetch",
-        tool_called="fetch_data",
-        tool_input={"q": task},
-        error="HTTP 503" if attempt == 1 else None,
-        tool_output="data" if attempt > 1 else None,
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="fetch",
+            tool_called="fetch_data",
+            tool_input={"q": task},
+            error="HTTP 503" if attempt == 1 else None,
+            tool_output="data" if attempt > 1 else None,
+        )
+    )
 
     if attempt == 1:
         raise RuntimeError("HTTP 503 Service Unavailable")
@@ -78,6 +81,7 @@ async def flaky_agent(
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────
+
 
 async def main() -> None:
     if not _OTEL_AVAILABLE:
@@ -134,10 +138,16 @@ def _print_spans(exporter: InMemorySpanExporter) -> None:
             f"  {span.name:<22}"
             f"  status={status:<6}"
             f"  run_id={run_id[:8]}…"
-            + (f"  failure_type={attrs['triage.failure_type']}"
-               if "triage.failure_type" in attrs else "")
-            + (f"  action_kind={attrs['triage.action_kind']}"
-               if "triage.action_kind" in attrs else "")
+            + (
+                f"  failure_type={attrs['triage.failure_type']}"
+                if "triage.failure_type" in attrs
+                else ""
+            )
+            + (
+                f"  action_kind={attrs['triage.action_kind']}"
+                if "triage.action_kind" in attrs
+                else ""
+            )
         )
     print()
 

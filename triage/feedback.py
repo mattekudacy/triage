@@ -80,13 +80,18 @@ def record_correction(
         observed_type=ctx.failure_type.value,
     )
     with open(store_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps({
-            "task": correction.task,
-            "steps_summary": correction.steps_summary,
-            "expected_type": correction.expected_type,
-            "observed_type": correction.observed_type,
-            "timestamp": correction.timestamp,
-        }) + "\n")
+        f.write(
+            json.dumps(
+                {
+                    "task": correction.task,
+                    "steps_summary": correction.steps_summary,
+                    "expected_type": correction.expected_type,
+                    "observed_type": correction.observed_type,
+                    "timestamp": correction.timestamp,
+                }
+            )
+            + "\n"
+        )
     if max_lines is not None:
         _rotate_if_needed(store_path, max_lines)
 
@@ -113,13 +118,15 @@ def load_corrections(store_path: str = "corrections.jsonl") -> list[Correction]:
                 if not line:
                     continue
                 data = json.loads(line)
-                corrections.append(Correction(
-                    task=data["task"],
-                    steps_summary=data["steps_summary"],
-                    expected_type=data["expected_type"],
-                    observed_type=data["observed_type"],
-                    timestamp=data.get("timestamp", 0.0),
-                ))
+                corrections.append(
+                    Correction(
+                        task=data["task"],
+                        steps_summary=data["steps_summary"],
+                        expected_type=data["expected_type"],
+                        observed_type=data["observed_type"],
+                        timestamp=data.get("timestamp", 0.0),
+                    )
+                )
     except FileNotFoundError:
         pass
     return corrections

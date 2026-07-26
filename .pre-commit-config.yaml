@@ -1,25 +1,18 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix]
+        name: ruff
+        entry: ruff check --fix
+        language: system
+        types: [python]
       - id: ruff-format
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
-    hooks:
+        name: ruff-format
+        entry: ruff format
+        language: system
+        types: [python]
       - id: mypy
-        args: [--strict]
-        files: ^triage/
-        additional_dependencies:
-          - anyio
-          - pydantic
-          - anthropic
-          - openai
-          - aiosqlite
-          - redis
-          - langgraph
-          - langchain
-          - langchain-core
-          - opentelemetry-sdk
-          - opentelemetry-api
+        name: mypy
+        entry: mypy triage/ --strict
+        language: system
+        pass_filenames: false

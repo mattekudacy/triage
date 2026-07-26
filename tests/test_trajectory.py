@@ -16,6 +16,7 @@ def make_step(index: int = 0) -> Step:
 
 # ── append / steps ────────────────────────────────────────────────────────────
 
+
 def test_append_and_steps():
     t = Trajectory()
     t.append(make_step(0))
@@ -47,6 +48,7 @@ def test_getitem():
 
 
 # ── non-monotonic index warning ────────────────────────────────────────────────
+
 
 def test_append_monotonic_index_does_not_warn(caplog):
     t = Trajectory()
@@ -100,6 +102,7 @@ def test_append_skipped_index_does_not_warn(caplog):
 
 # ── replay_from ────────────────────────────────────────────────────────────────
 
+
 def test_replay_from_returns_suffix():
     t = Trajectory()
     t.append(make_step(0))
@@ -132,6 +135,7 @@ def test_replay_from_empty_trajectory_does_not_raise():
 
 # ── last_n_steps ───────────────────────────────────────────────────────────────
 
+
 def test_last_n_steps_returns_last_n():
     t = Trajectory()
     for i in range(5):
@@ -159,6 +163,7 @@ def test_last_n_steps_n_greater_than_length_returns_all():
 
 
 # ── from_steps ─────────────────────────────────────────────────────────────────
+
 
 def test_from_steps_constructs_with_given_steps():
     steps = [make_step(0), make_step(1)]

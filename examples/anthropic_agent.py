@@ -42,6 +42,7 @@ MODEL = "claude-haiku-4-5-20251001"
 
 # ── Tool ─────────────────────────────────────────────────────────────────────
 
+
 def calculator(expression: str) -> str:
     try:
         result = eval(expression, {"__builtins__": {}})  # noqa: S307
@@ -56,9 +57,7 @@ TOOLS = [
         "description": "Evaluate an arithmetic expression.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "expression": {"type": "string", "description": "e.g. '12 * 9'"}
-            },
+            "properties": {"expression": {"type": "string", "description": "e.g. '12 * 9'"}},
             "required": ["expression"],
         },
     }
@@ -115,19 +114,23 @@ async def anthropic_agent(
                 expr = "1 + 1"  # always the same — triggers LOOP_DETECTED
 
             result = calculator(expr)
-            record_step(Step(
-                index=step_index,
-                action=f"tool_call:{tool_use.name}",
-                tool_called=tool_use.name,
-                tool_input={"expression": expr},
-                tool_output=result,
-            ))
+            record_step(
+                Step(
+                    index=step_index,
+                    action=f"tool_call:{tool_use.name}",
+                    tool_called=tool_use.name,
+                    tool_input={"expression": expr},
+                    tool_output=result,
+                )
+            )
             step_index += 1
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tool_use.id,
-                "content": result,
-            })
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use.id,
+                    "content": result,
+                }
+            )
 
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})

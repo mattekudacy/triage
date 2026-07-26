@@ -94,20 +94,26 @@ __version__ = "0.21.0"
 def __getattr__(name: str) -> object:
     if name == "LLMClassifier":
         from triage.classifier.llm import LLMClassifier
+
         return LLMClassifier
     if name == "HybridClassifier":
         from triage.classifier.hybrid import HybridClassifier
+
         return HybridClassifier
     if name == "SQLiteCheckpointStore":
         from triage.checkpoint.sqlite import SQLiteCheckpointStore
+
         return SQLiteCheckpointStore
     if name == "RedisCheckpointStore":
         from triage.checkpoint.redis import RedisCheckpointStore
+
         return RedisCheckpointStore
     if name == "BreakerStore":
         from triage.breaker_store import BreakerStore
+
         return BreakerStore
     if name == "RedisBreakerStore":
         from triage.breaker_store import RedisBreakerStore
+
         return RedisBreakerStore
     raise AttributeError(f"module 'triage' has no attribute {name!r}")

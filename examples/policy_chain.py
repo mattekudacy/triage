@@ -58,40 +58,45 @@ async def looping_agent(
 ) -> str:
     _a_attempt[0] += 1
     attempt = _a_attempt[0]
-    print(f"  [A] attempt {attempt}, hint={_triage_hint!r}, "
-          f"state_restored={bool(_triage_state)}")
+    print(f"  [A] attempt {attempt}, hint={_triage_hint!r}, state_restored={bool(_triage_state)}")
 
     if _triage_state:
         # Restored from checkpoint — continue from where we left off
         print(f"  [A] resuming with state: {_triage_state}")
-        record_step(Step(
-            index=2,
-            action="finalize",
-            tool_called="summarize",
-            tool_input={"data": _triage_state.get("fetched")},
-            tool_output="summary complete",
-        ))
+        record_step(
+            Step(
+                index=2,
+                action="finalize",
+                tool_called="summarize",
+                tool_input={"data": _triage_state.get("fetched")},
+                tool_output="summary complete",
+            )
+        )
         return f"Completed from checkpoint: {task}"
 
     # Phase 1: always succeeds — save state
-    record_step(Step(
-        index=0,
-        action="fetch_data",
-        tool_called="fetch",
-        tool_input={"q": task},
-        tool_output="raw data",
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="fetch_data",
+            tool_called="fetch",
+            tool_input={"q": task},
+            tool_output="raw data",
+        )
+    )
     update_state({"fetched": "raw data", "phase": "fetched"})
 
     # Phase 2: first two attempts loop (ignore hint), third attempt won't reach here
     if attempt <= 2:
         for i in range(3):
-            record_step(Step(
-                index=1 + i,
-                action="analyze",
-                tool_called="analyze",
-                tool_input={"method": "default"},  # identical inputs → loop
-            ))
+            record_step(
+                Step(
+                    index=1 + i,
+                    action="analyze",
+                    tool_called="analyze",
+                    tool_input={"method": "default"},  # identical inputs → loop
+                )
+            )
         raise RuntimeError("Analysis stuck: same tool called 3 times with identical inputs")
 
     # Should not be reached given the rollback above
@@ -116,23 +121,27 @@ async def flaky_api_agent(
 
     if _triage_hint and "alternative" in _triage_hint.lower():
         # Replan hint received — use a different data source
-        record_step(Step(
-            index=0,
-            action="fetch_from_backup",
-            tool_called="backup_api",
-            tool_input={"q": task},
-            tool_output="data from backup source",
-        ))
+        record_step(
+            Step(
+                index=0,
+                action="fetch_from_backup",
+                tool_called="backup_api",
+                tool_input={"q": task},
+                tool_output="data from backup source",
+            )
+        )
         return f"Completed via backup API: {task}"
 
     # First two attempts: primary API is down
-    record_step(Step(
-        index=0,
-        action="fetch_from_primary",
-        tool_called="primary_api",
-        tool_input={"q": task},
-        error="HTTP 503 Service Unavailable",
-    ))
+    record_step(
+        Step(
+            index=0,
+            action="fetch_from_primary",
+            tool_called="primary_api",
+            tool_input={"q": task},
+            error="HTTP 503 Service Unavailable",
+        )
+    )
     raise RuntimeError("HTTP 503 Service Unavailable")
 
 
@@ -164,7 +173,7 @@ agent_a = triage.Agent(
     looping_agent,
     policy=policy_a,
     max_recovery_attempts=4,
-    auto_checkpoint=True,             # saves after every record_step
+    auto_checkpoint=True,  # saves after every record_step
 )
 
 agent_b = triage.Agent(
@@ -175,6 +184,7 @@ agent_b = triage.Agent(
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────
+
 
 async def main() -> None:
     # Scenario A

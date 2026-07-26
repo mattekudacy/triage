@@ -49,6 +49,7 @@ def _mock_llm(return_value: FailureType) -> MagicMock:
 # Rules handles it — LLM never called
 # ---------------------------------------------------------------------------
 
+
 def test_rules_result_returned_without_calling_llm():
     llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
     clf = HybridClassifier(llm=llm)
@@ -87,10 +88,7 @@ def test_loop_detected_handled_by_rules_without_llm():
     llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
     clf = HybridClassifier(llm=llm)
 
-    steps = [
-        make_step(i, tool_called="search", tool_input={"q": "same"})
-        for i in range(3)
-    ]
+    steps = [make_step(i, tool_called="search", tool_input={"q": "same"}) for i in range(3)]
     result = clf.classify(traj(*steps), "task")
 
     assert result == FailureType.LOOP_DETECTED
@@ -100,6 +98,7 @@ def test_loop_detected_handled_by_rules_without_llm():
 # ---------------------------------------------------------------------------
 # Rules returns UNKNOWN — LLM called exactly once
 # ---------------------------------------------------------------------------
+
 
 def test_llm_called_when_rules_returns_unknown():
     llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
@@ -137,6 +136,7 @@ def test_llm_receives_same_trajectory_and_task():
 # LLM also returns UNKNOWN
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_returned_when_both_return_unknown():
     llm = _mock_llm(FailureType.UNKNOWN)
     clf = HybridClassifier(llm=llm)
@@ -151,6 +151,7 @@ def test_unknown_returned_when_both_return_unknown():
 # ---------------------------------------------------------------------------
 # LLM error propagates — agent.py catches it via to_thread wrapper
 # ---------------------------------------------------------------------------
+
 
 def test_llm_exception_propagates_from_hybrid():
     llm = MagicMock()
@@ -169,8 +170,10 @@ def test_llm_exception_propagates_from_hybrid():
 # Satisfies Classifier protocol
 # ---------------------------------------------------------------------------
 
+
 def test_hybrid_satisfies_classifier_protocol():
     from triage.classifier.base import Classifier
+
     llm = _mock_llm(FailureType.UNKNOWN)
     clf = HybridClassifier(llm=llm)
     assert isinstance(clf, Classifier)
@@ -179,6 +182,7 @@ def test_hybrid_satisfies_classifier_protocol():
 # ---------------------------------------------------------------------------
 # aclassify() — async counterpart, prefers llm.aclassify() when present
 # ---------------------------------------------------------------------------
+
 
 async def test_aclassify_rules_result_returned_without_calling_llm():
     llm = MagicMock()
@@ -221,6 +225,7 @@ async def test_aclassify_falls_back_to_sync_classify_when_llm_has_no_aclassify()
 # ---------------------------------------------------------------------------
 # max_llm_calls_per_run — cost cap
 # ---------------------------------------------------------------------------
+
 
 def test_max_llm_calls_per_run_none_by_default_allows_unlimited_calls():
     llm = _mock_llm(FailureType.PLAN_INCOMPLETE)
