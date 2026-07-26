@@ -23,16 +23,17 @@ from triage.taxonomy import FailureContext, Step
 # ── synthetic tasks ────────────────────────────────────────────────────────────
 
 TASKS = [
-    "external_fault:fetch_weather",    # recoverable with backoff
-    "external_fault:call_payments",    # recoverable with backoff
-    "wrong_tool:lookup_user",          # recoverable with hint
+    "external_fault:fetch_weather",  # recoverable with backoff
+    "external_fault:call_payments",  # recoverable with backoff
+    "wrong_tool:lookup_user",  # recoverable with hint
     "schema_mismatch:parse_response",  # recoverable with hint
-    "external_fault:send_email",       # recoverable with backoff
-    "wrong_tool:create_ticket",        # recoverable with hint
+    "external_fault:send_email",  # recoverable with backoff
+    "wrong_tool:create_ticket",  # recoverable with hint
 ]
 
 
 # ── triage-wrapped agent ───────────────────────────────────────────────────────
+
 
 async def triage_agent(task: str, *, record_step, update_state, **kwargs) -> str:
     hint = kwargs.get("_triage_hint", "")
@@ -47,8 +48,14 @@ async def triage_agent(task: str, *, record_step, update_state, **kwargs) -> str
 
     if kind == "wrong_tool":
         if not hint:
-            record_step(Step(index=0, action=task, tool_called="deprecated_tool",
-                             error="Tool 'deprecated_tool' not found in manifest"))
+            record_step(
+                Step(
+                    index=0,
+                    action=task,
+                    tool_called="deprecated_tool",
+                    error="Tool 'deprecated_tool' not found in manifest",
+                )
+            )
             raise RuntimeError("Tool 'deprecated_tool' not found in manifest")
         return f"ok:{task}"
 
@@ -85,6 +92,7 @@ async def _schema_strategy(ctx: FailureContext) -> RecoveryAction:
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
+
 
 async def main() -> None:
     random.seed(42)
@@ -128,10 +136,7 @@ async def main() -> None:
     print("Markdown table:")
     print()
     cols = "| Scenario | blind-retry | triage | recoveries | mean latency |"
-    row = (
-        f"| 6 tasks × 5 runs (mixed failure modes)"
-        f" | {bsr:.0%} | {tsr:.0%} | {rec} | {tml:.3f}s |"
-    )
+    row = f"| 6 tasks × 5 runs (mixed failure modes) | {bsr:.0%} | {tsr:.0%} | {rec} | {tml:.3f}s |"
     print(cols)
     print("|---|---|---|---|---|")
     print(row)
