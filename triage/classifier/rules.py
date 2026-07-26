@@ -37,14 +37,30 @@ _SCHEMA_RE = re.compile(
     r"validation\s+error|json.*?parse|jsondecodeerror|invalid\s+json|unexpected\s+token",
     re.IGNORECASE,
 )
-# HTTP status codes matched as whole tokens. Negative lookahead excludes common
-# quantity contexts ("expected 500 items", "processed 503 records") that would
-# otherwise false-positive on data-volume log lines.
+# HTTP status codes matched as whole tokens. The negative lookahead excludes
+# "500 items", "503 records" etc. (number followed by a quantity noun).
+# Python's re module requires fixed-width lookbehinds, so the reverse pattern
+# ("step 500", "line 503") is handled by _external_code_match() below instead.
 _EXTERNAL_CODE_RE = re.compile(
     r"\b(429|500|502|503)\b"
     r"(?!\s*(?:item|record|result|element|byte|char|step|file|line|row|doc)s?\b)",
     re.IGNORECASE,
 )
+# Words that, when immediately preceding a status code, indicate a quantity context
+# rather than an HTTP error ("step 500", "line 503", "row 429").
+_EXTERNAL_CODE_PRECEDING_RE = re.compile(
+    r"\b(?:item|record|result|element|byte|char|step|file|line|row|doc)s?\s+"
+    r"(429|500|502|503)\b",
+    re.IGNORECASE,
+)
+
+
+def _external_code_match(text: str) -> bool:
+    """Return True only if text contains a status code NOT in a quantity context."""
+    if not _EXTERNAL_CODE_RE.search(text):
+        return False
+    # Exclude matches where the code is preceded by a quantity/ordinal word.
+    return not _EXTERNAL_CODE_PRECEDING_RE.search(text)
 _TIMEOUT_RE = re.compile(
     r"\btimeout\b|\btimed[\s_]?out\b|\bdeadline[\s_]?exceeded\b|\btime[\s_]?limit\b",
     re.IGNORECASE,
@@ -221,7 +237,7 @@ class RulesClassifier:
         # 4. EXTERNAL_FAULT — HTTP status codes as whole tokens
         for step in steps:
             if step.error and (
-                _EXTERNAL_CODE_RE.search(step.error)
+                _external_code_match(step.error)
                 or self._fw_match(step.error, _EXTERNAL_FRAMEWORK)
             ):
                 return FailureType.EXTERNAL_FAULT

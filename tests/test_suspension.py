@@ -11,6 +11,8 @@ Tests for human-in-the-loop pause/resume:
 
 from __future__ import annotations
 
+import dataclasses
+import json
 from typing import Any
 
 import pytest
@@ -357,6 +359,7 @@ async def test_suspension_store_copied_by_clone():
 # ── serialize_run / deserialize_run round-trip ────────────────────────────────
 
 def _make_suspended_run(*, kwargs: dict[str, Any] | None = None) -> SuspendedRun:
+    # Sets every non-default field so the round-trip test exercises the full surface.
     step = Step(
         index=0,
         action="test step",
@@ -366,6 +369,8 @@ def _make_suspended_run(*, kwargs: dict[str, Any] | None = None) -> SuspendedRun
         llm_output="thinking...",
         error=None,
         timestamp=1.0,
+        state_hash="abc123",
+        metadata={"source": "unit-test"},
         idempotent=True,
         partial=False,
     )
@@ -375,6 +380,9 @@ def _make_suspended_run(*, kwargs: dict[str, Any] | None = None) -> SuspendedRun
         critical_step_index=0,
         original_task="do the thing",
         last_checkpoint_id="ckpt-1",
+        loop_steps=[0, 1, 2],
+        violated_constraint="no markdown",
+        expected_schema={"type": "object", "properties": {"result": {"type": "string"}}},
         metadata={"attempt_number": 1, "run_id": "run-abc"},
         attempt_history=[(FailureType.TIMEOUT, "retry")],
     )
@@ -418,6 +426,10 @@ def test_serialize_deserialize_round_trip():
     assert ctx.original_task == "do the thing"
     assert ctx.critical_step_index == 0
     assert ctx.last_checkpoint_id == "ckpt-1"
+    assert ctx.loop_steps == [0, 1, 2]
+    assert ctx.violated_constraint == "no markdown"
+    assert ctx.expected_schema == {"type": "object", "properties": {"result": {"type": "string"}}}
+    assert ctx.metadata == {"attempt_number": 1, "run_id": "run-abc"}
     assert ctx.attempt_history == [(FailureType.TIMEOUT, "retry")]
 
     # Trajectory
@@ -431,6 +443,8 @@ def test_serialize_deserialize_round_trip():
     assert s.llm_output == "thinking..."
     assert s.error is None
     assert s.timestamp == 1.0
+    assert s.state_hash == "abc123"
+    assert s.metadata == {"source": "unit-test"}
     assert s.idempotent is True
     assert s.partial is False
 
@@ -490,3 +504,35 @@ def test_serialize_all_primitive_kwargs_no_warning(caplog: Any):
         r for r in caplog.records if getattr(r, "triage_event", None) == "serialize_kwargs_dropped"
     ]
     assert not warnings
+
+
+# ── field-drift guard tests ───────────────────────────────────────────────────
+# These tests introspect dataclasses.fields() so that adding a new field to
+# Step or FailureContext immediately fails CI if serialization isn't updated.
+# "Intentionally omitted" sets document deliberate exclusions so the guard
+# never needs to be weakened to pass.
+
+_STEP_INTENTIONALLY_OMITTED: set[str] = set()
+_CTX_INTENTIONALLY_OMITTED: set[str] = {"raw_error"}
+
+
+def test_serialize_covers_all_step_fields():
+    """Every Step field (except intentional omissions) appears in the serialized dict."""
+    run = _make_suspended_run()
+    doc = json.loads(serialize_run(run))
+    step_doc = doc["context"]["trajectory"][0]
+    for f in dataclasses.fields(Step):
+        if f.name in _STEP_INTENTIONALLY_OMITTED:
+            continue
+        assert f.name in step_doc, f"Step.{f.name} is missing from serialize_run output"
+
+
+def test_serialize_covers_all_context_fields():
+    """Every FailureContext field (except raw_error) appears in the serialized dict."""
+    run = _make_suspended_run()
+    doc = json.loads(serialize_run(run))
+    ctx_doc = doc["context"]
+    for f in dataclasses.fields(FailureContext):
+        if f.name in _CTX_INTENTIONALLY_OMITTED:
+            continue
+        assert f.name in ctx_doc, f"FailureContext.{f.name} is missing from serialize_run output"

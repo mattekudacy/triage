@@ -41,6 +41,7 @@ dev = [
     "pytest-cov>=5.0",
     "mypy>=1.8",
     "ruff>=0.3",
+    "pre-commit>=3.7",
     "openai>=1.0",
     "anthropic>=0.25",
     "aiosqlite>=0.19",

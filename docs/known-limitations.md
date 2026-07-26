@@ -157,6 +157,28 @@ accepts no argument and returns the global latest for callers that don't need sc
 
 ---
 
+## Type-checking escape hatches
+
+`pyproject.toml` has three `[[tool.mypy.overrides]]` blocks. Each was added for a specific reason; this section keeps them from accumulating silently.
+
+### `ignore_missing_imports = true` (all optional/third-party stubs)
+
+Applies to: `anthropic`, `openai`, `aiosqlite`, `redis`, `langgraph`, `langchain`, `langchain_core`, `opentelemetry`, `tomllib`.
+
+Standard override — none of those libraries ship typed stubs usable by mypy in strict mode. Removing it would require either vendoring stub packages or switching to a non-strict mypy config.
+
+### `warn_unused_ignores = false` on three adapter/classifier modules
+
+Applies to: `triage.policy`, `triage.classifier.llm`, `triage.adapters.langchain`.
+
+These modules contain `# type: ignore[misc]` comments that suppress errors which only fire when the optional dependency (`langchain`, `anthropic`) is installed. When the dep is absent, mypy resolves the type to `Any` and the suppress becomes unused — triggering `[unused-ignore]`. Making the suppress conditional on the install state would require a per-file override for every possible install combination; `warn_unused_ignores = false` is the practical solution.
+
+### `disable_error_code = ["assignment", "misc"]` on `triage.observability.*`
+
+The conditional-import fallback pattern (`Tracer = Any`, `_otel_trace = None`) deliberately assigns incompatible types in the `except ImportError` branch. Suppressing only `[assignment]` and `[misc]` lets all other error codes (including real bugs) remain visible. Blanket `ignore_errors = true` was rejected because it would permanently uncheck the record helpers and the `id(meter)` cache logic.
+
+---
+
 ## Comparison with framework-native error handling
 
 ### vs. LangGraph

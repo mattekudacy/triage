@@ -1,5 +1,7 @@
 """Tests for triage.classifier.rules — RulesClassifier."""
 
+import pytest
+
 from triage.classifier.rules import RulesClassifier
 from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
@@ -428,3 +430,77 @@ def test_unknown_framework_falls_back_to_generic():
     # Unrecognised framework value — generic patterns still fire
     t = traj(make_step(error="tool foo not found"))
     assert RulesClassifier(framework="crewai").classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+# ── adversarial near-miss corpus ──────────────────────────────────────────────
+# These parametrized tables guard against false positives and false negatives
+# in the regex-heavy rules. Line coverage on this module is 100%, but that
+# only tells you every branch ran — not that the guards hold against inputs
+# you didn't think of.
+
+
+@pytest.mark.parametrize("msg", [
+    "expected 500 items but got 42",
+    "processed 503 records successfully",
+    "returned 429 results",
+    "502 bytes written",
+    "step 500 completed",
+    "line 503: syntax error",
+    "error in row 429",
+])
+def test_external_fault_false_positive_corpus(msg: str) -> None:
+    """Numbers resembling HTTP status codes in non-error contexts must not fire."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") != FailureType.EXTERNAL_FAULT
+
+
+@pytest.mark.parametrize("msg", [
+    "HTTP 429: rate limited",
+    "status code 500",
+    "received 503 from upstream",
+    "server returned 502 bad gateway",
+    "upstream error 429",
+    "got 500 from remote",
+])
+def test_external_fault_true_positive_corpus(msg: str) -> None:
+    """Genuine HTTP error strings must still fire EXTERNAL_FAULT."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+@pytest.mark.parametrize("msg", [
+    "tooltip not found in DOM",
+    "found 3 tools available",
+    "initialize tool chain",
+    "toolbox is empty",
+    "retool configuration loaded",
+])
+def test_wrong_tool_false_positive_corpus(msg: str) -> None:
+    """'tool' in non-error contexts must not trigger WRONG_TOOL_CALLED."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") != FailureType.WRONG_TOOL_CALLED
+
+
+@pytest.mark.parametrize("msg", [
+    "validation error: expected string at field 'name'",
+    "jsondecodeerror at line 1",
+    "invalid json in response body",
+    "unexpected token '{' in json",
+    "failed to json parse the response",
+])
+def test_schema_mismatch_true_positive_corpus(msg: str) -> None:
+    """Schema-related error strings must fire SCHEMA_MISMATCH."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+@pytest.mark.parametrize("msg", [
+    "operation timed out after 30s",
+    "deadline exceeded for request",
+    "async time limit reached",
+    "timed out waiting for response",
+])
+def test_timeout_true_positive_corpus(msg: str) -> None:
+    """Timeout-related strings must fire TIMEOUT."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") == FailureType.TIMEOUT

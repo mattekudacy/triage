@@ -471,6 +471,202 @@ class Agent:
             max_cost_usd=self._max_cost_usd,
         )
 
+    def _build_failure_context(
+        self,
+        failure_type: FailureType,
+        steps: list[Step],
+        task: str,
+        attempt: int,
+        attempt_history: list[tuple[Any, str]],
+        exc: Exception,
+    ) -> FailureContext:
+        """Construct a FailureContext from the current run state.
+
+        Single source of truth — both _run_loop and _stream_loop were previously
+        duplicating this eight-field construction verbatim.  Centralising it means
+        a new FailureContext field only needs one update site.
+        """
+        return FailureContext(
+            failure_type=failure_type,
+            trajectory=steps,
+            critical_step_index=max(len(steps) - 1, 0),
+            original_task=task,
+            last_checkpoint_id=self._last_checkpoint_id,
+            raw_error=exc,
+            metadata={"attempt_number": attempt, "run_id": self._run_id},
+            attempt_history=list(attempt_history),
+        )
+
+    async def _handle_failure(
+        self,
+        exc: Exception,
+        task: str,
+        attempt: int,
+        attempt_history: list[tuple[Any, str]],
+        kwargs: dict[str, Any],
+        _recovery_start_ref: list[float | None],
+    ) -> tuple[dict[str, Any], int, list[tuple[Any, str]], StreamRetryEvent | None]:
+        """Classify *exc*, check all budget caps, dispatch the policy, execute the action.
+
+        Returns ``(new_kwargs, new_attempt, new_attempt_history, retry_event)``.
+        ``retry_event`` is non-None only in the stream path; ``_run_loop`` ignores it.
+        ``_recovery_start_ref`` is a one-element list used as a mutable reference so
+        the wall-clock timer persists across loop iterations without a nonlocal.
+
+        Raises ``TriageEscalationError`` / ``TriageAbortError`` / ``TriageSuspendedError``
+        on any terminal outcome — the caller's except clause re-raises these.
+        """
+        # Synthesize a sentinel step if the agent raised before calling record_step().
+        if not self._trajectory.steps:
+            self._trajectory.append(Step(
+                index=0,
+                action="<no steps recorded>",
+                error=str(exc),
+            ))
+
+        steps = self._trajectory.steps
+
+        # Reuse a child triage agent's classification rather than re-classifying.
+        _triage_exc = (TriageEscalationError, TriageAbortError)
+        child_escalation = (
+            exc.__cause__ if isinstance(exc.__cause__, _triage_exc)
+            else exc.__context__ if isinstance(exc.__context__, _triage_exc)
+            else None
+        )
+
+        if child_escalation is not None and child_escalation.context is not None:
+            failure_type = child_escalation.context.failure_type
+        else:
+            with classify_span(self._tracer, self._run_id) as _classify_span:
+                aclassify = getattr(self._classifier, "aclassify", None)
+                if aclassify is not None:
+                    failure_type = await aclassify(self._trajectory, task)
+                else:
+                    failure_type = await anyio.to_thread.run_sync(
+                        self._classifier.classify, self._trajectory, task
+                    )
+                set_span_classify_result(_classify_span, failure_type.value)
+
+        ctx = self._build_failure_context(failure_type, steps, task, attempt,
+                                          attempt_history, exc)
+        self._last_ctx = ctx
+
+        logger.info(
+            "[triage] failure classified",
+            extra={
+                "triage_event": "failure_classified",
+                "failure_type": failure_type.value,
+                "step_index": ctx.critical_step_index,
+                "attempt": attempt,
+                "task": task,
+            },
+        )
+        metrics_record_failure(self._otel_meter, failure_type=failure_type.value)
+        if self._on_failure:
+            _safe_hook(self._on_failure, ctx)
+
+        # Attempt caps
+        total_exceeded = (
+            self._max_total_attempts is not None
+            and len(attempt_history) >= self._max_total_attempts
+        )
+        if attempt >= self._max_recovery_attempts or total_exceeded:
+            cap = (
+                f"max_total_attempts ({self._max_total_attempts})"
+                if total_exceeded
+                else f"max_recovery_attempts ({self._max_recovery_attempts})"
+            )
+            raise TriageEscalationError(
+                f"{cap} exceeded after {failure_type.value}.", ctx
+            ) from exc
+
+        # Wall-clock recovery budget
+        if self._max_recovery_seconds is not None:
+            if _recovery_start_ref[0] is None:
+                _recovery_start_ref[0] = time.monotonic()
+            elif (time.monotonic() - _recovery_start_ref[0]) >= self._max_recovery_seconds:
+                raise TriageEscalationError(
+                    f"max_recovery_seconds ({self._max_recovery_seconds}s) exceeded.",
+                    ctx,
+                ) from exc
+
+        # Token and cost budgets
+        if self._max_tokens is not None:
+            used = self._meter.total_tokens
+            if used >= self._max_tokens:
+                raise TriageEscalationError(
+                    f"max_tokens ({self._max_tokens}) exceeded (used {used} tokens).",
+                    ctx,
+                ) from exc
+
+        if self._max_cost_usd is not None:
+            spent = self._meter.cost_usd
+            if spent >= self._max_cost_usd:
+                raise TriageEscalationError(
+                    f"max_cost_usd ({self._max_cost_usd:.6f}) exceeded "
+                    f"(spent ${spent:.6f}).",
+                    ctx,
+                ) from exc
+
+        with dispatch_span(self._tracer, self._run_id, attempt) as _dispatch_span:
+            action = await self._policy.dispatch(ctx)
+            if action.kind == "escalate" and self._on_escalate is not None:
+                override = await self._on_escalate(ctx)
+                if override is not None:
+                    action = override
+            set_span_dispatch_result(_dispatch_span, action.kind, failure_type.value)
+
+        metrics_record_recovery(
+            self._otel_meter,
+            failure_type=failure_type.value,
+            action_kind=action.kind,
+        )
+        if action.kind in ("escalate", "abort"):
+            metrics_record_recovery_end(self._otel_meter, failure_type=failure_type.value)
+        logger.info(
+            "[triage] action dispatched",
+            extra={
+                "triage_event": "action_dispatched",
+                "action_kind": action.kind,
+                "failure_type": failure_type.value,
+                "attempt": attempt,
+            },
+        )
+        if self._on_recovery:
+            _safe_hook(self._on_recovery, ctx, action)
+        attempt_history.append((failure_type, action.kind))
+        attempt += 1
+
+        new_kwargs = await self._execute_action(action, ctx, task, kwargs)
+
+        # Build the StreamRetryEvent now — after execute_action so _triage_hint is set.
+        retry_event = StreamRetryEvent(
+            attempt=attempt - 1,
+            failure_type=failure_type,
+            action_kind=action.kind,
+            hint=new_kwargs.get("_triage_hint"),
+        )
+        return new_kwargs, attempt, attempt_history, retry_event
+
+    def _setup_run(
+        self,
+        *,
+        run_id: str | None = None,
+        restore_usage: Usage | None = None,
+    ) -> tuple[contextvars.Token[Any], contextvars.Token[Any], contextvars.Token[Any]]:
+        """Shared preamble: assign run_id, reset meter, reset classifier budget, set contextvars."""
+        self._run_id = run_id if run_id is not None else str(uuid.uuid4())
+        self._meter.reset()
+        if restore_usage is not None:
+            self._meter.record(restore_usage)
+        reset_call_count = getattr(self._classifier, "reset_call_count", None)
+        if reset_call_count is not None:
+            reset_call_count()
+        rec_token = _record_step_var.set(self._record_step)
+        upd_token = _update_state_var.set(self._update_state)
+        usg_token = _record_usage_var.set(self._record_usage)
+        return rec_token, upd_token, usg_token
+
     async def run(self, task: str, **kwargs: Any) -> Any:
         """Run the wrapped agent, recovering from failures per the policy."""
         if self._fn_is_async_gen:
@@ -481,32 +677,13 @@ class Agent:
         attempt = 0
         attempt_history: list[tuple[Any, str]] = []
 
-        # Assign a stable run ID once per run() call so all auto-checkpoints
-        # from this run (including across recovery retries) share the same ID.
-        # Stored in _RunState so concurrent run() calls get independent IDs.
-        self._run_id = str(uuid.uuid4())
-
-        # Reset usage meter so each run() starts with a clean slate.
-        self._meter.reset()
-
-        # Reset any per-run budget the classifier tracks (e.g. HybridClassifier's
-        # max_llm_calls_per_run). Duck-typed — most classifiers don't define this.
-        reset_call_count = getattr(self._classifier, "reset_call_count", None)
-        if reset_call_count is not None:
-            reset_call_count()
-
-        # Set contextvars so get_recorder() / get_state_updater() / get_usage_recorder()
-        # work inside fn without requiring signature changes.
-        rec_token = _record_step_var.set(self._record_step)
-        upd_token = _update_state_var.set(self._update_state)
-        usg_token = _record_usage_var.set(self._record_usage)
+        rec_token, upd_token, usg_token = self._setup_run()
         _run_start = time.monotonic()
         try:
             async with run_span(self._tracer, self._run_id, task) as _root_span:
                 try:
                     result = await self._run_loop(task, attempt, attempt_history, kwargs)
                     set_span_run_outcome(_root_span)
-                    # Notify circuit breakers that this run completed cleanly.
                     for breaker in self._circuit_breakers:
                         breaker.record_success()
                     metrics_record_run_end(
@@ -556,16 +733,7 @@ class Agent:
         attempt = 0
         attempt_history: list[tuple[Any, str]] = []
 
-        self._run_id = str(uuid.uuid4())
-        self._meter.reset()
-
-        reset_call_count = getattr(self._classifier, "reset_call_count", None)
-        if reset_call_count is not None:
-            reset_call_count()
-
-        rec_token = _record_step_var.set(self._record_step)
-        upd_token = _update_state_var.set(self._update_state)
-        usg_token = _record_usage_var.set(self._record_usage)
+        rec_token, upd_token, usg_token = self._setup_run()
         _run_start = time.monotonic()
         try:
             async with run_span(self._tracer, self._run_id, task) as _root_span:
@@ -602,7 +770,7 @@ class Agent:
         attempt_history: list[tuple[Any, str]],
         kwargs: dict[str, Any],
     ) -> AsyncIterator[Any]:
-        _recovery_start: float | None = None
+        _recovery_start_ref: list[float | None] = [None]
 
         while True:
             self._trajectory = Trajectory()
@@ -630,141 +798,13 @@ class Agent:
                     raise
                 await self._drain_checkpoints()
 
-                if not self._trajectory.steps:
-                    self._trajectory.append(Step(
-                        index=0,
-                        action="<no steps recorded>",
-                        error=str(exc),
-                    ))
-
-                steps = self._trajectory.steps
-
-                _triage_exc = (TriageEscalationError, TriageAbortError)
-                child_escalation = (
-                    exc.__cause__ if isinstance(exc.__cause__, _triage_exc)
-                    else exc.__context__ if isinstance(exc.__context__, _triage_exc)
-                    else None
+                kwargs, attempt, attempt_history, retry_event = await self._handle_failure(
+                    exc, task, attempt, attempt_history, kwargs, _recovery_start_ref
                 )
-
-                if child_escalation is not None and child_escalation.context is not None:
-                    failure_type = child_escalation.context.failure_type
-                else:
-                    with classify_span(self._tracer, self._run_id) as _classify_span:
-                        aclassify = getattr(self._classifier, "aclassify", None)
-                        if aclassify is not None:
-                            failure_type = await aclassify(self._trajectory, task)
-                        else:
-                            failure_type = await anyio.to_thread.run_sync(
-                                self._classifier.classify, self._trajectory, task
-                            )
-                        set_span_classify_result(_classify_span, failure_type.value)
-
-                ctx = FailureContext(
-                    failure_type=failure_type,
-                    trajectory=steps,
-                    critical_step_index=max(len(steps) - 1, 0),
-                    original_task=task,
-                    last_checkpoint_id=self._last_checkpoint_id,
-                    raw_error=exc,
-                    metadata={"attempt_number": attempt, "run_id": self._run_id},
-                    attempt_history=list(attempt_history),
-                )
-                self._last_ctx = ctx
-
-                logger.info(
-                    "[triage] failure classified",
-                    extra={
-                        "triage_event": "failure_classified",
-                        "failure_type": failure_type.value,
-                        "step_index": ctx.critical_step_index,
-                        "attempt": attempt,
-                        "task": task,
-                    },
-                )
-                metrics_record_failure(self._otel_meter, failure_type=failure_type.value)
-                if self._on_failure:
-                    _safe_hook(self._on_failure, ctx)
-
-                total_exceeded = (
-                    self._max_total_attempts is not None
-                    and len(attempt_history) >= self._max_total_attempts
-                )
-                if attempt >= self._max_recovery_attempts or total_exceeded:
-                    cap = (
-                        f"max_total_attempts ({self._max_total_attempts})"
-                        if total_exceeded
-                        else f"max_recovery_attempts ({self._max_recovery_attempts})"
-                    )
-                    raise TriageEscalationError(
-                        f"{cap} exceeded after {failure_type.value}.", ctx
-                    ) from exc
-
-                if self._max_recovery_seconds is not None:
-                    if _recovery_start is None:
-                        _recovery_start = time.monotonic()
-                    elif (time.monotonic() - _recovery_start) >= self._max_recovery_seconds:
-                        raise TriageEscalationError(
-                            f"max_recovery_seconds ({self._max_recovery_seconds}s) exceeded.",
-                            ctx,
-                        ) from exc
-
-                if self._max_tokens is not None:
-                    used = self._meter.total_tokens
-                    if used >= self._max_tokens:
-                        raise TriageEscalationError(
-                            f"max_tokens ({self._max_tokens}) exceeded "
-                            f"(used {used} tokens).", ctx
-                        ) from exc
-
-                if self._max_cost_usd is not None:
-                    spent = self._meter.cost_usd
-                    if spent >= self._max_cost_usd:
-                        raise TriageEscalationError(
-                            f"max_cost_usd ({self._max_cost_usd:.6f}) exceeded "
-                            f"(spent ${spent:.6f}).", ctx
-                        ) from exc
-
-                with dispatch_span(self._tracer, self._run_id, attempt) as _dispatch_span:
-                    action = await self._policy.dispatch(ctx)
-                    if action.kind == "escalate" and self._on_escalate is not None:
-                        override = await self._on_escalate(ctx)
-                        if override is not None:
-                            action = override
-                    set_span_dispatch_result(_dispatch_span, action.kind, failure_type.value)
-
-                metrics_record_recovery(
-                    self._otel_meter,
-                    failure_type=failure_type.value,
-                    action_kind=action.kind,
-                )
-                if action.kind in ("escalate", "abort"):
-                    metrics_record_recovery_end(
-                        self._otel_meter, failure_type=failure_type.value
-                    )
-                logger.info(
-                    "[triage] action dispatched",
-                    extra={
-                        "triage_event": "action_dispatched",
-                        "action_kind": action.kind,
-                        "failure_type": failure_type.value,
-                        "attempt": attempt,
-                    },
-                )
-                if self._on_recovery:
-                    _safe_hook(self._on_recovery, ctx, action)
-                attempt_history.append((failure_type, action.kind))
-                attempt += 1
-
-                kwargs = await self._execute_action(action, ctx, task, kwargs)
-
                 # Yield the retry event AFTER executing the action (which may
                 # have set _triage_hint in kwargs) so the hint is available.
-                yield StreamRetryEvent(
-                    attempt=attempt - 1,
-                    failure_type=failure_type,
-                    action_kind=action.kind,
-                    hint=kwargs.get("_triage_hint"),
-                )
+                if retry_event is not None:
+                    yield retry_event
 
     async def resume(self, token: str, *, action: RecoveryAction) -> Any:
         """Resume a previously suspended run.
@@ -804,21 +844,13 @@ class Agent:
         attempt = suspended.attempt + 1
         attempt_history = list(suspended.attempt_history)
 
-        # Re-establish contextvars so get_recorder() etc. work inside fn.
-        rec_token = _record_step_var.set(self._record_step)
-        upd_token = _update_state_var.set(self._update_state)
-        usg_token = _record_usage_var.set(self._record_usage)
-
-        # Restore run_id so any new checkpoints join the same scoped run.
-        self._run_id = ctx.metadata.get("run_id") or str(uuid.uuid4())
-        reset_call_count = getattr(self._classifier, "reset_call_count", None)
-        if reset_call_count is not None:
-            reset_call_count()
-        # Restore the usage snapshot from before suspension so budget caps
-        # remain accurate across the pause — a fresh reset() would grant a
-        # full new budget to a run that may have already consumed most of it.
-        self._meter.reset()
-        self._meter.record(suspended.usage_snapshot)
+        # Restore run_id so any new checkpoints join the same scoped run;
+        # restore usage so budget caps remain accurate across the suspension pause.
+        restored_run_id = ctx.metadata.get("run_id") or str(uuid.uuid4())
+        rec_token, upd_token, usg_token = self._setup_run(
+            run_id=restored_run_id,
+            restore_usage=suspended.usage_snapshot,
+        )
 
         _run_start = time.monotonic()
         try:
@@ -861,7 +893,7 @@ class Agent:
         attempt_history: list[tuple[Any, str]],
         kwargs: dict[str, Any],
     ) -> Any:
-        _recovery_start: float | None = None
+        _recovery_start_ref: list[float | None] = [None]
 
         while True:
             self._trajectory = Trajectory()
@@ -900,152 +932,9 @@ class Agent:
                     raise  # CancelledError, KeyboardInterrupt, GeneratorExit — never recover
                 await self._drain_checkpoints()
 
-                # If the agent raised before calling record_step(), synthesize a
-                # sentinel step from the exception so the classifier has context.
-                if not self._trajectory.steps:
-                    self._trajectory.append(Step(
-                        index=0,
-                        action="<no steps recorded>",
-                        error=str(exc),
-                    ))
-
-                steps = self._trajectory.steps
-
-                # If a child triage agent already classified this failure, reuse
-                # its context type rather than re-classifying.
-                _triage_exc = (TriageEscalationError, TriageAbortError)
-                child_escalation = (
-                    exc.__cause__ if isinstance(exc.__cause__, _triage_exc)
-                    else exc.__context__ if isinstance(exc.__context__, _triage_exc)
-                    else None
+                kwargs, attempt, attempt_history, _ = await self._handle_failure(
+                    exc, task, attempt, attempt_history, kwargs, _recovery_start_ref
                 )
-
-                if child_escalation is not None and child_escalation.context is not None:
-                    failure_type = child_escalation.context.failure_type
-                else:
-                    with classify_span(self._tracer, self._run_id) as _classify_span:
-                        aclassify = getattr(self._classifier, "aclassify", None)
-                        if aclassify is not None:
-                            # Native async path — e.g. LLMClassifier/HybridClassifier
-                            # awaiting an async SDK client directly, no thread hop.
-                            failure_type = await aclassify(self._trajectory, task)
-                        else:
-                            # Run classify() in a thread — sync clients can block
-                            # ~100-400ms and must never freeze the event loop.
-                            failure_type = await anyio.to_thread.run_sync(
-                                self._classifier.classify, self._trajectory, task
-                            )
-                        set_span_classify_result(_classify_span, failure_type.value)
-
-                ctx = FailureContext(
-                    failure_type=failure_type,
-                    trajectory=steps,
-                    critical_step_index=max(len(steps) - 1, 0),
-                    original_task=task,
-                    last_checkpoint_id=self._last_checkpoint_id,
-                    raw_error=exc,
-                    metadata={"attempt_number": attempt, "run_id": self._run_id},
-                    attempt_history=list(attempt_history),
-                )
-                self._last_ctx = ctx
-
-                logger.info(
-                    "[triage] failure classified",
-                    extra={
-                        "triage_event": "failure_classified",
-                        "failure_type": failure_type.value,
-                        "step_index": ctx.critical_step_index,
-                        "attempt": attempt,
-                        "task": task,
-                    },
-                )
-                metrics_record_failure(self._otel_meter, failure_type=failure_type.value)
-                if self._on_failure:
-                    _safe_hook(self._on_failure, ctx)
-
-                # Check both per-loop cap and cross-type global cap
-                total_exceeded = (
-                    self._max_total_attempts is not None
-                    and len(attempt_history) >= self._max_total_attempts
-                )
-                if attempt >= self._max_recovery_attempts or total_exceeded:
-                    cap = (
-                        f"max_total_attempts ({self._max_total_attempts})"
-                        if total_exceeded
-                        else f"max_recovery_attempts ({self._max_recovery_attempts})"
-                    )
-                    raise TriageEscalationError(
-                        f"{cap} exceeded after {failure_type.value}.",
-                        ctx,
-                    ) from exc
-
-                # Wall-clock recovery budget: start timing on first failure,
-                # escalate on subsequent failures if elapsed time exceeds cap.
-                if self._max_recovery_seconds is not None:
-                    if _recovery_start is None:
-                        _recovery_start = time.monotonic()
-                    elif (time.monotonic() - _recovery_start) >= self._max_recovery_seconds:
-                        raise TriageEscalationError(
-                            f"max_recovery_seconds ({self._max_recovery_seconds}s) exceeded.",
-                            ctx,
-                        ) from exc
-
-                # Token and cost budgets — checked once per failure, after the
-                # first failure so the agent gets at least one attempt.
-                if self._max_tokens is not None:
-                    used = self._meter.total_tokens
-                    if used >= self._max_tokens:
-                        raise TriageEscalationError(
-                            f"max_tokens ({self._max_tokens}) exceeded "
-                            f"(used {used} tokens).",
-                            ctx,
-                        ) from exc
-
-                if self._max_cost_usd is not None:
-                    spent = self._meter.cost_usd
-                    if spent >= self._max_cost_usd:
-                        raise TriageEscalationError(
-                            f"max_cost_usd ({self._max_cost_usd:.6f}) exceeded "
-                            f"(spent ${spent:.6f}).",
-                            ctx,
-                        ) from exc
-
-                with dispatch_span(self._tracer, self._run_id, attempt) as _dispatch_span:
-                    action = await self._policy.dispatch(ctx)
-                    # on_escalate: human-in-the-loop hook — called before raising
-                    # TriageEscalationError. May return an override RecoveryAction
-                    # or None to proceed with escalation.
-                    if action.kind == "escalate" and self._on_escalate is not None:
-                        override = await self._on_escalate(ctx)
-                        if override is not None:
-                            action = override
-                    set_span_dispatch_result(_dispatch_span, action.kind, failure_type.value)
-                metrics_record_recovery(
-                    self._otel_meter,
-                    failure_type=failure_type.value,
-                    action_kind=action.kind,
-                )
-                # Decrement the in-progress counter when the run exits via
-                # escalate or abort (the loop won't iterate again).
-                if action.kind in ("escalate", "abort"):
-                    metrics_record_recovery_end(
-                        self._otel_meter, failure_type=failure_type.value
-                    )
-                logger.info(
-                    "[triage] action dispatched",
-                    extra={
-                        "triage_event": "action_dispatched",
-                        "action_kind": action.kind,
-                        "failure_type": failure_type.value,
-                        "attempt": attempt,
-                    },
-                )
-                if self._on_recovery:
-                    _safe_hook(self._on_recovery, ctx, action)
-                attempt_history.append((failure_type, action.kind))
-                attempt += 1
-
-                kwargs = await self._execute_action(action, ctx, task, kwargs)
 
     async def _execute_action(
         self,

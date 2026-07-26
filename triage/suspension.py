@@ -189,6 +189,9 @@ def serialize_run(run: SuspendedRun) -> str:
             "original_task": ctx.original_task,
             "critical_step_index": ctx.critical_step_index,
             "last_checkpoint_id": ctx.last_checkpoint_id,
+            "loop_steps": ctx.loop_steps,
+            "violated_constraint": ctx.violated_constraint,
+            "expected_schema": ctx.expected_schema,
             "metadata": ctx.metadata,
             "attempt_history": [[ft.value, kind] for ft, kind in ctx.attempt_history],
             "trajectory": [
@@ -203,6 +206,8 @@ def serialize_run(run: SuspendedRun) -> str:
                     "llm_output": s.llm_output,
                     "error": s.error,
                     "timestamp": s.timestamp,
+                    "state_hash": s.state_hash,
+                    "metadata": s.metadata,
                     "idempotent": s.idempotent,
                     "partial": s.partial,
                 }
@@ -226,6 +231,8 @@ def deserialize_run(data: str) -> SuspendedRun:
             llm_output=s.get("llm_output"),
             error=s.get("error"),
             timestamp=s.get("timestamp", 0.0),
+            state_hash=s.get("state_hash"),
+            metadata=s.get("metadata") or {},
             idempotent=s.get("idempotent", False),
             partial=s.get("partial", False),
         )
@@ -237,6 +244,9 @@ def deserialize_run(data: str) -> SuspendedRun:
         critical_step_index=ctx_d["critical_step_index"],
         original_task=ctx_d["original_task"],
         last_checkpoint_id=ctx_d.get("last_checkpoint_id"),
+        loop_steps=ctx_d.get("loop_steps"),
+        violated_constraint=ctx_d.get("violated_constraint"),
+        expected_schema=ctx_d.get("expected_schema"),
         metadata=ctx_d.get("metadata", {}),
         attempt_history=[
             (FailureType(ft), kind) for ft, kind in ctx_d.get("attempt_history", [])
