@@ -23,7 +23,7 @@ jobs:
 
       - name: Install package and dev dependencies
         run: |
-          pip install -e ".[dev,langgraph,langchain,sqlite,redis]"
+          pip install -e ".[dev,anthropic,langgraph,langchain,sqlite,redis,otel]"
 
       - name: Run tests
         run: |
@@ -40,11 +40,11 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install ruff, mypy, and core deps
-        run: pip install ruff mypy anyio pydantic
+      - name: Install package with all optional extras
+        run: pip install -e ".[dev,anthropic,langgraph,langchain,sqlite,redis,otel]"
 
       - name: Lint
-        run: ruff check triage/
+        run: ruff check .
 
       - name: Type check
         run: mypy triage/ --strict
@@ -61,7 +61,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install package and dev dependencies
-        run: pip install -e ".[dev,langgraph,langchain,sqlite,redis]"
+        run: pip install -e ".[dev,anthropic,langgraph,langchain,sqlite,redis,otel]"
 
       - name: Run tests with coverage
         run: pytest tests/ --cov=triage --cov-report=term-missing --cov-fail-under=80

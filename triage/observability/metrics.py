@@ -97,6 +97,12 @@ class _Instruments:
         )
 
 
+# Keyed on id(meter). This assumes OTel meters are long-lived (created once at
+# provider setup, never replaced or garbage-collected during the process lifetime),
+# which is the standard OTel usage pattern. If a meter were GC'd its id could be
+# reused by an unrelated object, silently returning stale instruments for the new
+# object — but that cannot happen in practice because the MeterProvider holds a
+# strong reference to every meter it creates. No eviction is therefore needed.
 _instrument_cache: dict[int, _Instruments] = {}
 
 
