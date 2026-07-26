@@ -1,115 +1,79 @@
 # Classifiers
 
-All classifiers satisfy the `Classifier` protocol:
+All classifiers satisfy the `Classifier` protocol. `Agent` uses `RulesClassifier` by
+default; pass `classifier=` to swap it out.
 
-```python
-class Classifier(Protocol):
-    def classify(self, trajectory: Trajectory, task: str) -> FailureType: ...
-```
+## Classifier protocol
 
-`classify()` is always `def` (not `async def`). triage runs it via `anyio.to_thread.run_sync()` to keep the event loop unblocked.
-
-Classifiers may optionally define `async def aclassify(self, trajectory, task) -> FailureType`. Duck-typed, not part of the protocol; when present, `agent.py` awaits it directly instead of using the thread path. `LLMClassifier` and `HybridClassifier` both define it.
-
----
+::: triage.classifier.base.Classifier
 
 ## RulesClassifier
 
-```python
-from triage.classifier.rules import RulesClassifier
-```
+::: triage.classifier.rules.RulesClassifier
+    options:
+      members:
+        - __init__
+        - classify
+        - fit
 
-Pattern-based, zero API calls, microseconds per call.
+### Rule priority
 
-```python
-clf = RulesClassifier()
-clf = RulesClassifier(constraints=["must return JSON", "no markdown"])
-clf = RulesClassifier(loop_similarity_threshold=0.9)  # fuzzy loop detection
-```
+Rules fire in order; first match wins:
 
-**Rules (priority order):**
+1. `LOOP_DETECTED` — last `loop_window` steps share identical `tool_called` and equal (or fuzzy-similar) `tool_input`
+2. `WRONG_TOOL_CALLED` — error matches tool-not-found patterns across OpenAI / Anthropic / LangGraph SDKs
+3. `SCHEMA_MISMATCH` — error matches validation / JSON parse patterns
+4. `EXTERNAL_FAULT` — error contains an HTTP status code (`429`, `500`, `502`, `503`) as a whole token, not in a quantity context
+5. `TIMEOUT` — error matches timeout / deadline patterns
+6. `CONSTRAINT_IGNORED` — `llm_output` contains a forbidden constraint string
+7. `UNKNOWN` — default
 
-1. `LOOP_DETECTED` — last 3 steps: same `tool_called` + identical canonical `tool_input` (or, with `loop_similarity_threshold` set, consecutively similar `tool_input` per `difflib.SequenceMatcher.ratio()`)
-2. `WRONG_TOOL_CALLED` — error matches `tool.{0,30}not found|no tool named`
-3. `SCHEMA_MISMATCH` — error matches `validation error|json.*parse|jsondecodeerror`
-4. `EXTERNAL_FAULT` — error contains `"429"`, `"500"`, `"502"`, or `"503"`
-5. `CONSTRAINT_IGNORED` — any step's `llm_output` contains a constraint string
-6. `UNKNOWN` — no rule matched
-
----
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` require semantic understanding and always return
+`UNKNOWN` from `RulesClassifier`. Use `LLMClassifier` or `HybridClassifier` for those.
 
 ## LLMClassifier
 
-```python
-from triage.classifier.llm import LLMClassifier
-```
-
-Semantic classifier. Calls an LLM to read the trajectory and name the failure type.
-
-```python
-# Anthropic (default)
-clf = LLMClassifier()
-clf = LLMClassifier(api_key="sk-ant-...", model="claude-haiku-4-5-20251001")
-
-# OpenAI-compatible
-clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
-clf = LLMClassifier(base_url="https://api.groq.com/openai/v1",
-                    api_key="gsk_...", model="llama-3.1-8b-instant")
-```
-
-**Parameters:**
-
-| Parameter | Default | Description |
-|---|---|---|
-| `api_key` | `None` → `TRIAGE_LLM_API_KEY` env var | API key |
-| `model` | `claude-haiku-4-5-20251001` (Anthropic) or `llama3.2` (OpenAI-compat) | Model name |
-| `max_trajectory_steps` | `10` | Steps included in the prompt |
-| `base_url` | `None` → `TRIAGE_LLM_BASE_URL` env var | If set, uses OpenAI-compatible client |
-| `max_retries` | `1` | Retries for transient errors (429/5xx/timeout/connection) before falling back to `UNKNOWN` |
-| `retry_backoff_base` | `0.5` | Seconds; backoff is `retry_backoff_base * 2 ** attempt` |
-
-Falls back to `UNKNOWN` silently on any error.
-
-Also defines `async def aclassify(trajectory, task) -> FailureType`, backed by `AsyncAnthropic`/`AsyncOpenAI`. `agent.py` prefers this over `classify()` when present — no thread hop.
-
-**Install:**
-```bash
-pip install "triage-agent[anthropic]"   # Anthropic backend
-pip install openai                       # OpenAI-compatible backend
-```
-
----
+::: triage.classifier.llm.LLMClassifier
+    options:
+      members:
+        - __init__
+        - classify
+        - aclassify
 
 ## HybridClassifier
 
-```python
-from triage.classifier.hybrid import HybridClassifier
-```
-
-Runs `RulesClassifier` first; calls the LLM only when rules return `UNKNOWN`.
-
-```python
-clf = HybridClassifier(llm=LLMClassifier())
-```
-
-Recommended for production: free for structural failures, semantic fallback for ambiguous ones.
-
-Also defines `aclassify()` — calls `llm.aclassify()` when the wrapped LLM classifier has one, else falls back to `llm.classify()`.
-
-**Cost cap:** `HybridClassifier(llm=..., max_llm_calls_per_run=N)` bounds LLM calls per `Agent.run()` call; the counter resets via `reset_call_count()` (duck-typed, called by `agent.py`) at the start of each run.
+::: triage.classifier.hybrid.HybridClassifier
+    options:
+      members:
+        - __init__
+        - classify
+        - aclassify
+        - reset_call_count
 
 ---
 
-## Custom classifiers
+## Custom classifier
 
-Any class with a synchronous `classify()` method satisfies the protocol:
+Any object with a synchronous `classify(trajectory, task) -> FailureType` method satisfies
+the protocol:
 
 ```python
+from triage.taxonomy import FailureType
+from triage.trajectory import Trajectory
+
 class MyClassifier:
-    def classify(self, trajectory: Trajectory, task: str) -> FailureType:
-        if any("budget" in (s.error or "") for s in trajectory.steps):
-            return FailureType.CONSTRAINT_IGNORED
-        return FailureType.UNKNOWN
+    def classify(self, trajectory: Trajectory, task: str) -> FailureType: ...
 
 agent = triage.Agent(my_agent, policy=policy, classifier=MyClassifier())
+```
+
+For async classifiers, add an `aclassify` method (duck-typed, not part of the protocol):
+
+```python
+class MyAsyncClassifier:
+    def classify(self, trajectory: Trajectory, task: str) -> FailureType:
+        ...  # sync fallback
+
+    async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
+        ...  # async path — used by Agent when present
 ```

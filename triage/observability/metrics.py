@@ -121,11 +121,6 @@ def _get_instruments(meter: Any) -> _Instruments | None:
 # ── record helpers ────────────────────────────────────────────────────────────
 
 
-def record_run_start(meter: Any) -> None:
-    """Called at the very start of Agent.run() — no attributes yet."""
-    # Nothing to record on start; duration is recorded on finish.
-
-
 def record_run_end(meter: Any, *, outcome: str, duration_s: float) -> None:
     """Record run completion. ``outcome`` is ``"success"``, ``"error"``, or ``"cancelled"``."""
     inst = _get_instruments(meter)

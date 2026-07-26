@@ -4,13 +4,11 @@ Core data types used throughout the triage API.
 
 ## FailureType
 
-```python
-from triage.taxonomy import FailureType
-```
+::: triage.taxonomy.FailureType
 
-An `Enum` with 9 members. The classifier assigns one value per failure; the policy maps each to a strategy.
+The 9 members and their stable string values:
 
-| Member | String value | Default recovery |
+| Member | String value | Default recovery intent |
 |---|---|---|
 | `WRONG_TOOL_CALLED` | `wrong_tool_called` | Retry with correct manifest |
 | `CONSTRAINT_IGNORED` | `constraint_ignored` | Replan with constraint reminder |
@@ -22,85 +20,27 @@ An `Enum` with 9 members. The classifier assigns one value per failure; the poli
 | `TIMEOUT` | `timeout` | Backoff and retry |
 | `UNKNOWN` | `unknown` | Escalate |
 
-String values are the stable public identifiers used in logs and serialized state. Never change them.
+String values are the stable public identifiers used in logs and serialized state.
 
 ## Step
 
-```python
-from triage.taxonomy import Step
-```
+::: triage.taxonomy.Step
 
-A single recorded action in the agent's trajectory.
+`idempotent` defaults to `False`. Mark `True` only for steps that are genuinely safe
+to replay — read-only tool calls and pure computations. Steps that send email, write
+to a database, or charge payment methods must stay `False`.
 
-```python
-@dataclass
-class Step:
-    index: int                          # position in the trajectory
-    action: str                         # human-readable description
-    tool_called: str | None = None      # tool name if a tool was invoked
-    tool_input: dict | None = None      # arguments passed to the tool
-    tool_output: Any = None             # value returned by the tool
-    llm_output: str | None = None       # text output from the LLM
-    error: str | None = None            # error string if the step failed
-    timestamp: float                    # unix timestamp (auto-set)
-    state_hash: str | None = None       # optional hash for dedup
-    metadata: dict[str, Any]           # arbitrary extra data
-    idempotent: bool = False            # set True only for read-only / safe-to-retry steps
-```
-
-Record steps by calling the injected `record_step` callback:
-
-```python
-from triage.taxonomy import Step
-
-record_step(Step(
-    index=0,
-    action="called search tool",
-    tool_called="search",
-    tool_input={"query": "latest AI news"},
-    tool_output=["result 1", "result 2"],
-    idempotent=True,   # safe to replay — read-only
-))
-```
-
-`idempotent` defaults to `False`. Mark a step `idempotent=True` only when it is genuinely safe to replay without side effects (read-only tool calls, pure computations). Steps that send emails, write to databases, or charge payment methods must remain `False`.
-
-When `Agent(strict_idempotency=True)` is set, any `RETRY` action is blocked if the trajectory contains a step with `idempotent=False`, and `TriageEscalationError` is raised instead.
+When `Agent(strict_idempotency=True)` is set, a `RETRY` action is blocked if the
+trajectory contains any `idempotent=False` step.
 
 ## FailureContext
 
-```python
-from triage.taxonomy import FailureContext
-```
-
-Passed to every strategy callable. Contains everything needed to make a recovery decision.
-
-```python
-@dataclass
-class FailureContext:
-    failure_type: FailureType
-    trajectory: list[Step]
-    critical_step_index: int
-    original_task: str
-    last_checkpoint_id: str | None
-    loop_steps: list[int] | None
-    violated_constraint: str | None
-    expected_schema: dict | None
-    raw_error: Exception | None
-    metadata: dict[str, Any]            # includes "attempt_number"
-    attempt_history: list[tuple[FailureType, str]]
-```
-
-### Properties
-
-```python
-ctx.failed_step          # Step at critical_step_index, or None
-ctx.steps_after_failure  # list[Step] after the critical step
-```
+::: triage.taxonomy.FailureContext
 
 ### attempt_history
 
-A list of `(FailureType, action_kind)` tuples from all prior recovery attempts in the current `run()` call. Use it to detect repeated failures and escalate intelligently:
+A list of `(FailureType, action_kind)` tuples from all prior recovery attempts in the
+current `run()` call. Use it to detect repeated failures and escalate intelligently:
 
 ```python
 prior_retries = sum(1 for _, kind in ctx.attempt_history if kind == "retry")
@@ -108,37 +48,19 @@ if prior_retries >= 2:
     return RecoveryAction.ESCALATE("Too many retries.")
 ```
 
----
-
 ## TriageContext
 
-```python
-from triage.taxonomy import TriageContext
-```
+::: triage.taxonomy.TriageContext
 
-Structured recovery context injected into agents as `_triage_context`. Replaces the scattered `_triage_hint`, `_triage_subgoal`, and `_triage_state` kwargs with a single typed object. The individual kwargs are still injected for backward compatibility.
+Injected as `_triage_context` on every recovery attempt:
 
 ```python
-@dataclass
-class TriageContext:
-    failure_type: FailureType   # what was classified
-    attempt_number: int         # 0-based attempt index from this run()
-    hint: str | None            # mirrors _triage_hint
-    subgoal: str | None         # mirrors _triage_subgoal
-    state: dict[str, Any]       # mirrors _triage_state (empty dict if no state)
-```
-
-Usage inside a wrapped agent:
-
-```python
-async def my_agent(task: str, *, record_step, update_state, **kwargs) -> Any:
+async def my_agent(task: str, *, record_step, **kwargs) -> Any:
     tc: TriageContext | None = kwargs.get("_triage_context")
     if tc:
         print(f"Recovering from {tc.failure_type.value}, attempt {tc.attempt_number}")
         if tc.hint:
-            # pass hint into the LLM prompt
-            ...
+            ...  # pass hint into the LLM prompt
         if tc.state:
-            # skip re-fetching — state was restored from checkpoint
-            data = tc.state.get("data")
+            data = tc.state.get("data")  # restored from checkpoint
 ```

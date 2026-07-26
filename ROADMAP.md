@@ -1,11 +1,11 @@
 # triage-agent Roadmap
 
-`triage-agent` wraps async agent callables, classifies failures by type, and routes each
+`triage-agent` wraps async agent callables, classifies failure by type, and routes each
 type to a recovery strategy. This document tracks what has shipped and what comes next.
 
 ---
 
-## Done (v0.1–v0.16)
+## Done (v0.1–v0.21)
 
 | Version | Feature                           | Description                                                                                                                                                                                                                   |
 | ------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -33,8 +33,53 @@ type to a recovery strategy. This document tracks what has shipped and what come
 
 ---
 
-## Later (no version assigned)
+## Next (no version assigned yet)
 
-- **OpenAI Agents SDK adapter** — `wrap_openai_agents()`; deprioritised until the SDK stabilises.
-- **`RedisSuspensionStore`** — durable `SuspensionStore` backed by Redis; HITL tokens must survive process restarts. `SuspensionStore` protocol is already in place; this is a pure implementation addition following the same pattern as `RedisBreakerStore`.
-- **Saga / compensating rollback** — reverse-order compensate callables that undo side effects on rollback; deliberately minimal and only if there is concrete user demand.
+Items are grouped by urgency. Within each group, order is rough priority.
+
+### Feature completeness
+
+- **`RedisSuspensionStore`** — the only real gap in the current feature set.
+  `serialize_run` / `deserialize_run` exist and are tested specifically to enable this,
+  so it is mostly written. Until it lands, `InMemorySuspensionStore` loses pending
+  human approvals on process restart — which is wrong for the one feature whose
+  correctness most depends on durability.
+
+- **Cost model for `max_cost_usd`** — `Usage.cost_usd` is entirely caller-supplied; there
+  is no price table anywhere in the library. Most users will leave it at `0.0` and get a
+  dollar cap that never fires. A small per-model price table (Anthropic, OpenAI, common
+  OSS checkpoints) with an override hook would make the feature work as its name implies.
+
+- **Preemptive budget enforcement** — budgets are checked only at failure points, so
+  overage is detected after the fact rather than prevented. `agent.py` documents this
+  honestly (the "not a hard token ceiling" note explains failure-point enforcement is
+  deliberate). Noted here as a design choice that is disclosed, not a defect; promote if
+  concrete demand emerges.
+
+- **OpenAI Agents SDK adapter** — `wrap_openai_agents()`; deprioritised until the SDK
+  stabilises. Largest user pool currently unreachable; the adapter mapping is mostly
+  mechanical once the SDK settles.
+
+- **Saga / compensating rollback** — reverse-order compensate callables that undo side
+  effects on rollback. Highest complexity on the roadmap. Build only when there is
+  concrete user demand.
+
+### Evidence and positioning
+
+- **Publish bench numbers** — the single highest-value item on this list. `triage.bench`
+  and `run_benchmark()` exist but the README shows no results. Classification accuracy and
+  recovery lift vs. blind retry are both unproven to anyone evaluating the library. A
+  table in the README with a small reproducible scenario would change that immediately.
+
+- **Cut a 1.0 with an API stability commitment** — twenty-one minor versions in a short
+  window reads as churn, and some bumps were not library changes at all (v0.18 was an
+  example file). The public API has been stable since v0.2; a 1.0 with an explicit
+  stability promise signals that to potential adopters.
+
+### Longer term
+
+- **Multi-agent failure taxonomy** — current failure types are single-agent. The failure
+  modes people hit hardest now are handoff loss, inter-agent misalignment, and output
+  poisoning between agents. Aligning with the published MAST taxonomy would provide
+  citable rigor and is a stronger differentiator than another adapter.
+

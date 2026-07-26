@@ -46,6 +46,8 @@ dev = [
     "anthropic>=0.25",
     "aiosqlite>=0.19",
     "fakeredis>=2.20",
+    "mkdocs-material>=9.0",
+    "mkdocstrings[python]>=0.25",
 ]
 
 [project.urls]

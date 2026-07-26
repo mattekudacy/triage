@@ -2,81 +2,52 @@
 
 `RecoveryAction` is the return value of every strategy. It declares intent — `Agent` executes it.
 
-## Constructors
+::: triage.policy.RecoveryAction
+    options:
+      members:
+        - RETRY
+        - REPLAN
+        - ROLLBACK
+        - RESUME
+        - ESCALATE
+        - ABORT
+        - SUSPEND
 
-All constructors are UPPERCASE classmethods. `None` parameters are excluded from `action.params`.
+---
 
-### RETRY
+## Conceptual notes
+
+### Constructors are UPPERCASE classmethods
 
 ```python
-RecoveryAction.RETRY(
-    hint: str | None = None,
-    inject: dict | None = None,
-    delay: float = 0.0,
-) -> RecoveryAction
+RecoveryAction.RETRY(hint="...", inject={"key": "val"}, delay=1.0)
+RecoveryAction.REPLAN(hint="...")
+RecoveryAction.ROLLBACK(checkpoint_id=None)  # None → latest checkpoint in the run
+RecoveryAction.RESUME(from_subgoal="Step 3: summarise results")
+RecoveryAction.ESCALATE(message="Needs human review")
+RecoveryAction.ABORT(reason="Unrecoverable state")
+RecoveryAction.SUSPEND(message="Approve?", metadata={"channel": "#ops"})
 ```
 
-Re-runs the agent. `hint` is injected as `_triage_hint`. `delay` seconds are awaited before the next attempt.
-
-### REPLAN
+### Accessing the payload
 
 ```python
-RecoveryAction.REPLAN(hint: str | None = None) -> RecoveryAction
-```
-
-Aborts the current plan branch and re-runs with a new planning instruction. `hint` defaults to `"Generate a new plan."` if not set by the strategy.
-
-### ROLLBACK
-
-```python
-RecoveryAction.ROLLBACK(checkpoint_id: str | None = None) -> RecoveryAction
-```
-
-Restores trajectory and state from a checkpoint, then re-runs. `None` → uses the latest checkpoint. Injects `_triage_hint` and (if state is non-empty) `_triage_state`.
-
-### RESUME
-
-```python
-RecoveryAction.RESUME(from_subgoal: str | None = None) -> RecoveryAction
-```
-
-Re-runs the agent with `_triage_subgoal` injected into kwargs.
-
-### ESCALATE
-
-```python
-RecoveryAction.ESCALATE(message: str | None = None) -> RecoveryAction
-```
-
-Raises `TriageEscalationError` with the given message and the current `FailureContext`.
-
-### ABORT
-
-```python
-RecoveryAction.ABORT(reason: str | None = None) -> RecoveryAction
-```
-
-Raises `TriageAbortError`. Hard stop — no further recovery.
-
-## Attributes
-
-```python
-action.kind    # str: "retry" | "replan" | "rollback" | "resume" | "escalate" | "abort"
+action.kind    # str: "retry" | "replan" | "rollback" | "resume" | "escalate" | "abort" | "suspend"
 action.params  # dict: non-None kwargs passed to the constructor
 ```
 
-`params` never contains `None` values — they are filtered out in `__init__`. Access payload with `action.params.get("key")`.
-
-## Example
+`None` kwargs are excluded from `params`. Access with `.get()`, never by direct key:
 
 ```python
-from triage.policy import RecoveryAction
-from triage.taxonomy import FailureContext, FailureType
+hint = action.params.get("hint")
+```
 
+### Custom strategy example
+
+```python
 async def my_strategy(ctx: FailureContext) -> RecoveryAction:
-    if ctx.failure_type == FailureType.EXTERNAL_FAULT:
-        if len(ctx.attempt_history) >= 3:
-            return RecoveryAction.ESCALATE("Service down after 3 retries.")
-        return RecoveryAction.RETRY(delay=2.0 ** len(ctx.attempt_history))
-    return RecoveryAction.REPLAN()
+    faults = sum(1 for ft, _ in ctx.attempt_history if ft == FailureType.EXTERNAL_FAULT)
+    if faults >= 3:
+        return RecoveryAction.ESCALATE("Service unavailable after 3 retries.")
+    return RecoveryAction.RETRY(delay=2.0**faults)
 ```

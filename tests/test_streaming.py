@@ -351,3 +351,65 @@ async def test_stream_calls_record_success_on_clean_run():
     # (note: b._opened_at may not be valid for _now comparison here — just
     # check CLOSED is reached after the forced probe)
     assert b.record_success() == BreakerState.CLOSED
+
+
+# ── abandoned stream (GeneratorExit) ─────────────────────────────────────────
+
+
+async def test_abandoned_stream_emits_cancelled_metric(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Breaking out of agent.stream() early sends GeneratorExit into _orchestrate.
+    The metric must be emitted with outcome='cancelled'; record_success() must NOT fire.
+
+    Use contextlib.aclosing() so aclose() is awaited synchronously before the assertion,
+    rather than being deferred to asyncio's finalizer task (which runs after the test).
+    """
+    import sys
+    from contextlib import aclosing
+
+    recorded: list[str] = []
+
+    monkeypatch.setattr(
+        sys.modules["triage.agent"],
+        "metrics_record_run_end",
+        lambda meter, *, outcome, duration_s: recorded.append(outcome),
+    )
+
+    async def gen_agent(task: str, *, record_step, **kwargs):
+        yield "first"
+        yield "second"
+
+    agent = Agent(gen_agent, FailurePolicy())
+
+    async with aclosing(agent.stream("t")) as gen:
+        async for item in gen:
+            assert item == "first"
+            break  # abandon after first chunk; aclosing ensures aclose() runs now
+
+    assert recorded == ["cancelled"]
+
+
+async def test_abandoned_stream_does_not_call_record_success() -> None:
+    """record_success() must not fire when a stream is abandoned early.
+
+    Use contextlib.aclosing() so aclose() is awaited synchronously before the assertion.
+    """
+    from contextlib import aclosing
+
+    from triage.breaker import BreakerState, CircuitBreaker
+
+    b = CircuitBreaker(failure_threshold=2, window_seconds=60, cooldown_seconds=30)
+
+    async def gen_agent(task: str, *, record_step, **kwargs):
+        yield "a"
+        yield "b"
+
+    agent = Agent(gen_agent, FailurePolicy(), circuit_breakers=[b])
+
+    async with aclosing(agent.stream("t")) as gen:
+        async for _ in gen:
+            break
+
+    # Breaker must remain CLOSED but with no success recorded — still at 0 failures,
+    # not driven through HALF_OPEN -> CLOSED by a spurious record_success() call.
+    assert b.state() == BreakerState.CLOSED
+    assert b._failure_times == []  # type: ignore[attr-defined]

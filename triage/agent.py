@@ -706,9 +706,23 @@ class Agent:
                     )
                     raise
         finally:
-            _record_step_var.reset(rec_token)
-            _update_state_var.reset(upd_token)
-            _record_usage_var.reset(usg_token)
+            # Guard against cross-context ValueError: if _orchestrate's cleanup
+            # runs in a different asyncio Context (e.g. deferred generator finalizer
+            # after a caller's `break`), reset() raises ValueError. Swallow it —
+            # the ContextVar is unset in the finalizer's copy of the Context, not
+            # the caller's, which is correct behaviour.
+            try:
+                _record_step_var.reset(rec_token)
+            except ValueError:
+                pass
+            try:
+                _update_state_var.reset(upd_token)
+            except ValueError:
+                pass
+            try:
+                _record_usage_var.reset(usg_token)
+            except ValueError:
+                pass
 
     async def run(self, task: str, **kwargs: Any) -> Any:
         """Run the wrapped agent, recovering from failures per the policy."""
@@ -803,19 +817,17 @@ class Agent:
         ``action`` as the human's decision, then continues the recovery loop
         from where it left off.
 
+        The suspended run is deleted from the store after a successful load;
+        tokens are single-use.
+
         Parameters
         ----------
         token:
             The token from ``TriageSuspendedError.token``.
         action:
             The ``RecoveryAction`` chosen by the human.  Common choices:
-
-            - ``RecoveryAction.RETRY()`` — try again, possibly with a hint
-            - ``RecoveryAction.REPLAN(hint="...")`` — generate a new plan
-            - ``RecoveryAction.ABORT(reason="...")`` — give up permanently
-
-        The suspended run is deleted from the store after a successful load,
-        so tokens are single-use.
+            ``RecoveryAction.RETRY()`` to try again, ``RecoveryAction.REPLAN(hint="...")``
+            to generate a new plan, or ``RecoveryAction.ABORT(reason="...")`` to stop.
 
         Raises
         ------
