@@ -23,6 +23,7 @@ from triage.feedback import Correction, coverage_report, record_correction
 from triage.policy import FailurePolicy, RecoveryAction
 from triage.scorer.base import RiskScore, StepRiskScorer
 from triage.scorer.rules import RulesRiskScorer
+from triage.streaming import StreamRetryEvent
 from triage.suspension import InMemorySuspensionStore, SuspendedRun, SuspensionStore
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.testing import RecordingAgent, assert_classifies_as, make_step
@@ -62,6 +63,8 @@ __all__ = [
     "RecordingAgent",
     "assert_classifies_as",
     "make_step",
+    # streaming
+    "StreamRetryEvent",
     # circuit breaker
     "BreakerState",
     "CircuitBreaker",
@@ -77,7 +80,7 @@ __all__ = [
     "RedisCheckpointStore",
 ]
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 
 
 def __getattr__(name: str) -> object:

@@ -13,7 +13,7 @@ import inspect
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -41,6 +41,7 @@ from triage.observability.otel import (
     set_span_run_outcome,
 )
 from triage.policy import FailurePolicy, RecoveryAction
+from triage.streaming import StreamRetryEvent
 from triage.suspension import InMemorySuspensionStore, SuspendedRun, SuspensionStore, make_token
 from triage.taxonomy import FailureContext, FailureType, Step, TriageContext
 from triage.trajectory import Trajectory
@@ -328,8 +329,15 @@ class Agent:
         max_cost_usd: float | None = None,
     ) -> None:
         self._fn = fn
-        self._fn_is_async = inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(
+        self._fn_is_async_gen = inspect.isasyncgenfunction(fn) or inspect.isasyncgenfunction(
             type(fn).__call__
+        )
+        self._fn_is_async = (
+            not self._fn_is_async_gen
+            and (
+                inspect.iscoroutinefunction(fn)
+                or inspect.iscoroutinefunction(type(fn).__call__)
+            )
         )
         self._policy = policy
         self._classifier: Classifier = classifier or RulesClassifier()
@@ -465,6 +473,11 @@ class Agent:
 
     async def run(self, task: str, **kwargs: Any) -> Any:
         """Run the wrapped agent, recovering from failures per the policy."""
+        if self._fn_is_async_gen:
+            raise TypeError(
+                "Agent.run() cannot be used with async-generator callables. "
+                "Use agent.stream() instead."
+            )
         attempt = 0
         attempt_history: list[tuple[Any, str]] = []
 
@@ -514,6 +527,244 @@ class Agent:
             _record_step_var.reset(rec_token)
             _update_state_var.reset(upd_token)
             _record_usage_var.reset(usg_token)
+
+    async def stream(
+        self, task: str, **kwargs: Any
+    ) -> AsyncGenerator[Any, None]:
+        """Run the wrapped async-generator callable, yielding its output.
+
+        On failure, classifies the exception, dispatches a recovery action,
+        yields a ``StreamRetryEvent``, and re-starts the generator with the
+        updated kwargs.  The caller should discard accumulated output on
+        receiving a ``StreamRetryEvent``.
+
+        All caps (``max_recovery_attempts``, ``max_recovery_seconds``,
+        ``max_tokens``, circuit breakers, lifecycle hooks, OTel spans) apply
+        exactly as in ``run()``.  Raises ``TriageEscalationError``,
+        ``TriageAbortError``, or ``TriageSuspendedError`` on terminal outcomes.
+
+        The wrapped callable must be an ``async def`` generator function
+        (uses ``yield``).  Plain coroutine callables should use ``run()``
+        instead — calling ``stream()`` on a non-generator raises ``TypeError``.
+        """
+        if not self._fn_is_async_gen:
+            raise TypeError(
+                "Agent.stream() requires an async-generator callable (uses yield). "
+                "Use agent.run() for regular coroutine callables."
+            )
+
+        attempt = 0
+        attempt_history: list[tuple[Any, str]] = []
+
+        self._run_id = str(uuid.uuid4())
+        self._meter.reset()
+
+        reset_call_count = getattr(self._classifier, "reset_call_count", None)
+        if reset_call_count is not None:
+            reset_call_count()
+
+        rec_token = _record_step_var.set(self._record_step)
+        upd_token = _update_state_var.set(self._update_state)
+        usg_token = _record_usage_var.set(self._record_usage)
+        _run_start = time.monotonic()
+        try:
+            async with run_span(self._tracer, self._run_id, task) as _root_span:
+                try:
+                    async for item in self._stream_loop(
+                        task, attempt, attempt_history, kwargs
+                    ):
+                        yield item
+                    set_span_run_outcome(_root_span)
+                    for breaker in self._circuit_breakers:
+                        breaker.record_success()
+                    metrics_record_run_end(
+                        self._otel_meter,
+                        outcome="success",
+                        duration_s=time.monotonic() - _run_start,
+                    )
+                except Exception as exc:
+                    set_span_run_outcome(_root_span, error=exc)
+                    metrics_record_run_end(
+                        self._otel_meter,
+                        outcome="error",
+                        duration_s=time.monotonic() - _run_start,
+                    )
+                    raise
+        finally:
+            _record_step_var.reset(rec_token)
+            _update_state_var.reset(upd_token)
+            _record_usage_var.reset(usg_token)
+
+    async def _stream_loop(
+        self,
+        task: str,
+        attempt: int,
+        attempt_history: list[tuple[Any, str]],
+        kwargs: dict[str, Any],
+    ) -> AsyncIterator[Any]:
+        _recovery_start: float | None = None
+
+        while True:
+            self._trajectory = Trajectory()
+            self._current_state = {}
+            self._pending_checkpoints = []
+
+            try:
+                async for chunk in self._fn(
+                    task,
+                    record_step=self._record_step,
+                    update_state=self._update_state,
+                    record_usage=self._record_usage,
+                    **kwargs,
+                ):
+                    yield chunk
+                await self._drain_checkpoints()
+                return
+
+            except (TriageEscalationError, TriageAbortError, TriageSuspendedError):
+                await self._drain_checkpoints()
+                raise
+
+            except BaseException as exc:
+                if not isinstance(exc, Exception):
+                    raise
+                await self._drain_checkpoints()
+
+                if not self._trajectory.steps:
+                    self._trajectory.append(Step(
+                        index=0,
+                        action="<no steps recorded>",
+                        error=str(exc),
+                    ))
+
+                steps = self._trajectory.steps
+
+                _triage_exc = (TriageEscalationError, TriageAbortError)
+                child_escalation = (
+                    exc.__cause__ if isinstance(exc.__cause__, _triage_exc)
+                    else exc.__context__ if isinstance(exc.__context__, _triage_exc)
+                    else None
+                )
+
+                if child_escalation is not None and child_escalation.context is not None:
+                    failure_type = child_escalation.context.failure_type
+                else:
+                    with classify_span(self._tracer, self._run_id) as _classify_span:
+                        aclassify = getattr(self._classifier, "aclassify", None)
+                        if aclassify is not None:
+                            failure_type = await aclassify(self._trajectory, task)
+                        else:
+                            failure_type = await anyio.to_thread.run_sync(
+                                self._classifier.classify, self._trajectory, task
+                            )
+                        set_span_classify_result(_classify_span, failure_type.value)
+
+                ctx = FailureContext(
+                    failure_type=failure_type,
+                    trajectory=steps,
+                    critical_step_index=max(len(steps) - 1, 0),
+                    original_task=task,
+                    last_checkpoint_id=self._last_checkpoint_id,
+                    raw_error=exc,
+                    metadata={"attempt_number": attempt},
+                    attempt_history=list(attempt_history),
+                )
+                self._last_ctx = ctx
+
+                logger.info(
+                    "[triage] failure classified",
+                    extra={
+                        "triage_event": "failure_classified",
+                        "failure_type": failure_type.value,
+                        "step_index": ctx.critical_step_index,
+                        "attempt": attempt,
+                        "task": task,
+                    },
+                )
+                metrics_record_failure(self._otel_meter, failure_type=failure_type.value)
+                if self._on_failure:
+                    _safe_hook(self._on_failure, ctx)
+
+                total_exceeded = (
+                    self._max_total_attempts is not None
+                    and len(attempt_history) >= self._max_total_attempts
+                )
+                if attempt >= self._max_recovery_attempts or total_exceeded:
+                    cap = (
+                        f"max_total_attempts ({self._max_total_attempts})"
+                        if total_exceeded
+                        else f"max_recovery_attempts ({self._max_recovery_attempts})"
+                    )
+                    raise TriageEscalationError(
+                        f"{cap} exceeded after {failure_type.value}.", ctx
+                    ) from exc
+
+                if self._max_recovery_seconds is not None:
+                    if _recovery_start is None:
+                        _recovery_start = time.monotonic()
+                    elif (time.monotonic() - _recovery_start) >= self._max_recovery_seconds:
+                        raise TriageEscalationError(
+                            f"max_recovery_seconds ({self._max_recovery_seconds}s) exceeded.",
+                            ctx,
+                        ) from exc
+
+                if self._max_tokens is not None:
+                    used = self._meter.total_tokens
+                    if used >= self._max_tokens:
+                        raise TriageEscalationError(
+                            f"max_tokens ({self._max_tokens}) exceeded "
+                            f"(used {used} tokens).", ctx
+                        ) from exc
+
+                if self._max_cost_usd is not None:
+                    spent = self._meter.cost_usd
+                    if spent >= self._max_cost_usd:
+                        raise TriageEscalationError(
+                            f"max_cost_usd ({self._max_cost_usd:.6f}) exceeded "
+                            f"(spent ${spent:.6f}).", ctx
+                        ) from exc
+
+                with dispatch_span(self._tracer, self._run_id, attempt) as _dispatch_span:
+                    action = await self._policy.dispatch(ctx)
+                    if action.kind == "escalate" and self._on_escalate is not None:
+                        override = await self._on_escalate(ctx)
+                        if override is not None:
+                            action = override
+                    set_span_dispatch_result(_dispatch_span, action.kind, failure_type.value)
+
+                metrics_record_recovery(
+                    self._otel_meter,
+                    failure_type=failure_type.value,
+                    action_kind=action.kind,
+                )
+                if action.kind in ("escalate", "abort"):
+                    metrics_record_recovery_end(
+                        self._otel_meter, failure_type=failure_type.value
+                    )
+                logger.info(
+                    "[triage] action dispatched",
+                    extra={
+                        "triage_event": "action_dispatched",
+                        "action_kind": action.kind,
+                        "failure_type": failure_type.value,
+                        "attempt": attempt,
+                    },
+                )
+                if self._on_recovery:
+                    _safe_hook(self._on_recovery, ctx, action)
+                attempt_history.append((failure_type, action.kind))
+                attempt += 1
+
+                kwargs = await self._execute_action(action, ctx, task, kwargs)
+
+                # Yield the retry event AFTER executing the action (which may
+                # have set _triage_hint in kwargs) so the hint is available.
+                yield StreamRetryEvent(
+                    attempt=attempt - 1,
+                    failure_type=failure_type,
+                    action_kind=action.kind,
+                    hint=kwargs.get("_triage_hint"),
+                )
 
     async def resume(self, token: str, *, action: RecoveryAction) -> Any:
         """Resume a previously suspended run.

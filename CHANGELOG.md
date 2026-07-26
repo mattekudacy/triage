@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.21.0] - 2026-07-26
+
+### Added
+- **`Agent.stream()`** — new method for async-generator callables (functions that `yield`).
+  On failure, classifies the exception, dispatches a recovery action per the policy, yields
+  a `StreamRetryEvent`, then re-starts the generator with updated kwargs. The caller discards
+  accumulated output on receiving a `StreamRetryEvent`. All existing caps
+  (`max_recovery_attempts`, `max_total_attempts`, `max_recovery_seconds`, `max_tokens`,
+  `max_cost_usd`), lifecycle hooks (`on_failure`, `on_recovery`, `on_escalate`), OTel spans,
+  metrics, and circuit-breaker success-signalling work unchanged.
+- **`StreamRetryEvent` dataclass** — new `triage/streaming.py`: `StreamRetryEvent(attempt,
+  failure_type, action_kind, hint)` yielded by `Agent.stream()` at each retry boundary.
+  Exported from `triage.__all__`.
+- **`Step.partial: bool = False`** — informational flag callers can set on steps that are
+  still in-progress mid-stream. Not enforced by triage; available for strategies and hooks
+  that inspect `ctx.trajectory`.
+- **Type guard between `run()` and `stream()`** — calling `Agent.run()` on an async-generator
+  callable raises `TypeError("use agent.stream()")`, and calling `Agent.stream()` on a plain
+  coroutine callable raises `TypeError("use agent.run()")`. Detection uses
+  `inspect.isasyncgenfunction()` on both the callable and its `__call__` method.
+
+---
+
 ## [0.20.0] - 2026-07-25
 
 ### Added

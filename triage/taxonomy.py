@@ -63,6 +63,7 @@ class Step:
     state_hash: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     idempotent: bool = False
+    partial: bool = False
 
 
 @dataclass
