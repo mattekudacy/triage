@@ -111,6 +111,7 @@ warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
 # Observability modules use conditional imports for optional OTel/metrics deps;
-# the type stubs pattern (assigning None/Any to typed variables) is intentional.
+# the fallback assignments (Tracer = Any, _otel_trace = None) deliberately
+# assign incompatible types — suppress only those two codes so real bugs stay visible.
 module = ["triage.observability.*"]
-ignore_errors = true
+disable_error_code = ["assignment", "misc"]

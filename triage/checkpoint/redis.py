@@ -85,5 +85,7 @@ class RedisCheckpointStore:
         ids = await self._redis.zrevrange(index, 0, 0)
         if not ids:
             return None
-        latest_id = ids[0].decode() if isinstance(ids[0], bytes) else ids[0]
+        raw = ids[0]
+        # zrevrange without withscores returns bytes | str members; cast for mypy.
+        latest_id: str = raw.decode() if isinstance(raw, bytes) else str(raw)
         return await self.load(latest_id)
