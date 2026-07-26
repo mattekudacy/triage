@@ -127,7 +127,7 @@ def record_run_start(meter: Any) -> None:
 
 
 def record_run_end(meter: Any, *, outcome: str, duration_s: float) -> None:
-    """Record run completion. ``outcome`` is ``"success"`` or ``"error"``."""
+    """Record run completion. ``outcome`` is ``"success"``, ``"error"``, or ``"cancelled"``."""
     inst = _get_instruments(meter)
     if inst is None:
         return

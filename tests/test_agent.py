@@ -1050,6 +1050,30 @@ async def test_cancelled_error_propagates_without_recovery():
     assert calls[0] == 1
 
 
+async def test_cancelled_run_emits_cancelled_metric(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A CancelledError must emit outcome='cancelled' to the metrics layer."""
+    import asyncio
+    import sys
+
+    recorded: list[str] = []
+
+    def fake_record_run_end(meter: Any, *, outcome: str, duration_s: float) -> None:
+        recorded.append(outcome)
+
+    monkeypatch.setattr(sys.modules["triage.agent"], "metrics_record_run_end", fake_record_run_end)
+
+    async def agent_fn(task: str, *, record_step: Any, **kw: Any) -> str:
+        raise asyncio.CancelledError("task cancelled")
+
+    policy = FailurePolicy(default=FailurePolicy.escalate_by_default())
+    ag = Agent(agent_fn, policy)
+
+    with pytest.raises(asyncio.CancelledError):
+        await ag.run("task")
+
+    assert recorded == ["cancelled"]
+
+
 # ── Lifecycle hooks ───────────────────────────────────────────────────────────
 
 

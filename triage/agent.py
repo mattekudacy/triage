@@ -692,6 +692,19 @@ class Agent:
                         duration_s=time.monotonic() - _run_start,
                     )
                     raise
+                except BaseException:
+                    # CancelledError / GeneratorExit: skip record_success() and
+                    # breaker update (correct — the run didn't finish), but still
+                    # emit a metric so cancelled runs appear in dashboards rather
+                    # than being silently dropped. Leave span status as UNSET —
+                    # tracing backends surface UNSET spans as "incomplete/cancelled",
+                    # which is more accurate than OK or ERROR.
+                    metrics_record_run_end(
+                        self._otel_meter,
+                        outcome="cancelled",
+                        duration_s=time.monotonic() - _run_start,
+                    )
+                    raise
         finally:
             _record_step_var.reset(rec_token)
             _update_state_var.reset(upd_token)
