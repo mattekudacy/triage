@@ -335,6 +335,17 @@ class Agent:
         ``None`` (default) disables this cap. Use alongside
         ``record_usage(Usage(cost_usd=...))`` calls in the agent body or via
         the ``LLMClassifier`` auto-reporting.
+    on_compensator_error:
+        Optional callback invoked when a saga compensator raises. Signature::
+
+            def on_compensator_error(step_index: int, exc: Exception) -> None:
+                notify_ops(f"refund for step {step_index} failed: {exc}")
+
+        Called before the warning is logged. The compensator error is still
+        swallowed after the callback — compensation is best-effort and the
+        checkpoint restore always proceeds. Use this hook to alert, record to
+        a dead-letter queue, or increment a metric. Exceptions raised inside
+        the hook are themselves swallowed (same as other lifecycle hooks).
     """
 
     def __init__(
@@ -360,6 +371,7 @@ class Agent:
         suspension_store: SuspensionStore | None = None,
         max_tokens: int | None = None,
         max_cost_usd: float | None = None,
+        on_compensator_error: Callable[[int, Exception], None] | None = None,
     ) -> None:
         self._fn = fn
         self._fn_is_async_gen = inspect.isasyncgenfunction(fn) or inspect.isasyncgenfunction(
@@ -390,6 +402,7 @@ class Agent:
         self._suspension_store: SuspensionStore = suspension_store or InMemorySuspensionStore()
         self._max_tokens = max_tokens
         self._max_cost_usd = max_cost_usd
+        self._on_compensator_error = on_compensator_error
 
         # Per-task run-state, isolated via a ContextVar. asyncio/anyio copy the
         # current Context when spawning a Task, so concurrent run() calls on
@@ -504,6 +517,7 @@ class Agent:
             suspension_store=self._suspension_store,
             max_tokens=self._max_tokens,
             max_cost_usd=self._max_cost_usd,
+            on_compensator_error=self._on_compensator_error,
         )
 
     def _build_failure_context(
@@ -1172,6 +1186,8 @@ class Agent:
                 if inspect.isawaitable(result):
                     await result
             except Exception as exc:
+                if self._on_compensator_error:
+                    _safe_hook(self._on_compensator_error, step_index, exc)
                 logger.warning(
                     "[triage] compensator error",
                     extra={
