@@ -5,7 +5,7 @@ type to a recovery strategy. This document tracks what has shipped and what come
 
 ---
 
-## Done (v0.1–v0.21)
+## Done (v0.1–v0.23)
 
 | Version | Feature                           | Description                                                                                                                                                                                                                   |
 | ------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -30,6 +30,8 @@ type to a recovery strategy. This document tracks what has shipped and what come
 | v0.19   | Native sync-agent support         | Plain `def` callables accepted by `Agent`; run via `anyio.to_thread.run_sync()`; all policy, checkpointing, hooks, and ContextVar injection unchanged                                                                         |
 | v0.20   | Persistent circuit breaker state  | `BreakerStore` protocol + `RedisBreakerStore`; `CircuitBreaker(store=...)` shares OPEN/HALF_OPEN state across workers and survives process restarts; switches to wall-clock timestamps automatically when a store is attached |
 | v0.21   | Streaming agent support           | `Agent.stream()` for async-generator callables; `StreamRetryEvent` yielded at retry boundaries; `Step.partial` flag; type guard between `run()` and `stream()`                                                                |
+| v0.22   | Redis suspension store            | `RedisSuspensionStore` — durable human-in-the-loop pause/resume backed by Redis; `key_prefix` and `ttl_seconds` options; reuses `serialize_run`/`deserialize_run`                                                            |
+| v0.23   | Cost model for `max_cost_usd`     | `triage.pricing` module with per-model price table (Anthropic models); `LLMClassifier._report_usage()` auto-populates `cost_usd` from token counts; `lookup_cost()` public override hook                                     |
 
 ---
 
@@ -38,23 +40,6 @@ type to a recovery strategy. This document tracks what has shipped and what come
 Items are grouped by urgency. Within each group, order is rough priority.
 
 ### Feature completeness
-
-- **`RedisSuspensionStore`** — the only real gap in the current feature set.
-  `serialize_run` / `deserialize_run` exist and are tested specifically to enable this,
-  so it is mostly written. Until it lands, `InMemorySuspensionStore` loses pending
-  human approvals on process restart — which is wrong for the one feature whose
-  correctness most depends on durability.
-
-- **Cost model for `max_cost_usd`** — `Usage.cost_usd` is entirely caller-supplied; there
-  is no price table anywhere in the library. Most users will leave it at `0.0` and get a
-  dollar cap that never fires. A small per-model price table (Anthropic, OpenAI, common
-  OSS checkpoints) with an override hook would make the feature work as its name implies.
-
-- **Preemptive budget enforcement** — budgets are checked only at failure points, so
-  overage is detected after the fact rather than prevented. `agent.py` documents this
-  honestly (the "not a hard token ceiling" note explains failure-point enforcement is
-  deliberate). Noted here as a design choice that is disclosed, not a defect; promote if
-  concrete demand emerges.
 
 - **OpenAI Agents SDK adapter** — `wrap_openai_agents()`; deprioritised until the SDK
   stabilises. Largest user pool currently unreachable; the adapter mapping is mostly

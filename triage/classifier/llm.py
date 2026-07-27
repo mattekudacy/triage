@@ -34,6 +34,7 @@ from typing import Any
 
 import anyio
 
+from triage.pricing import lookup_cost
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
 from triage.usage import Usage
@@ -216,7 +217,9 @@ class LLMClassifier:
             # OpenAI:    .prompt_tokens / .completion_tokens
             input_t = getattr(u, "input_tokens", None) or getattr(u, "prompt_tokens", 0) or 0
             output_t = getattr(u, "output_tokens", None) or getattr(u, "completion_tokens", 0) or 0
-            record_fn(Usage(input_tokens=int(input_t), output_tokens=int(output_t)))
+            in_i, out_i = int(input_t), int(output_t)
+            cost = lookup_cost(self._model, in_i, out_i)
+            record_fn(Usage(input_tokens=in_i, output_tokens=out_i, cost_usd=cost))
         except Exception:
             pass  # usage reporting is best-effort; never break classification
 
