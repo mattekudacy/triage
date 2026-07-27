@@ -32,6 +32,7 @@ type to a recovery strategy. This document tracks what has shipped and what come
 | v0.21   | Streaming agent support           | `Agent.stream()` for async-generator callables; `StreamRetryEvent` yielded at retry boundaries; `Step.partial` flag; type guard between `run()` and `stream()`                                                                |
 | v0.22   | Redis suspension store            | `RedisSuspensionStore` — durable human-in-the-loop pause/resume backed by Redis; `key_prefix` and `ttl_seconds` options; reuses `serialize_run`/`deserialize_run`                                                            |
 | v0.23   | Cost model for `max_cost_usd`     | `triage.pricing` module with per-model price table (Anthropic models); `LLMClassifier._report_usage()` auto-populates `cost_usd` from token counts; `lookup_cost()` public override hook                                     |
+| v0.24   | Saga / compensating rollback      | `record_compensator(step_index, fn)` injected kwarg + `get_compensator_recorder()` contextvar; on ROLLBACK, compensators run in reverse step-index order before checkpoint restore; errors swallowed and logged; `triage/strategies/saga.py` |
 
 ---
 
@@ -44,10 +45,6 @@ Items are grouped by urgency. Within each group, order is rough priority.
 - **OpenAI Agents SDK adapter** — `wrap_openai_agents()`; deprioritised until the SDK
   stabilises. Largest user pool currently unreachable; the adapter mapping is mostly
   mechanical once the SDK settles.
-
-- **Saga / compensating rollback** — reverse-order compensate callables that undo side
-  effects on rollback. Highest complexity on the roadmap. Build only when there is
-  concrete user demand.
 
 ### Evidence and positioning
 

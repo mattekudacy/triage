@@ -12,6 +12,7 @@ from triage.agent import (
     TriageEscalationError,
     TriageSuspendedError,
     agent,
+    get_compensator_recorder,
     get_recorder,
     get_state_updater,
     get_usage_recorder,
@@ -59,6 +60,7 @@ __all__ = [
     "serialize_run",
     "deserialize_run",
     "agent",
+    "get_compensator_recorder",
     "get_recorder",
     "get_state_updater",
     "get_usage_recorder",
@@ -89,7 +91,7 @@ __all__ = [
     "RedisSuspensionStore",
 ]
 
-__version__ = "0.23.0"
+__version__ = "0.24.0"
 
 
 def __getattr__(name: str) -> object:

@@ -17,6 +17,8 @@ from triage.classifier.llm import LLMClassifier
 from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
 
+_MODEL = "claude-haiku-4-5-20251001"  # test fixture model — avoids hitting the no-default guard
+
 
 def make_step(
     index: int = 0,
@@ -91,7 +93,7 @@ def _openai_async_client(response_text: str) -> MagicMock:
 
 @pytest.mark.parametrize("ft", list(FailureType))
 def test_anthropic_classifies_each_failure_type(ft):
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         MockAnthropic.return_value = _anthropic_client(ft.value)
         result = clf.classify(traj(make_step(0)), "task")
@@ -99,7 +101,7 @@ def test_anthropic_classifies_each_failure_type(ft):
 
 
 def test_anthropic_returns_unknown_on_unrecognized_response():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         MockAnthropic.return_value = _anthropic_client("not_a_valid_type")
         result = clf.classify(traj(make_step(0)), "task")
@@ -107,7 +109,7 @@ def test_anthropic_returns_unknown_on_unrecognized_response():
 
 
 def test_anthropic_returns_unknown_on_api_exception():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         client = MagicMock()
         client.messages.create.side_effect = Exception("network error")
@@ -117,7 +119,7 @@ def test_anthropic_returns_unknown_on_api_exception():
 
 
 def test_anthropic_returns_unknown_on_empty_content():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         msg = MagicMock()
         msg.content = []
@@ -129,7 +131,7 @@ def test_anthropic_returns_unknown_on_empty_content():
 
 
 def test_anthropic_client_created_once_and_reused():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         MockAnthropic.return_value = _anthropic_client("unknown")
         clf.classify(traj(make_step(0)), "task")
@@ -147,7 +149,7 @@ def test_anthropic_custom_model_passed_to_client():
 
 
 def test_anthropic_classify_is_case_insensitive():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         MockAnthropic.return_value = _anthropic_client("  LOOP_DETECTED  ")
         result = clf.classify(traj(make_step(0)), "task")
@@ -159,7 +161,7 @@ def test_anthropic_classify_is_case_insensitive():
 
 @pytest.mark.parametrize("ft", list(FailureType))
 async def test_anthropic_aclassify_classifies_each_failure_type(ft):
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
         MockAsyncAnthropic.return_value = _anthropic_async_client(ft.value)
         result = await clf.aclassify(traj(make_step(0)), "task")
@@ -167,7 +169,7 @@ async def test_anthropic_aclassify_classifies_each_failure_type(ft):
 
 
 async def test_anthropic_aclassify_returns_unknown_on_api_exception():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
         client = MagicMock()
         client.messages.create = AsyncMock(side_effect=Exception("network error"))
@@ -178,7 +180,7 @@ async def test_anthropic_aclassify_returns_unknown_on_api_exception():
 
 async def test_anthropic_aclassify_uses_async_client_not_sync():
     """aclassify() must build/use AsyncAnthropic, never the sync Anthropic client."""
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with (
         patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic,
         patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic,
@@ -190,7 +192,7 @@ async def test_anthropic_aclassify_uses_async_client_not_sync():
 
 
 async def test_anthropic_aclassify_async_client_created_once_and_reused():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
         MockAsyncAnthropic.return_value = _anthropic_async_client("unknown")
         await clf.aclassify(traj(make_step(0)), "task")
@@ -200,7 +202,7 @@ async def test_anthropic_aclassify_async_client_created_once_and_reused():
 
 async def test_sync_and_async_clients_are_independent():
     """Calling both classify() and aclassify() builds separate sync/async clients."""
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with (
         patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic,
         patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic,
@@ -353,7 +355,7 @@ class _FakeStatusError(Exception):
 
 def test_classify_retries_once_on_rate_limit_then_succeeds(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda *_: None)
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         client = MagicMock()
         client.messages.create.side_effect = [
@@ -368,7 +370,7 @@ def test_classify_retries_once_on_rate_limit_then_succeeds(monkeypatch):
 
 def test_classify_gives_up_after_max_retries_exhausted(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda *_: None)
-    clf = LLMClassifier(max_retries=1)
+    clf = LLMClassifier(model=_MODEL, max_retries=1)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         client = MagicMock()
         client.messages.create.side_effect = RateLimitError("still rate limited")
@@ -379,7 +381,7 @@ def test_classify_gives_up_after_max_retries_exhausted(monkeypatch):
 
 
 def test_classify_retries_on_retryable_status_code():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with (
         patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic,
         patch("time.sleep") as mock_sleep,
@@ -397,7 +399,7 @@ def test_classify_retries_on_retryable_status_code():
 
 def test_classify_does_not_retry_non_retryable_error():
     """A non-transient error (e.g. malformed request) must not consume a retry."""
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         client = MagicMock()
         client.messages.create.side_effect = ValueError("bad request")
@@ -408,7 +410,7 @@ def test_classify_does_not_retry_non_retryable_error():
 
 
 def test_classify_max_retries_zero_disables_retry():
-    clf = LLMClassifier(max_retries=0)
+    clf = LLMClassifier(model=_MODEL, max_retries=0)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         client = MagicMock()
         client.messages.create.side_effect = RateLimitError("rate limited")
@@ -426,7 +428,7 @@ async def test_aclassify_retries_once_on_rate_limit_then_succeeds(monkeypatch):
 
     monkeypatch.setattr(_anyio, "sleep", _no_sleep)
 
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
         client = MagicMock()
         client.messages.create = AsyncMock(
@@ -446,7 +448,7 @@ async def test_aclassify_gives_up_after_max_retries_exhausted(monkeypatch):
 
     monkeypatch.setattr(_anyio, "sleep", _no_sleep)
 
-    clf = LLMClassifier(max_retries=1)
+    clf = LLMClassifier(model=_MODEL, max_retries=1)
     with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
         client = MagicMock()
         client.messages.create = AsyncMock(side_effect=RateLimitError("still rate limited"))
@@ -457,7 +459,7 @@ async def test_aclassify_gives_up_after_max_retries_exhausted(monkeypatch):
 
 
 async def test_aclassify_does_not_retry_non_retryable_error():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
         client = MagicMock()
         client.messages.create = AsyncMock(side_effect=ValueError("bad request"))
@@ -471,7 +473,7 @@ async def test_aclassify_does_not_retry_non_retryable_error():
 
 
 def test_prompt_includes_task_and_step_info():
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         client = _anthropic_client("unknown")
         MockAnthropic.return_value = client
@@ -484,7 +486,7 @@ def test_prompt_includes_task_and_step_info():
 
 
 def test_max_trajectory_steps_limits_prompt():
-    clf = LLMClassifier(max_trajectory_steps=3)
+    clf = LLMClassifier(model=_MODEL, max_trajectory_steps=3)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
         client = _anthropic_client("unknown")
         MockAnthropic.return_value = client
@@ -509,7 +511,7 @@ def test_env_var_base_url_used_when_no_arg(monkeypatch):
 def test_env_var_api_key_used_when_no_arg(monkeypatch):
     monkeypatch.setenv("TRIAGE_LLM_API_KEY", "test-key")
     monkeypatch.delenv("TRIAGE_LLM_BASE_URL", raising=False)
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     assert clf._api_key == "test-key"
 
 
@@ -521,24 +523,22 @@ def test_explicit_arg_overrides_env_var(monkeypatch):
     assert clf._model == "explicit-model"
 
 
-def test_default_model_anthropic_when_no_base_url(monkeypatch):
-    monkeypatch.delenv("TRIAGE_LLM_BASE_URL", raising=False)
+def test_no_model_and_no_env_raises_value_error(monkeypatch):
     monkeypatch.delenv("TRIAGE_LLM_MODEL", raising=False)
+    with pytest.raises(ValueError, match="LLMClassifier requires a model"):
+        LLMClassifier()
+
+
+def test_model_from_env_var_is_accepted(monkeypatch):
+    monkeypatch.setenv("TRIAGE_LLM_MODEL", "claude-haiku-4-5-20251001")
     clf = LLMClassifier()
     assert clf._model == "claude-haiku-4-5-20251001"
-
-
-def test_default_model_llama_when_base_url_set_via_env(monkeypatch):
-    monkeypatch.setenv("TRIAGE_LLM_BASE_URL", "http://localhost:11434/v1")
-    monkeypatch.delenv("TRIAGE_LLM_MODEL", raising=False)
-    clf = LLMClassifier()
-    assert clf._model == "llama3.2"
 
 
 def test_env_base_url_routes_to_openai_backend(monkeypatch):
     monkeypatch.setenv("TRIAGE_LLM_BASE_URL", "http://localhost:11434/v1")
     monkeypatch.setenv("TRIAGE_LLM_MODEL", "llama3.2")
-    clf = LLMClassifier()
+    clf = LLMClassifier(model=_MODEL)
     with patch(_OPENAI_PATCH) as MockOpenAI:
         MockOpenAI.return_value = _openai_client("unknown")
         clf.classify(traj(make_step(0)), "task")

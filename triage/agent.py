@@ -76,6 +76,10 @@ _record_usage_var: contextvars.ContextVar[Callable[[Usage], None] | None] = cont
     "triage_record_usage", default=None
 )
 
+_record_compensator_var: contextvars.ContextVar[
+    Callable[[int, Callable[[], Any]], None] | None
+] = contextvars.ContextVar("triage_record_compensator", default=None)
+
 
 def get_recorder() -> Callable[[Step], None]:
     """Return the ``record_step`` callback for the current triage run.
@@ -111,6 +115,29 @@ def get_state_updater() -> Callable[[dict[str, Any]], None]:
     fn = _update_state_var.get()
     if fn is None:
         raise RuntimeError("get_state_updater() called outside a triage Agent.run() context.")
+    return fn
+
+
+def get_compensator_recorder() -> Callable[[int, Callable[[], Any]], None]:
+    """Return the ``record_compensator`` callback for the current triage run.
+
+    Use this inside a wrapped agent to register a compensating function for
+    a step without changing the function signature::
+
+        from triage.agent import get_compensator_recorder
+
+        async def my_agent(task: str, *, record_step, **kwargs) -> str:
+            charge_id = await charge_card(amount)
+            record_step(Step(index=1, action="charge_card"))
+            get_compensator_recorder()(1, lambda: refund_card(charge_id))
+
+    Raises ``RuntimeError`` if called outside a triage ``Agent.run()`` context.
+    """
+    fn = _record_compensator_var.get()
+    if fn is None:
+        raise RuntimeError(
+            "get_compensator_recorder() called outside a triage Agent.run() context."
+        )
     return fn
 
 
@@ -155,6 +182,9 @@ class _RunState:
     last_ctx: FailureContext | None = None
     run_id: str | None = None
     meter: UsageMeter = field(default_factory=UsageMeter)
+    # Saga: (step_index, async_compensator) pairs accumulated during a run iteration.
+    # Cleared at the top of each loop iteration; run in reverse order on ROLLBACK.
+    compensators: list[tuple[int, Callable[[], Any]]] = field(default_factory=list)
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
@@ -431,6 +461,14 @@ class Agent:
     def _meter(self) -> UsageMeter:
         return self._run_state.meter
 
+    @property
+    def _compensators(self) -> list[tuple[int, Callable[[], Any]]]:
+        return self._run_state.compensators
+
+    @_compensators.setter
+    def _compensators(self, value: list[tuple[int, Callable[[], Any]]]) -> None:
+        self._run_state.compensators = value
+
     def clone(self) -> Agent:
         """Return a new Agent sharing the same policy, classifier, and checkpoint
         store but with fresh per-run state, independent lifecycle hooks, and its
@@ -671,6 +709,7 @@ class Agent:
         rec_token = _record_step_var.set(self._record_step)
         upd_token = _update_state_var.set(self._update_state)
         usg_token = _record_usage_var.set(self._record_usage)
+        cmp_token = _record_compensator_var.set(self._record_compensator)
         _run_start = time.monotonic()
         try:
             async with run_span(self._tracer, self._run_id, task) as _root_span:
@@ -721,6 +760,10 @@ class Agent:
                 pass
             try:
                 _record_usage_var.reset(usg_token)
+            except ValueError:
+                pass
+            try:
+                _record_compensator_var.reset(cmp_token)
             except ValueError:
                 pass
 
@@ -780,6 +823,7 @@ class Agent:
             self._trajectory = Trajectory()
             self._current_state = {}
             self._pending_checkpoints = []
+            self._compensators = []
 
             try:
                 async for chunk in self._fn(
@@ -787,6 +831,7 @@ class Agent:
                     record_step=self._record_step,
                     update_state=self._update_state,
                     record_usage=self._record_usage,
+                    record_compensator=self._record_compensator,
                     **kwargs,
                 ):
                     yield chunk
@@ -872,6 +917,7 @@ class Agent:
             self._trajectory = Trajectory()
             self._current_state = {}
             self._pending_checkpoints = []
+            self._compensators = []
 
             try:
                 if self._fn_is_async:
@@ -880,6 +926,7 @@ class Agent:
                         record_step=self._record_step,
                         update_state=self._update_state,
                         record_usage=self._record_usage,
+                        record_compensator=self._record_compensator,
                         **kwargs,
                     )
                 else:
@@ -890,6 +937,7 @@ class Agent:
                             record_step=self._record_step,
                             update_state=self._update_state,
                             record_usage=self._record_usage,
+                            record_compensator=self._record_compensator,
                             **kwargs,
                         )
                     )
@@ -962,6 +1010,8 @@ class Agent:
                 raise TriageEscalationError(
                     "ROLLBACK requested but no checkpoint is available.", ctx
                 )
+            # Run saga compensators in reverse step-index order before restoring state.
+            await self._run_compensators()
             checkpoint = loaded
             self._trajectory = Trajectory.from_steps(checkpoint.trajectory_snapshot)
             self._last_checkpoint_id = checkpoint.id
@@ -1105,6 +1155,31 @@ class Agent:
 
     def _record_usage(self, usage: Usage) -> None:
         self._meter.record(usage)
+
+    def _record_compensator(self, step_index: int, fn: Callable[[], Any]) -> None:
+        self._compensators.append((step_index, fn))
+
+    async def _run_compensators(self) -> None:
+        """Run registered saga compensators in reverse step-index order.
+
+        Errors are logged but never abort the rollback — compensation is
+        best-effort; the checkpoint restore always proceeds.
+        """
+        ordered = sorted(self._compensators, key=lambda t: t[0], reverse=True)
+        for step_index, fn in ordered:
+            try:
+                result = fn()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                logger.warning(
+                    "[triage] compensator error",
+                    extra={
+                        "triage_event": "compensator_error",
+                        "step_index": step_index,
+                        "error": str(exc),
+                    },
+                )
 
     async def _drain_checkpoints(self) -> None:
         pending, self._pending_checkpoints = self._pending_checkpoints, []

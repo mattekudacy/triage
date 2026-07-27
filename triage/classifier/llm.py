@@ -109,11 +109,17 @@ class LLMClassifier:
         # Explicit args take precedence; env vars are the fallback.
         self._base_url = base_url or os.environ.get("TRIAGE_LLM_BASE_URL") or None
         self._api_key = api_key or os.environ.get("TRIAGE_LLM_API_KEY") or None
-        self._model = (
-            model
-            or os.environ.get("TRIAGE_LLM_MODEL")
-            or ("claude-haiku-4-5-20251001" if self._base_url is None else "llama3.2")
-        )
+        resolved_model = model or os.environ.get("TRIAGE_LLM_MODEL")
+        if not resolved_model:
+            raise ValueError(
+                "LLMClassifier requires a model. Pass model= explicitly or set "
+                "the TRIAGE_LLM_MODEL environment variable.\n"
+                "  Anthropic: LLMClassifier(model='claude-haiku-4-5-20251001')\n"
+                "  OpenAI:    LLMClassifier(base_url='https://api.openai.com/v1',\n"
+                "                           model='gpt-4o-mini')\n"
+                "  Ollama:    LLMClassifier(base_url='http://localhost:11434/v1', model='llama3.2')"
+            )
+        self._model = resolved_model
         self._max_trajectory_steps = max_trajectory_steps
         # Retries only kick in for transient errors (429/5xx/timeout/connection) —
         # classification runs on the failure path, so this budget stays small by

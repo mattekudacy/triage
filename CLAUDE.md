@@ -420,3 +420,30 @@ Internal (may change): `FailurePolicy._FIELD_MAP`, `RecoveryAction.params` layou
   Tests in `tests/test_observability_otel.py` (5 tests skipped without `opentelemetry-sdk`,
   7 tests always run to verify the no-op path).
 
+## v0.23 changes (shipped)
+
+- **Cost model for `max_cost_usd`** — new `triage/pricing.py` module: `PRICE_TABLE` dict mapping
+  model ID prefixes to `(input_per_token_usd, output_per_token_usd)` tuples (Anthropic models only;
+  rates from 2026-06-24). `lookup_cost(model, input_tokens, output_tokens) -> float` does longest-prefix
+  matching so both short IDs (`"claude-haiku-4-5"`) and dated variants
+  (`"claude-haiku-4-5-20251001"`) resolve correctly; unknown models return `0.0`.
+  `LLMClassifier._report_usage()` now calls `lookup_cost(self._model, ...)` and passes the
+  computed value as `cost_usd` into `Usage`, so `max_cost_usd` enforcement actually fires
+  for Anthropic-backend classifiers. Users can patch `PRICE_TABLE` at runtime to add custom
+  model rates. `tests/test_pricing.py` — 16 tests covering known models, dated variants,
+  unknown fallback, and override.
+
+## v0.24 changes (shipped)
+
+- **Saga / compensating rollback** — new `triage/strategies/saga.py` module with
+  `compensating_rollback(checkpoint_id=None)` strategy. Agents register undo callables via
+  `record_compensator(step_index, fn)` (injected kwarg alongside `record_step`) or via
+  `triage.agent.get_compensator_recorder()` (contextvar accessor). Both sync and async
+  compensators are supported. On any `ROLLBACK` action (whether via `compensating_rollback()`
+  or plain `RecoveryAction.ROLLBACK`), `agent.py` runs all registered compensators in
+  **reverse step-index order** before restoring the checkpoint. Compensator errors are logged
+  (`triage_event: "compensator_error"`) but never abort recovery — compensation is best-effort.
+  Compensators are in-memory only (callables can't be serialized); they are cleared at the
+  top of each loop iteration so retries start with an empty list.
+  `get_compensator_recorder` exported from `triage.__all__`. `tests/test_saga.py` — 11 tests.
+
