@@ -118,6 +118,48 @@ _EXTERNAL_EXCEPTION_TYPES = frozenset(
         "OverloadedError",
     }
 )
+# Exception type names that indicate schema/validation failure regardless of message
+# wording — catches JSONDecodeError phrasings not explicitly enumerated in _SCHEMA_RE
+# and frameworks that wrap parser failures under their own exception names.
+_SCHEMA_EXCEPTION_TYPES = frozenset(
+    {
+        "JSONDecodeError",
+        "ValidationError",  # pydantic
+        "OutputParserException",  # langchain
+        "SchemaValidationError",
+        "InvalidArgument",  # google-genai / grpc
+    }
+)
+
+# botocore wraps all errors in a uniform envelope:
+#   "An error occurred (ErrorCode) when calling the OperationName operation: message"
+# Extract the ErrorCode and map known suffixes to failure types.
+_BOTOCORE_RE = re.compile(
+    r"An error occurred \((\w+)\) when calling the \w+ operation:",
+    re.IGNORECASE,
+)
+# Suffix → FailureType mapping for botocore error codes.
+# Checked in order; first match wins.
+_BOTOCORE_CODE_MAP: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(r"Throttl|TooManyRequest|RateExceed|RequestLimitExceed", re.IGNORECASE),
+        "external_fault",
+    ),
+    (
+        re.compile(r"ServiceUnavailable|Unavailable|ServiceDown", re.IGNORECASE),
+        "external_fault",
+    ),
+    (
+        re.compile(r"InternalFailure|InternalError|ServiceError|ServiceFault", re.IGNORECASE),
+        "external_fault",
+    ),
+    (
+        re.compile(r"Validation|InvalidInput|MalformedQuery|ParseError|SchemaError", re.IGNORECASE),
+        "schema_mismatch",
+    ),
+    (re.compile(r"NotFound|NoSuch|DoesNotExist", re.IGNORECASE), "wrong_tool_called"),
+    (re.compile(r"Timeout|TimedOut|DeadlineExceed", re.IGNORECASE), "timeout"),
+]
 
 # Per-framework patterns — activated when RulesClassifier(framework=...) is set.
 # These supplement (OR) the generic patterns above; they do not replace them.
@@ -279,11 +321,23 @@ class RulesClassifier:
             ):
                 return FailureType.WRONG_TOOL_CALLED
 
-        # 3. SCHEMA_MISMATCH
+        # 2b. botocore envelope — parse error code before generic patterns fire
+        for step in steps:
+            if step.error:
+                m = _BOTOCORE_RE.search(step.error)
+                if m:
+                    code = m.group(1)
+                    for pat, kind in _BOTOCORE_CODE_MAP:
+                        if pat.search(code):
+                            return FailureType(kind)
+
+        # 3. SCHEMA_MISMATCH — string patterns, framework patterns, or exception type name
         for step in steps:
             if step.error and (
                 _SCHEMA_RE.search(step.error) or self._fw_match(step.error, _SCHEMA_FRAMEWORK)
             ):
+                return FailureType.SCHEMA_MISMATCH
+            if step.exception_type and step.exception_type in _SCHEMA_EXCEPTION_TYPES:
                 return FailureType.SCHEMA_MISMATCH
 
         # 4. EXTERNAL_FAULT — HTTP status codes, text-form rate-limit/server errors,

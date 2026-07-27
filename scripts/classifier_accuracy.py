@@ -17,11 +17,13 @@ Four-block precision / recall report for RulesClassifier.
       transcribed from published formats.  Corpus A was used to guide the v0.25
       pattern fixes, so 100% there reflects tuning, not generalization.
 
-  Block 4 — Corpus B (genuine held-out, 50% = 10/20)
-      Assembled from sources not seen when writing or fixing the patterns:
+  Block 4 — Corpus B (training data after v0.26 fixes, 90% = 18/20)
+      Assembled from sources not seen when writing the v0.25 patterns:
       botocore, google-genai, aiohttp, requests/urllib3, and structural
-      phrasings that differ from corpus A.  Scored once without editing
-      rules.py.  This is the number to improve against.
+      phrasings that differ from corpus A.  Corpus B's misses guided the
+      v0.26 botocore regex and _SCHEMA_EXCEPTION_TYPES fixes — it is now
+      training data, same status as corpus A.  Remaining 2 misses are
+      improvement targets for the next release.
 
 Run:
     PYTHONPATH=. .venv/bin/python scripts/classifier_accuracy.py
@@ -182,15 +184,16 @@ def main() -> None:
     # Block 4
     if b_total > 0:
         ratio = f"{b_ok}/{b_total} = {b_ok / b_total:.0%}"
-        print(f"Block 4 — Corpus B held-out  ({ratio})")
-        print("  Sources not seen when writing the patterns: botocore,")
+        print(f"Block 4 — Corpus B (training data after v0.26)  ({ratio})")
+        print("  Sources not seen when writing v0.25 patterns: botocore,")
         print("  google-genai, aiohttp, requests/urllib3, novel phrasings.")
-        print("  Scored once without editing rules.py. This is the real number.")
+        print("  Corpus B's misses guided the v0.26 fixes — it is now")
+        print("  training data. 90% reflects tuning, not generalization.")
         if b_fails:
-            print("  Misses (improvement targets for next release):")
+            print("  Remaining misses (targets for next release):")
             print("\n".join(b_fails))
     else:
-        print("Block 4 — Corpus B held-out  [SKIPPED]")
+        print("Block 4 — Corpus B  [SKIPPED]")
     print()
 
     print("─" * 65)
