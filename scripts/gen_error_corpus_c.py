@@ -243,8 +243,7 @@ def build_corpus() -> list[dict]:
         _entry(
             "timeout",
             "DeadlineExceeded",
-            "504 Deadline of 60.0s exceeded while calling "
-            "aiplatform.googleapis.com:443",
+            "504 Deadline of 60.0s exceeded while calling aiplatform.googleapis.com:443",
             "vertex-aiplatform-docs",
         )
     )
@@ -252,8 +251,7 @@ def build_corpus() -> list[dict]:
         _entry(
             "wrong_tool_called",
             "NotFound",
-            "404 Endpoint projects/123/locations/us-central1/endpoints/456 "
-            "is not found.",
+            "404 Endpoint projects/123/locations/us-central1/endpoints/456 is not found.",
             "vertex-aiplatform-docs",
         )
     )
@@ -274,8 +272,7 @@ def build_corpus() -> list[dict]:
         _entry(
             "wrong_tool_called",
             "ToolException",
-            "Error: Could not find tool with name `get_current_weather`. "
-            "Please use a valid tool.",
+            "Error: Could not find tool with name `get_current_weather`. Please use a valid tool.",
             "llamaindex-docs",
         )
     )
@@ -312,8 +309,7 @@ def build_corpus() -> list[dict]:
         _entry(
             "unknown",
             "PermissionError",
-            "Permission denied: caller does not have required IAM role "
-            "'roles/aiplatform.user'",
+            "Permission denied: caller does not have required IAM role 'roles/aiplatform.user'",
             "novel-iam",
         )
     )
@@ -337,9 +333,7 @@ if __name__ == "__main__":
     out.write_text(json.dumps(corpus, indent=2))
     print(f"Wrote {len(corpus)} entries to {out}")
     captured = sum(1 for c in corpus if c.get("provenance") == "captured")
-    transcribed = sum(
-        1 for c in corpus if str(c.get("provenance", "")).startswith("transcribed")
-    )
+    transcribed = sum(1 for c in corpus if str(c.get("provenance", "")).startswith("transcribed"))
     print(f"  captured: {captured}, transcribed: {transcribed}")
     labels = (
         "schema_mismatch",
