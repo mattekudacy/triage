@@ -4,14 +4,24 @@ scripts/bench_synthetic.py
 Mechanism demo (synthetic) — no API keys required.
 
 This is a routing demonstration, not a real-world accuracy measurement.
-The tasks are constructed so that the correct recovery hint actually changes
-the outcome — a misclassification that delivers the wrong hint will still
-fail — but the failure bodies are synthetic. Do not read the numbers as
-evidence of production accuracy.
+The tasks are constructed so that the correct recovery hint changes the
+outcome — a misclassification that delivers the wrong hint still fails.
+Do not read the numbers as evidence of production accuracy.
 
-To measure classification accuracy against real traces, use the labeled
-corpus in tests/test_classifier_rules.py or build a labeled JSONL dataset
-and call RulesClassifier.fit() / LLMClassifier on it.
+Design
+------
+Both arms (triage + no-recovery baseline) call the same _task_body(),
+which ensures the only variable between them is triage's classification
+and routing.
+
+  * external_fault: transient — any retry heals it, hint irrelevant.
+  * wrong_tool:     requires "manifest" in the hint to succeed.
+  * schema_mismatch: requires "schema" in the hint to succeed.
+
+The no-recovery baseline retries up to 3 times with no hint, so it
+recovers the transient faults (~50%) but not the routing-sensitive ones.
+The gap is attributable precisely to the two types where classification
+matters. Conceding the transient case makes the comparison honest.
 
 Run:
     PYTHONPATH=. .venv/bin/python scripts/bench_synthetic.py
@@ -26,49 +36,7 @@ from triage.policy import FailurePolicy, RecoveryAction
 from triage.strategies.retry import retry_with_tool_manifest
 from triage.taxonomy import FailureContext, Step
 
-# ── shared task logic ──────────────────────────────────────────────────────────
-#
-# Both arms call _task_body with the same task string.  Success depends on
-# the hint being *correct for the failure type*:
-#   - external_fault  → hint must contain "backoff" or "retry"
-#   - wrong_tool      → hint must contain "manifest"
-#   - schema_mismatch → hint must contain "schema"
-#
-# A misclassification that routes a schema error through backoff_and_retry
-# delivers a hint like "External fault. Retry." — that hint does NOT contain
-# "schema", so the task stays failed.  The number therefore measures routing
-# correctness, not just hint presence.
-
-_ATTEMPT: dict[str, int] = {}
-
-
-def _task_body(task: str, attempt: int, hint: str) -> str:
-    """Shared failure/success logic for both arms.
-
-    First call always raises.  Subsequent calls succeed only if the hint
-    matches the failure type that was injected.
-    """
-    kind = task.split(":")[0]
-
-    if attempt == 0:
-        if kind == "external_fault":
-            raise RuntimeError("503 Service Unavailable")
-        if kind == "wrong_tool":
-            raise RuntimeError("Tool 'deprecated_tool' not found in manifest")
-        if kind == "schema_mismatch":
-            raise RuntimeError("JSON parse error: unexpected token")
-
-    # Recovery attempt — hint must be correct for the failure type
-    if kind == "external_fault" and ("retry" in hint or "backoff" in hint):
-        return f"ok:{task}"
-    if kind == "wrong_tool" and "manifest" in hint:
-        return f"ok:{task}"
-    if kind == "schema_mismatch" and "schema" in hint:
-        return f"ok:{task}"
-
-    # Wrong hint (misclassification) or no hint at all → still failing
-    raise RuntimeError(f"hint {hint!r} does not resolve {kind}")
-
+# ── shared failure logic ───────────────────────────────────────────────────────
 
 TASKS = [
     "external_fault:fetch_weather",
@@ -80,38 +48,69 @@ TASKS = [
 ]
 
 
-# ── triage-wrapped agent ───────────────────────────────────────────────────────
+def _task_body(task: str, attempt: int, hint: str) -> str:
+    """Shared success/failure logic used by both arms.
 
+    First attempt always raises.  Recovery succeeds only when the hint
+    matches the failure type:
+    - external_fault:  any retry heals it (transient by definition)
+    - wrong_tool:      hint must contain "manifest"
+    - schema_mismatch: hint must contain "schema"
+    """
+    kind = task.split(":")[0]
 
-async def triage_agent(task: str, *, record_step, **kwargs) -> str:
-    hint = kwargs.get("_triage_hint", "")
-    is_recovery = bool(hint)
-
-    if not is_recovery:
-        kind = task.split(":")[0]
+    if attempt == 0:
         error_map = {
             "external_fault": "503 Service Unavailable",
             "wrong_tool": "Tool 'deprecated_tool' not found in manifest",
             "schema_mismatch": "JSON parse error: unexpected token",
         }
-        error = error_map.get(kind, "unknown error")
-        record_step(Step(index=0, action=task, error=error))
-        raise RuntimeError(error)
+        raise RuntimeError(error_map.get(kind, "unknown error"))
 
-    return _task_body(task, 1, hint)
+    if kind == "external_fault":
+        return f"ok:{task}"  # transient — heals on any retry, no hint required
+    if kind == "wrong_tool" and "manifest" in hint:
+        return f"ok:{task}"
+    if kind == "schema_mismatch" and "schema" in hint:
+        return f"ok:{task}"
+
+    raise RuntimeError(f"hint {hint!r} does not resolve {kind}")
 
 
-# ── blind-retry baseline ───────────────────────────────────────────────────────
+# ── triage-wrapped agent ───────────────────────────────────────────────────────
+
+
+async def triage_agent(task: str, *, record_step, **kwargs) -> str:
+    hint = kwargs.get("_triage_hint", "")
+    attempt = 0 if not hint else 1
+    if attempt == 0:
+        kind = task.split(":")[0]
+        errors = {
+            "external_fault": "503 Service Unavailable",
+            "wrong_tool": "Tool 'deprecated_tool' not found in manifest",
+            "schema_mismatch": "JSON parse error: unexpected token",
+        }
+        record_step(Step(index=0, action=task, error=errors.get(kind, "")))
+    return _task_body(task, attempt, hint)
+
+
+# ── no-recovery baseline ───────────────────────────────────────────────────────
 #
-# Same task logic, no classification, no hint — always retries with hint="".
-# Because the hint never matches, it will always fail on hint-sensitive tasks.
-
-_baseline_call: dict[str, int] = {}
+# Retries up to 3 times with no hint. Recovers transient faults (external_fault),
+# cannot recover routing-sensitive failures (wrong_tool, schema_mismatch).
 
 
 async def baseline_agent(task: str) -> str:
-    _baseline_call[task] = _baseline_call.get(task, 0) + 1
-    return _task_body(task, _baseline_call[task] - 1, hint="")
+    for attempt in range(3):
+        try:
+            return _task_body(task, attempt, hint="")
+        except RuntimeError:
+            if attempt == 2:
+                raise
+    raise RuntimeError("unreachable")
+
+
+# ── strategies ─────────────────────────────────────────────────────────────────
 
 
 async def _schema_strategy(ctx: FailureContext) -> RecoveryAction:
@@ -122,8 +121,6 @@ async def _schema_strategy(ctx: FailureContext) -> RecoveryAction:
 
 
 async def main() -> None:
-    _baseline_call.clear()
-
     async def backoff_nodelay(ctx: FailureContext) -> RecoveryAction:
         prior = sum(1 for _, k in ctx.attempt_history if k == "retry")
         if prior >= 2:
@@ -144,20 +141,30 @@ async def main() -> None:
         label="triage",
         max_recovery_attempts=3,
         baseline_fn=baseline_agent,
-        baseline_label="blind-retry",
+        baseline_label="no-recovery",
     )
 
-    print("── Mechanism demo (synthetic) ───────────────────────────────────────")
-    print("NOTE: constructed scenarios demonstrating correct routing, not")
+    print("── Routing demo (synthetic) ─────────────────────────────────────────")
+    print("NOTE: constructed scenarios showing routing correctness, not")
     print("evidence of real-world classification accuracy.")
     print()
     print(report.summary())
     print()
-    print(report.compare())
+
+    bsr = report._baseline_success_rate
+    tsr = report.success_rate
+    rec = report.total_recoveries
+    print(f"{'':22} no-recovery    triage")
+    print(f"{'success rate:':<22} {bsr:.0%}            {tsr:.0%}")
+    print(f"{'recoveries:':<22} —               {rec}")
     print()
     print("Failure type breakdown (triage arm):")
     for ft, n in sorted(report.failure_type_counts.items(), key=lambda x: -x[1]):
         print(f"  {ft}: {n}")
+    print()
+    print("Gap: triage beats no-recovery only on wrong_tool and schema_mismatch,")
+    print("where classification delivers the hint that changes the outcome.")
+    print("external_fault heals on any retry — no classification needed.")
 
 
 if __name__ == "__main__":

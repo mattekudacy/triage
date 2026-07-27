@@ -25,20 +25,44 @@ It works with any async agent callable — OpenAI, LangGraph, raw LLM loops — 
 
 ## Results
 
-Synthetic benchmark across three failure modes (transient 503, wrong tool, schema mismatch),
-6 task variants × 5 runs each, `RulesClassifier` (zero API calls):
+### Routing demo (synthetic)
 
-| | blind-retry | triage |
+Routing correctness across three failure modes (`RulesClassifier`, zero API calls):
+
+| Task | Failure type | No-recovery baseline | Triage |
+|---|---|---|---|
+| fetch_weather, call_payments, send_email | `external_fault` (transient 503) | ✓ heals on any retry | ✓ |
+| lookup_user, create_ticket | `wrong_tool_called` | ✗ no hint → fails again | ✓ routes to manifest hint |
+| parse_response | `schema_mismatch` | ✗ no hint → fails again | ✓ routes to schema hint |
+
+| | no-recovery | triage |
 |---|---|---|
-| success rate | 77% | **100%** |
-| recoveries | — | 30 |
-| failure types classified | — | `external_fault` ×15, `wrong_tool_called` ×10, `schema_mismatch` ×5 |
+| success rate | **50%** | **100%** |
+| recoveries | — | 6 |
 
-Blind retry succeeds on transient faults when the second attempt happens to work, but
-fails on wrong-tool and schema errors because retrying without a hint doesn't change
-the outcome. Triage routes each type to the right strategy and recovers all of them.
+The 50 % gap is attributable to the two types where classification changes the outcome.
+`external_fault` heals on any retry — triage gives no advantage there, and this is
+intentional: conceding the transient case makes the comparison honest.
 
 Reproduce: `PYTHONPATH=. python scripts/bench_synthetic.py`
+
+### RulesClassifier accuracy
+
+`RulesClassifier` evaluated on 51 labeled examples (the parametrized corpora from
+`tests/test_classifier_rules.py` — the same inputs the test suite validates):
+
+| Type | Precision | Recall | F1 |
+|---|---|---|---|
+| `wrong_tool_called` | 100 % | 100 % | 1.000 |
+| `schema_mismatch` | 100 % | 100 % | 1.000 |
+| `external_fault` | 100 % | 100 % | 1.000 |
+| `timeout` | 100 % | 100 % | 1.000 |
+| `unknown` (catch-all) | 100 % | 100 % | 1.000 |
+
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are not scored — `RulesClassifier` returns
+`UNKNOWN` for them by design (semantic types; use `LLMClassifier` or `HybridClassifier`).
+
+Reproduce: `PYTHONPATH=. python scripts/classifier_accuracy.py`
 
 ---
 
