@@ -48,30 +48,34 @@ Reproduce: `PYTHONPATH=. python scripts/bench_synthetic.py`
 
 ### RulesClassifier accuracy
 
-Three-block measurement, `RulesClassifier` default configuration:
+Four-block measurement, `RulesClassifier` default configuration:
 
 | Block | What it measures | Score |
 |---|---|---|
-| **Regression** | In-corpus positive examples from `test_classifier_rules.py` | 100% (17/17) |
-| **False-positive resistance** | Near-miss strings that must NOT fire a rule | 100% (12/12) |
-| **Held-out (corpus A)** | Real SDK exceptions not used to write the rules | 100% (30/30) |
+| Regression | In-corpus positives from `test_classifier_rules.py` | 100% (17/17) |
+| False-positive resistance | Near-miss strings that must NOT fire a rule | 100% (12/12) |
+| Corpus A (second regression suite) | SDK exceptions used to guide v0.25 fixes | 100% (30/30) |
+| **Corpus B (genuine held-out)** | Sources not consulted when writing the patterns | **50% (10/20)** |
 
-Held-out corpus sources: `json.JSONDecodeError`, `asyncio.TimeoutError`, `httpx`
-status errors, `pydantic.ValidationError`, `openai` / `anthropic` / `langchain` /
-`langgraph` exception strings — provoked and captured, not hand-written.
+**The 50% figure is the honest generalization number.** Corpus B was assembled from
+botocore, google-genai, aiohttp, requests/urllib3, and structurally different phrasings,
+then scored once without editing `rules.py`. The 10 misses are the improvement targets
+for the next release.
 
-The regression block is tautological (regexes were written against those strings) —
-it detects regression, not generalization. The held-out block is the number to improve
-against across releases.
+Corpus A was used to guide the v0.25 pattern fixes (json decoder phrasings, SDK
+rate-limit strings, empty-string `TimeoutError` via exception type name). Its 100%
+score reflects tuning, not generalization — it is now a regression suite.
 
-`PLAN_INCOMPLETE`, `CONTEXT_OVERFLOW`, and `CONSTRAINT_IGNORED` are not in the corpus —
-`RulesClassifier` returns `UNKNOWN` for the first two by design (semantic types); use
-`LLMClassifier` or `HybridClassifier` for those.
+Sourcing note: JSON, pydantic, httpx, and timeout cases in corpus A were provoked and
+captured. OpenAI, Anthropic, LangChain, and LangGraph SDK strings were transcribed from
+published exception formats (a live 429 cannot be provoked without hitting a real API).
+
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are not scored — `RulesClassifier` returns
+`UNKNOWN` for them by design; use `LLMClassifier` or `HybridClassifier` for those.
 
 Reproduce:
 ```
 PYTHONPATH=. python scripts/classifier_accuracy.py
-PYTHONPATH=. python scripts/gen_error_corpus.py  # regenerate corpus
 ```
 
 ---

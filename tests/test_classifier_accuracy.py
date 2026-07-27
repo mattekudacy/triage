@@ -13,15 +13,15 @@ Classifier accuracy tests with three labeled measurement blocks.
       a failure to the wrong recovery strategy, which is worse than UNKNOWN.
       Expected: 100%. Treated as a hard constraint.
 
-  Block 3 — Held-out accuracy (corpus A):
-      Real exceptions provoked from installed SDKs (json, asyncio, httpx,
-      pydantic, openai, anthropic, langchain, langgraph). These strings were
-      NOT used to write the regexes. The score here is the number to improve
-      against across releases.
+  Block 3 — Corpus A (second regression suite, NOT held-out):
+      Real exceptions from json/asyncio/httpx/pydantic, plus SDK error strings
+      transcribed from published exception formats. This corpus was used to guide
+      the v0.25 pattern fixes — rules.py was edited until it passed. It is now a
+      second regression suite, not a generalization measurement.
 
-      A floor assertion pegs the held-out score at its measured baseline.
-      If it drops below that floor, the test fails — it is a ratchet, not a
-      target. The floor is updated (upward only) when the patterns improve.
+      Corpus B (from sources not seen when writing the rules) will replace this
+      as the held-out block. A floor assertion here prevents regression against
+      the patterns that were already tuned.
 """
 
 from __future__ import annotations
@@ -118,9 +118,16 @@ FALSE_POSITIVE_GUARDS: list[tuple[str, FailureType]] = [
 # ── Block 3: Held-out accuracy (corpus A) ─────────────────────────────────────
 
 CORPUS_A_PATH = Path(__file__).parent / "data" / "error_corpus_a.json"
-# Ratchet floor: held-out accuracy must not drop below this.
-# Update upward when patterns improve; never decrease.
-HELD_OUT_FLOOR = 1.0  # 30/30 after v0.25 pattern fixes
+# Regression floor: corpus A was used to tune v0.25 patterns, so 100% is expected.
+# This is a regression guard, not a generalization claim.
+CORPUS_A_FLOOR = 1.0
+
+CORPUS_B_PATH = Path(__file__).parent / "data" / "error_corpus_b.json"
+# Held-out floor: corpus B was built and scored ONCE without consulting or changing
+# rules.py. This is the genuine generalization measurement.
+# Update upward only when patterns improve (measured against corpus C or later).
+# Never decrease — this is a ratchet.
+CORPUS_B_FLOOR = 0.50  # 10/20, measured 2026-07-27
 
 
 @dataclass
@@ -134,8 +141,8 @@ class _HeldOutResult:
         return self.correct / self.total if self.total else 0.0
 
 
-def _score_corpus_a() -> _HeldOutResult:
-    entries = json.loads(CORPUS_A_PATH.read_text())
+def _score_corpus(path: Path) -> _HeldOutResult:
+    entries = json.loads(path.read_text())
     clf = RulesClassifier()
     correct = 0
     misses = []
@@ -158,6 +165,10 @@ def _score_corpus_a() -> _HeldOutResult:
     return _HeldOutResult(total=len(entries), correct=correct, misses=misses)
 
 
+def _score_corpus_a() -> _HeldOutResult:
+    return _score_corpus(CORPUS_A_PATH)
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
@@ -177,8 +188,15 @@ class TestFalsePositiveResistance:
         assert _classify(error) != forbidden_type
 
 
-class TestHeldOut:
-    """Block 3: Held-out accuracy — real SDK exceptions not used to write the rules."""
+class TestCorpusA:
+    """Block 3: Corpus A regression guard.
+
+    Corpus A was used to guide v0.25 pattern fixes — it is a second regression
+    suite, not a held-out generalization measurement. 100% is expected because
+    the rules were tuned against it. A miss here means a regression.
+
+    Corpus B (from unseen sources) carries the generalization claim.
+    """
 
     def test_corpus_file_exists(self) -> None:
         assert CORPUS_A_PATH.exists(), f"Corpus file missing: {CORPUS_A_PATH}"
@@ -189,7 +207,7 @@ class TestHeldOut:
         for entry in entries:
             assert entry["label"] in valid, f"Invalid label {entry['label']!r}"
 
-    def test_held_out_accuracy_above_floor(self) -> None:
+    def test_corpus_a_no_regression(self) -> None:
         result = _score_corpus_a()
         if result.misses:
             detail = "\n".join(
@@ -197,10 +215,43 @@ class TestHeldOut:
                 for exp, got, exc, err in result.misses
             )
             pytest.fail(
-                f"Held-out accuracy {result.accuracy:.0%} ({result.correct}/{result.total})"
-                f" is below floor {HELD_OUT_FLOOR:.0%}.\n"
-                f"Misses:\n{detail}"
+                f"Corpus A regression: {result.accuracy:.0%} ({result.correct}/{result.total})"
+                f" below floor {CORPUS_A_FLOOR:.0%}.\nMisses:\n{detail}"
             )
-        assert result.accuracy >= HELD_OUT_FLOOR, (
-            f"Held-out accuracy {result.accuracy:.0%} < floor {HELD_OUT_FLOOR:.0%}"
-        )
+        assert result.accuracy >= CORPUS_A_FLOOR
+
+
+class TestCorpusB:
+    """Block 4: Corpus B — genuine held-out generalization measurement.
+
+    Corpus B was assembled from sources not consulted when writing or fixing the
+    v0.25 patterns (botocore, google-genai, aiohttp, requests/urllib3, structurally
+    different phrasings). It was scored exactly once, without editing rules.py first.
+
+    The floor is a ratchet: update upward when patterns improve, never decrease.
+    Current baseline: 50% (10/20), measured 2026-07-27.
+
+    Misses in this block identify the next improvement targets.
+    """
+
+    def test_corpus_file_exists(self) -> None:
+        assert CORPUS_B_PATH.exists(), f"Corpus file missing: {CORPUS_B_PATH}"
+
+    def test_corpus_all_valid_labels(self) -> None:
+        valid = {ft.value for ft in FailureType}
+        entries = json.loads(CORPUS_B_PATH.read_text())
+        for entry in entries:
+            assert entry["label"] in valid, f"Invalid label {entry['label']!r}"
+
+    def test_corpus_b_held_out_floor(self) -> None:
+        result = _score_corpus(CORPUS_B_PATH)
+        if result.accuracy < CORPUS_B_FLOOR:
+            detail = "\n".join(
+                f"  exp={exp:16} got={got:16} [{exc}] {err!r}"
+                for exp, got, exc, err in result.misses
+            )
+            pytest.fail(
+                f"Corpus B held-out: {result.accuracy:.0%} ({result.correct}/{result.total})"
+                f" below floor {CORPUS_B_FLOOR:.0%}.\nMisses:\n{detail}"
+            )
+        assert result.accuracy >= CORPUS_B_FLOOR

@@ -1,0 +1,122 @@
+[
+  {
+    "exception_type": "URLError",
+    "error": "<urlopen error [Errno 61] Connection refused>",
+    "label": "unknown",
+    "provenance": "captured"
+  },
+  {
+    "exception_type": "ThrottlingException",
+    "error": "An error occurred (ThrottlingException) when calling the InvokeModel operation: Rate exceeded",
+    "label": "external_fault",
+    "provenance": "transcribed:aws-docs"
+  },
+  {
+    "exception_type": "ServiceUnavailableException",
+    "error": "An error occurred (ServiceUnavailableException) when calling the InvokeModel operation: Service is unavailable. Please try again.",
+    "label": "external_fault",
+    "provenance": "transcribed:aws-docs"
+  },
+  {
+    "exception_type": "ValidationException",
+    "error": "An error occurred (ValidationException) when calling the InvokeModel operation: The model returned a response that did not conform to the expected schema.",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:aws-docs"
+  },
+  {
+    "exception_type": "ResourceNotFoundException",
+    "error": "An error occurred (ResourceNotFoundException) when calling the InvokeAgent operation: No resource with ID 'my-agent' was found.",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:aws-docs"
+  },
+  {
+    "exception_type": "ClientError",
+    "error": "An error occurred (TooManyRequestsException) when calling the InvokeEndpoint operation: Too Many Requests",
+    "label": "external_fault",
+    "provenance": "transcribed:aws-docs"
+  },
+  {
+    "exception_type": "ResourceExhausted",
+    "error": "429 RESOURCE_EXHAUSTED: You have exceeded your current quota, please refer to https://ai.google.dev/gemini-api/docs/rate-limits",
+    "label": "external_fault",
+    "provenance": "transcribed:google-genai-docs"
+  },
+  {
+    "exception_type": "ServiceUnavailable",
+    "error": "503 UNAVAILABLE: The service is currently unavailable. This is most likely a transient condition.",
+    "label": "external_fault",
+    "provenance": "transcribed:google-genai-docs"
+  },
+  {
+    "exception_type": "InvalidArgument",
+    "error": "400 INVALID_ARGUMENT: * GenerateContentRequest.contents: contents is not specified\n* GenerateContentRequest.model: model is not specified",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:google-genai-docs"
+  },
+  {
+    "exception_type": "DeadlineExceeded",
+    "error": "504 DEADLINE_EXCEEDED: Deadline Exceeded",
+    "label": "timeout",
+    "provenance": "transcribed:google-genai-docs"
+  },
+  {
+    "exception_type": "ClientConnectorError",
+    "error": "Cannot connect to host api.openai.com:443 ssl:default [Connection refused]",
+    "label": "unknown",
+    "provenance": "transcribed:aiohttp-docs"
+  },
+  {
+    "exception_type": "ServerTimeoutError",
+    "error": "Connection timeout",
+    "label": "timeout",
+    "provenance": "transcribed:aiohttp-docs"
+  },
+  {
+    "exception_type": "ServerConnectionError",
+    "error": "Server disconnected after 30.0 seconds of inactivity",
+    "label": "timeout",
+    "provenance": "transcribed:aiohttp-docs"
+  },
+  {
+    "exception_type": "ConnectionError",
+    "error": "HTTPSConnectionPool(host='api.openai.com', port=443): Max retries exceeded with url: /v1/chat/completions (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object>: Failed to establish a new connection: [Errno 8] nodename nor servname provided, or not known'))",
+    "label": "unknown",
+    "provenance": "transcribed:requests-docs"
+  },
+  {
+    "exception_type": "ReadTimeout",
+    "error": "HTTPSConnectionPool(host='api.openai.com', port=443): Read timed out. (read timeout=30)",
+    "label": "timeout",
+    "provenance": "transcribed:requests-docs"
+  },
+  {
+    "exception_type": "HTTPError",
+    "error": "429 Client Error: Too Many Requests for url: https://api.openai.com/v1/chat",
+    "label": "external_fault",
+    "provenance": "transcribed:requests-docs"
+  },
+  {
+    "exception_type": "JSONDecodeError",
+    "error": "Unterminated string starting at: line 3 column 5 (char 42)",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:python-json"
+  },
+  {
+    "exception_type": "JSONDecodeError",
+    "error": "Object key followed by : not found",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:python-json-alt"
+  },
+  {
+    "exception_type": "RateLimitError",
+    "error": "openai.RateLimitError: 429 Too many requests. Please back off.",
+    "label": "external_fault",
+    "provenance": "transcribed:openai-alt-phrasing"
+  },
+  {
+    "exception_type": "ValueError",
+    "error": "Tool lookup_weather is not registered. Available tools: search, calculator",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:generic-agent"
+  }
+]

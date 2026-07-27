@@ -1,22 +1,27 @@
 """
 scripts/classifier_accuracy.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Three-block precision / recall report for RulesClassifier.
+Four-block precision / recall report for RulesClassifier.
 
   Block 1 — Regression
       In-corpus positive examples from test_classifier_rules.py.
       Tautological by construction; the regexes were written against these
-      strings.  A score < 100% here means a regression.  Not evidence of
-      generalization.
+      strings.  A miss here means a regression, not a new gap.
 
   Block 2 — False-positive resistance
       Near-miss strings that must NOT fire a rule.  A false positive is worse
       than UNKNOWN: it routes to the wrong recovery strategy.
 
-  Block 3 — Held-out accuracy (corpus A)
-      Real exceptions provoked from installed SDKs (json, asyncio, httpx,
-      pydantic, openai, anthropic, langchain, langgraph).  These strings were
-      NOT used to write the rules.  This is the number to improve against.
+  Block 3 — Corpus A (second regression suite, NOT held-out)
+      Real exceptions from json/asyncio/httpx/pydantic + SDK strings
+      transcribed from published formats.  Corpus A was used to guide the v0.25
+      pattern fixes, so 100% there reflects tuning, not generalization.
+
+  Block 4 — Corpus B (genuine held-out, 50% = 10/20)
+      Assembled from sources not seen when writing or fixing the patterns:
+      botocore, google-genai, aiohttp, requests/urllib3, and structural
+      phrasings that differ from corpus A.  Scored once without editing
+      rules.py.  This is the number to improve against.
 
 Run:
     PYTHONPATH=. .venv/bin/python scripts/classifier_accuracy.py
@@ -80,7 +85,8 @@ FALSE_POSITIVES: list[tuple[str, FailureType]] = [
 
 # ── Block 3: Held-out (corpus A) ───────────────────────────────────────────────
 
-CORPUS_PATH = Path("tests/data/error_corpus_a.json")
+CORPUS_A_PATH = Path("tests/data/error_corpus_a.json")
+CORPUS_B_PATH = Path("tests/data/error_corpus_b.json")
 
 
 def _run_block(label: str, note: str) -> None:
@@ -113,10 +119,10 @@ def _score_fp_resistance() -> tuple[int, int, list[str]]:
     return ok, len(FALSE_POSITIVES), fails
 
 
-def _score_held_out() -> tuple[int, int, list[str]]:
-    if not CORPUS_PATH.exists():
-        return 0, 0, [f"  Corpus not found: {CORPUS_PATH} — run scripts/gen_error_corpus.py"]
-    entries = json.loads(CORPUS_PATH.read_text())
+def _score_corpus(path: Path, missing_msg: str) -> tuple[int, int, list[str]]:
+    if not path.exists():
+        return 0, 0, [f"  {missing_msg}"]
+    entries = json.loads(path.read_text())
     ok = 0
     fails = []
     for entry in entries:
@@ -135,7 +141,12 @@ def _score_held_out() -> tuple[int, int, list[str]]:
 def main() -> None:
     reg_ok, reg_total, reg_fails = _score_regression()
     fp_ok, fp_total, fp_fails = _score_fp_resistance()
-    ho_ok, ho_total, ho_fails = _score_held_out()
+    a_ok, a_total, a_fails = _score_corpus(
+        CORPUS_A_PATH, "Corpus A not found — run scripts/gen_error_corpus.py"
+    )
+    b_ok, b_total, b_fails = _score_corpus(
+        CORPUS_B_PATH, "Corpus B not found — run scripts/gen_error_corpus_b.py"
+    )
 
     print("RulesClassifier accuracy report")
     print("=" * 65)
@@ -144,7 +155,7 @@ def main() -> None:
     # Block 1
     print(f"Block 1 — Regression  ({reg_ok}/{reg_total} = {reg_ok / reg_total:.0%})")
     print("  In-corpus positives from test_classifier_rules.py.")
-    print("  100% expected — this is tautological. A miss = regression.")
+    print("  100% expected — tautological. A miss = regression.")
     if reg_fails:
         print("\n".join(reg_fails))
     print()
@@ -158,16 +169,28 @@ def main() -> None:
     print()
 
     # Block 3
-    if ho_total > 0:
-        ratio = f"{ho_ok}/{ho_total} = {ho_ok / ho_total:.0%}"
-        print(f"Block 3 — Held-out accuracy (corpus A)  ({ratio})")
-        print("  Real exceptions from json/asyncio/httpx/pydantic/openai/")
-        print("  anthropic/langchain/langgraph. NOT used to write the rules.")
-        print("  This is the number to improve against across releases.")
+    if a_total > 0:
+        print(f"Block 3 — Corpus A regression  ({a_ok}/{a_total} = {a_ok / a_total:.0%})")
+        print("  CAVEAT: corpus A guided the v0.25 fixes — it is tuning data.")
+        print("  100% expected here. A miss = regression.")
     else:
-        print("Block 3 — Held-out accuracy (corpus A)  [SKIPPED]")
-    if ho_fails:
-        print("\n".join(ho_fails))
+        print("Block 3 — Corpus A regression  [SKIPPED]")
+    if a_fails:
+        print("\n".join(a_fails))
+    print()
+
+    # Block 4
+    if b_total > 0:
+        ratio = f"{b_ok}/{b_total} = {b_ok / b_total:.0%}"
+        print(f"Block 4 — Corpus B held-out  ({ratio})")
+        print("  Sources not seen when writing the patterns: botocore,")
+        print("  google-genai, aiohttp, requests/urllib3, novel phrasings.")
+        print("  Scored once without editing rules.py. This is the real number.")
+        if b_fails:
+            print("  Misses (improvement targets for next release):")
+            print("\n".join(b_fails))
+    else:
+        print("Block 4 — Corpus B held-out  [SKIPPED]")
     print()
 
     print("─" * 65)
