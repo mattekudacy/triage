@@ -86,9 +86,10 @@ __all__ = [
     "HybridClassifier",
     "SQLiteCheckpointStore",
     "RedisCheckpointStore",
+    "RedisSuspensionStore",
 ]
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 
 
 def __getattr__(name: str) -> object:
@@ -116,4 +117,8 @@ def __getattr__(name: str) -> object:
         from triage.breaker_store import RedisBreakerStore
 
         return RedisBreakerStore
+    if name == "RedisSuspensionStore":
+        from triage.suspension_redis import RedisSuspensionStore
+
+        return RedisSuspensionStore
     raise AttributeError(f"module 'triage' has no attribute {name!r}")
