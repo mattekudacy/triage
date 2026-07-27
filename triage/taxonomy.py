@@ -59,6 +59,7 @@ class Step:
     tool_output: Any = None
     llm_output: str | None = None
     error: str | None = None
+    exception_type: str | None = None
     timestamp: float = field(default_factory=time.time)
     state_hash: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

@@ -1,158 +1,181 @@
 """
 scripts/classifier_accuracy.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Per-type precision / recall report for RulesClassifier.
+Three-block precision / recall report for RulesClassifier.
 
-The labeled dataset is extracted directly from test_classifier_rules.py's
-parametrized corpora and named positive/negative tests — the same inputs
-pytest already validates.  Running this script turns that test corpus into
-a scored report without any new test infrastructure.
+  Block 1 — Regression
+      In-corpus positive examples from test_classifier_rules.py.
+      Tautological by construction; the regexes were written against these
+      strings.  A score < 100% here means a regression.  Not evidence of
+      generalization.
+
+  Block 2 — False-positive resistance
+      Near-miss strings that must NOT fire a rule.  A false positive is worse
+      than UNKNOWN: it routes to the wrong recovery strategy.
+
+  Block 3 — Held-out accuracy (corpus A)
+      Real exceptions provoked from installed SDKs (json, asyncio, httpx,
+      pydantic, openai, anthropic, langchain, langgraph).  These strings were
+      NOT used to write the rules.  This is the number to improve against.
 
 Run:
     PYTHONPATH=. .venv/bin/python scripts/classifier_accuracy.py
-
-Output:
-    Per-type table of TP / FP / FN, precision, recall, and F1, plus
-    a macro-averaged F1 at the bottom.  Results are deterministic (no LLM
-    calls) and should be re-run after any change to RulesClassifier regexes.
 """
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 from triage.classifier.rules import RulesClassifier
 from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
 
 
-def _t(error: str | None = None, llm_output: str | None = None) -> Trajectory:
+def _classify(error: str | None, exception_type: str | None = None) -> FailureType:
     t = Trajectory()
-    t.append(Step(index=0, action="test", error=error, llm_output=llm_output))
-    return t
+    t.append(Step(index=0, action="test", error=error, exception_type=exception_type))
+    return RulesClassifier().classify(t, "task")
 
 
-# ---------------------------------------------------------------------------
-# Labeled dataset
-# Each entry: (trajectory, expected_label)
-# Labels come from the parametrized corpora and explicit named tests in
-# tests/test_classifier_rules.py.  Negative examples use FailureType.UNKNOWN.
-# ---------------------------------------------------------------------------
+# ── Block 1: Regression positives ─────────────────────────────────────────────
 
-clf = RulesClassifier()
-
-DATASET: list[tuple[Trajectory, FailureType]] = [
-    # ── EXTERNAL_FAULT true positives (from test_external_fault_true_positive_corpus) ──
-    (_t("HTTP 429: rate limited"), FailureType.EXTERNAL_FAULT),
-    (_t("status code 500"), FailureType.EXTERNAL_FAULT),
-    (_t("received 503 from upstream"), FailureType.EXTERNAL_FAULT),
-    (_t("server returned 502 bad gateway"), FailureType.EXTERNAL_FAULT),
-    (_t("upstream error 429"), FailureType.EXTERNAL_FAULT),
-    (_t("got 500 from remote"), FailureType.EXTERNAL_FAULT),
-    # individual named tests
-    (_t("HTTP 429 Too Many Requests"), FailureType.EXTERNAL_FAULT),
-    (_t("500 Internal Server Error"), FailureType.EXTERNAL_FAULT),
-    (_t("502 Bad Gateway"), FailureType.EXTERNAL_FAULT),
-    (_t("503 Service Unavailable"), FailureType.EXTERNAL_FAULT),
-    (_t("rate limited, status 429"), FailureType.EXTERNAL_FAULT),
-    # ── EXTERNAL_FAULT false-positive guards (expect UNKNOWN) ──
-    (_t("expected 500 items but got 42"), FailureType.UNKNOWN),
-    (_t("processed 503 records successfully"), FailureType.UNKNOWN),
-    (_t("returned 429 results"), FailureType.UNKNOWN),
-    (_t("502 bytes written"), FailureType.UNKNOWN),
-    (_t("step 500 completed"), FailureType.UNKNOWN),
-    (_t("line 503: syntax error"), FailureType.UNKNOWN),
-    (_t("error in row 429"), FailureType.UNKNOWN),
-    (_t("expected 200 records"), FailureType.UNKNOWN),
-    # ── WRONG_TOOL_CALLED true positives ──
-    (_t("no tool named calculator"), FailureType.WRONG_TOOL_CALLED),
-    (_t("Tool 'bar' not found"), FailureType.WRONG_TOOL_CALLED),
-    (_t("NO TOOL NAMED foo"), FailureType.WRONG_TOOL_CALLED),
-    (_t("tool_not_found: the requested tool does not exist"), FailureType.WRONG_TOOL_CALLED),
-    (_t("tool foo not found"), FailureType.WRONG_TOOL_CALLED),
-    # ── WRONG_TOOL_CALLED false-positive guards ──
-    (_t("tooltip not found in DOM"), FailureType.UNKNOWN),
-    (_t("found 3 tools available"), FailureType.UNKNOWN),
-    (_t("initialize tool chain"), FailureType.UNKNOWN),
-    (_t("toolbox is empty"), FailureType.UNKNOWN),
-    (_t("retool configuration loaded"), FailureType.UNKNOWN),
-    (_t("connection refused"), FailureType.UNKNOWN),
-    # ── SCHEMA_MISMATCH true positives ──
-    (_t("validation error: field required"), FailureType.SCHEMA_MISMATCH),
-    (_t("JSONDecodeError: Expecting value at line 1"), FailureType.SCHEMA_MISMATCH),
-    (_t("json parse failed"), FailureType.SCHEMA_MISMATCH),
-    (_t("validation error: expected string at field 'name'"), FailureType.SCHEMA_MISMATCH),
-    (_t("jsondecodeerror at line 1"), FailureType.SCHEMA_MISMATCH),
-    (_t("invalid json in response body"), FailureType.SCHEMA_MISMATCH),
-    (_t("unexpected token '{' in json"), FailureType.SCHEMA_MISMATCH),
-    (_t("failed to json parse the response"), FailureType.SCHEMA_MISMATCH),
-    # ── SCHEMA_MISMATCH false-positive guard ──
-    (_t("index out of range"), FailureType.UNKNOWN),
-    # ── TIMEOUT true positives ──
-    (_t("asyncio.TimeoutError: timeout"), FailureType.TIMEOUT),
-    (_t("request timed out after 30s"), FailureType.TIMEOUT),
-    (_t("deadline exceeded"), FailureType.TIMEOUT),
-    (_t("time limit reached"), FailureType.TIMEOUT),
-    (_t("operation timed out after 30s"), FailureType.TIMEOUT),
-    (_t("deadline exceeded for request"), FailureType.TIMEOUT),
-    (_t("async time limit reached"), FailureType.TIMEOUT),
-    (_t("timed out waiting for response"), FailureType.TIMEOUT),
-    # ── TIMEOUT false-positive guard ──
-    (_t("connection refused"), FailureType.UNKNOWN),
-    # ── UNKNOWN true positives (genuinely ambiguous errors) ──
-    (_t("something completely unrelated"), FailureType.UNKNOWN),
-    (_t("permission denied"), FailureType.UNKNOWN),
-    (_t("file not found"), FailureType.UNKNOWN),
+REGRESSION: list[tuple[str, FailureType]] = [
+    ("no tool named calculator", FailureType.WRONG_TOOL_CALLED),
+    ("Tool 'bar' not found", FailureType.WRONG_TOOL_CALLED),
+    ("tool_not_found: the requested tool does not exist", FailureType.WRONG_TOOL_CALLED),
+    ("function 'send_email' does not exist", FailureType.WRONG_TOOL_CALLED),
+    ("validation error: field required", FailureType.SCHEMA_MISMATCH),
+    ("json parse failed", FailureType.SCHEMA_MISMATCH),
+    ("invalid json in response body", FailureType.SCHEMA_MISMATCH),
+    ("unexpected token '{' in json", FailureType.SCHEMA_MISMATCH),
+    ("HTTP 429 Too Many Requests", FailureType.EXTERNAL_FAULT),
+    ("500 Internal Server Error", FailureType.EXTERNAL_FAULT),
+    ("502 Bad Gateway", FailureType.EXTERNAL_FAULT),
+    ("503 Service Unavailable", FailureType.EXTERNAL_FAULT),
+    ("rate limited, status 429", FailureType.EXTERNAL_FAULT),
+    ("asyncio.TimeoutError: timeout", FailureType.TIMEOUT),
+    ("request timed out after 30s", FailureType.TIMEOUT),
+    ("deadline exceeded", FailureType.TIMEOUT),
+    ("time limit reached", FailureType.TIMEOUT),
 ]
 
-# PLAN_INCOMPLETE and CONTEXT_OVERFLOW are intentionally absent: they require
-# semantic understanding and always return UNKNOWN from RulesClassifier per
-# design (see CLAUDE.md "RulesClassifier scope").
+# ── Block 2: False-positive guards ────────────────────────────────────────────
+# (error_string, type_that_must_NOT_fire)
+
+FALSE_POSITIVES: list[tuple[str, FailureType]] = [
+    ("expected 500 items but got 42", FailureType.EXTERNAL_FAULT),
+    ("processed 503 records successfully", FailureType.EXTERNAL_FAULT),
+    ("returned 429 results", FailureType.EXTERNAL_FAULT),
+    ("step 500 completed", FailureType.EXTERNAL_FAULT),
+    ("line 503: syntax error", FailureType.EXTERNAL_FAULT),
+    ("expected 200 records", FailureType.EXTERNAL_FAULT),
+    ("tooltip not found in DOM", FailureType.WRONG_TOOL_CALLED),
+    ("found 3 tools available", FailureType.WRONG_TOOL_CALLED),
+    ("toolbox is empty", FailureType.WRONG_TOOL_CALLED),
+    ("retool configuration loaded", FailureType.WRONG_TOOL_CALLED),
+    ("index out of range", FailureType.SCHEMA_MISMATCH),
+    ("connection refused", FailureType.WRONG_TOOL_CALLED),
+]
+
+# ── Block 3: Held-out (corpus A) ───────────────────────────────────────────────
+
+CORPUS_PATH = Path("tests/data/error_corpus_a.json")
+
+
+def _run_block(label: str, note: str) -> None:
+    print(f"── {label} {'─' * max(0, 60 - len(label))}")
+    print(f"   {note}")
+    print()
+
+
+def _score_regression() -> tuple[int, int, list[str]]:
+    ok = 0
+    fails = []
+    for error, expected in REGRESSION:
+        got = _classify(error)
+        if got == expected:
+            ok += 1
+        else:
+            fails.append(f"  MISS exp={expected.value} got={got.value} {error!r}")
+    return ok, len(REGRESSION), fails
+
+
+def _score_fp_resistance() -> tuple[int, int, list[str]]:
+    ok = 0
+    fails = []
+    for error, forbidden in FALSE_POSITIVES:
+        got = _classify(error)
+        if got != forbidden:
+            ok += 1
+        else:
+            fails.append(f"  FP   type={forbidden.value} fired for {error!r}")
+    return ok, len(FALSE_POSITIVES), fails
+
+
+def _score_held_out() -> tuple[int, int, list[str]]:
+    if not CORPUS_PATH.exists():
+        return 0, 0, [f"  Corpus not found: {CORPUS_PATH} — run scripts/gen_error_corpus.py"]
+    entries = json.loads(CORPUS_PATH.read_text())
+    ok = 0
+    fails = []
+    for entry in entries:
+        got = _classify(entry["error"], entry.get("exception_type"))
+        exp = entry["label"]
+        if got.value == exp:
+            ok += 1
+        else:
+            fails.append(
+                f"  MISS exp={exp:16} got={got.value:16}"
+                f" [{entry.get('exception_type', '')}] {entry['error'][:50]!r}"
+            )
+    return ok, len(entries), fails
 
 
 def main() -> None:
-    # Per-type tallies
-    tp: dict[FailureType, int] = {ft: 0 for ft in FailureType}
-    fp: dict[FailureType, int] = {ft: 0 for ft in FailureType}
-    fn: dict[FailureType, int] = {ft: 0 for ft in FailureType}
+    reg_ok, reg_total, reg_fails = _score_regression()
+    fp_ok, fp_total, fp_fails = _score_fp_resistance()
+    ho_ok, ho_total, ho_fails = _score_held_out()
 
-    for traj, expected in DATASET:
-        predicted = clf.classify(traj, "task")
-        if predicted == expected:
-            tp[expected] += 1
-        else:
-            fp[predicted] += 1
-            fn[expected] += 1
-
-    # Only report types that appear in the dataset
-    active = {ft for _, ft in DATASET}
-
-    print("RulesClassifier — per-type precision / recall")
-    print(f"Dataset: {len(DATASET)} labeled examples")
+    print("RulesClassifier accuracy report")
+    print("=" * 65)
     print()
-    print(f"{'Type':<25} {'TP':>4} {'FP':>4} {'FN':>4}  {'Prec':>8}  {'Recall':>7}  {'F1':>6}")
-    print("─" * 70)
 
-    f1s = []
-    for ft in FailureType:
-        if ft not in active:
-            continue
-        t, f, n = tp[ft], fp[ft], fn[ft]
-        precision = t / (t + f) if (t + f) > 0 else 0.0
-        recall = t / (t + n) if (t + n) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-        f1s.append(f1)
-        print(
-            f"{ft.value:<25} {t:>4} {f:>4} {n:>4}  {precision:>10.1%}  {recall:>7.1%}  {f1:>6.3f}"
-        )
-
-    macro_f1 = sum(f1s) / len(f1s) if f1s else 0.0
-    print("─" * 70)
-    print(f"{'macro F1':<25} {'':>4} {'':>4} {'':>4}  {'':>10}  {'':>7}  {macro_f1:>6.3f}")
+    # Block 1
+    print(f"Block 1 — Regression  ({reg_ok}/{reg_total} = {reg_ok / reg_total:.0%})")
+    print("  In-corpus positives from test_classifier_rules.py.")
+    print("  100% expected — this is tautological. A miss = regression.")
+    if reg_fails:
+        print("\n".join(reg_fails))
     print()
+
+    # Block 2
+    print(f"Block 2 — False-positive resistance  ({fp_ok}/{fp_total} = {fp_ok / fp_total:.0%})")
+    print("  Near-miss strings that must NOT fire a rule.")
+    print("  A FP routes to the wrong strategy — worse than UNKNOWN.")
+    if fp_fails:
+        print("\n".join(fp_fails))
+    print()
+
+    # Block 3
+    if ho_total > 0:
+        ratio = f"{ho_ok}/{ho_total} = {ho_ok / ho_total:.0%}"
+        print(f"Block 3 — Held-out accuracy (corpus A)  ({ratio})")
+        print("  Real exceptions from json/asyncio/httpx/pydantic/openai/")
+        print("  anthropic/langchain/langgraph. NOT used to write the rules.")
+        print("  This is the number to improve against across releases.")
+    else:
+        print("Block 3 — Held-out accuracy (corpus A)  [SKIPPED]")
+    if ho_fails:
+        print("\n".join(ho_fails))
+    print()
+
+    print("─" * 65)
     print("Notes:")
-    print("  PLAN_INCOMPLETE and CONTEXT_OVERFLOW are not scored — RulesClassifier")
-    print("  returns UNKNOWN for them by design (semantic types, no pattern rules).")
-    print("  CONSTRAINT_IGNORED requires RulesClassifier(constraints=[...]) and is")
-    print("  excluded here; precision/recall depend entirely on the constraints list.")
+    print("  PLAN_INCOMPLETE and CONTEXT_OVERFLOW: RulesClassifier returns UNKNOWN")
+    print("  by design — semantic types, no pattern rules.")
+    print("  CONSTRAINT_IGNORED: depends on RulesClassifier(constraints=[...]).")
+    print("  LOOP_DETECTED: requires multi-step trajectory; not in single-step corpus.")
 
 
 if __name__ == "__main__":

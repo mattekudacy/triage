@@ -1,0 +1,152 @@
+[
+  {
+    "exception_type": "JSONDecodeError",
+    "error": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "JSONDecodeError",
+    "error": "Illegal trailing comma before end of object: line 1 column 7 (char 6)",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "JSONDecodeError",
+    "error": "Expecting value: line 1 column 1 (char 0)",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "JSONDecodeError",
+    "error": "Expecting ',' delimiter: line 1 column 15 (char 14)",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "JSONDecodeError",
+    "error": "Extra data: line 2 column 1 (char 5)",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "ValidationError",
+    "error": "2 validation errors for _M\nname\n  Field required [type=missing, input_value={'age': 3}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing\nscore\n  Field required [type=missing, input_value={'age': 3}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "ValidationError",
+    "error": "2 validation errors for _M\nage\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='abc', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/int_parsing\nscore\n  Field required [type=missing, input_value={'name': 'x', 'age': 'abc'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "ValidationError",
+    "error": "1 validation error for _M\nscore\n  Input should be a valid number, unable to parse string as a number [type=float_parsing, input_value='nope', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/float_parsing",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "TimeoutError",
+    "error": "",
+    "label": "timeout"
+  },
+  {
+    "exception_type": "TimeoutError",
+    "error": "timed out",
+    "label": "timeout"
+  },
+  {
+    "exception_type": "socket.timeout",
+    "error": "timed out",
+    "label": "timeout"
+  },
+  {
+    "exception_type": "ConnectError",
+    "error": "[Errno 61] Connection refused",
+    "label": "unknown"
+  },
+  {
+    "exception_type": "ReadTimeout",
+    "error": "timed out",
+    "label": "timeout"
+  },
+  {
+    "exception_type": "ConnectTimeout",
+    "error": "timed out",
+    "label": "timeout"
+  },
+  {
+    "exception_type": "HTTPStatusError",
+    "error": "Client error '429 Too Many Requests' for url 'http://x/y'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429",
+    "label": "external_fault"
+  },
+  {
+    "exception_type": "HTTPStatusError",
+    "error": "Server error '500 Internal Server Error' for url 'http://x/y'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500",
+    "label": "external_fault"
+  },
+  {
+    "exception_type": "HTTPStatusError",
+    "error": "Server error '502 Bad Gateway' for url 'http://x/y'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502",
+    "label": "external_fault"
+  },
+  {
+    "exception_type": "HTTPStatusError",
+    "error": "Server error '503 Service Unavailable' for url 'http://x/y'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503",
+    "label": "external_fault"
+  },
+  {
+    "exception_type": "RateLimitError",
+    "error": "Rate limit reached for gpt-4o",
+    "label": "external_fault"
+  },
+  {
+    "exception_type": "APITimeoutError",
+    "error": "Request timed out.",
+    "label": "timeout"
+  },
+  {
+    "exception_type": "APIConnectionError",
+    "error": "Connection error.",
+    "label": "unknown"
+  },
+  {
+    "exception_type": "InternalServerError",
+    "error": "The server had an error processing your request",
+    "label": "external_fault"
+  },
+  {
+    "exception_type": "BadRequestError",
+    "error": "Invalid value for 'tool_choice': no function named 'lookup_user' in tools",
+    "label": "wrong_tool_called"
+  },
+  {
+    "exception_type": "RateLimitError",
+    "error": "rate_limit_error",
+    "label": "external_fault"
+  },
+  {
+    "exception_type": "APITimeoutError",
+    "error": "Request timed out or interrupted. This could be due to a network timeout, dropped connection, or request cancellation. See https://docs.anthropic.com/en/api/errors#long-requests for more details.",
+    "label": "timeout"
+  },
+  {
+    "exception_type": "InternalServerError",
+    "error": "Internal server error",
+    "label": "external_fault"
+  },
+  {
+    "exception_type": "BadRequestError",
+    "error": "Tool 'send_sms' does not exist in tools list",
+    "label": "wrong_tool_called"
+  },
+  {
+    "exception_type": "OutputParserException",
+    "error": "Invalid JSON output: Expected the output value to start with '```json'\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langchain/errors/OUTPUT_PARSING_FAILURE ",
+    "label": "schema_mismatch"
+  },
+  {
+    "exception_type": "ToolException",
+    "error": "Tool 'web_search' not found in the provided tools list",
+    "label": "wrong_tool_called"
+  },
+  {
+    "exception_type": "GraphInterrupt",
+    "error": "Interrupted at node: agent",
+    "label": "unknown"
+  }
+]

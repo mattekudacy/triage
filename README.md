@@ -48,21 +48,31 @@ Reproduce: `PYTHONPATH=. python scripts/bench_synthetic.py`
 
 ### RulesClassifier accuracy
 
-`RulesClassifier` evaluated on 51 labeled examples (the parametrized corpora from
-`tests/test_classifier_rules.py` — the same inputs the test suite validates):
+Three-block measurement, `RulesClassifier` default configuration:
 
-| Type | Precision | Recall | F1 |
-|---|---|---|---|
-| `wrong_tool_called` | 100 % | 100 % | 1.000 |
-| `schema_mismatch` | 100 % | 100 % | 1.000 |
-| `external_fault` | 100 % | 100 % | 1.000 |
-| `timeout` | 100 % | 100 % | 1.000 |
-| `unknown` (catch-all) | 100 % | 100 % | 1.000 |
+| Block | What it measures | Score |
+|---|---|---|
+| **Regression** | In-corpus positive examples from `test_classifier_rules.py` | 100% (17/17) |
+| **False-positive resistance** | Near-miss strings that must NOT fire a rule | 100% (12/12) |
+| **Held-out (corpus A)** | Real SDK exceptions not used to write the rules | 100% (30/30) |
 
-`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are not scored — `RulesClassifier` returns
-`UNKNOWN` for them by design (semantic types; use `LLMClassifier` or `HybridClassifier`).
+Held-out corpus sources: `json.JSONDecodeError`, `asyncio.TimeoutError`, `httpx`
+status errors, `pydantic.ValidationError`, `openai` / `anthropic` / `langchain` /
+`langgraph` exception strings — provoked and captured, not hand-written.
 
-Reproduce: `PYTHONPATH=. python scripts/classifier_accuracy.py`
+The regression block is tautological (regexes were written against those strings) —
+it detects regression, not generalization. The held-out block is the number to improve
+against across releases.
+
+`PLAN_INCOMPLETE`, `CONTEXT_OVERFLOW`, and `CONSTRAINT_IGNORED` are not in the corpus —
+`RulesClassifier` returns `UNKNOWN` for the first two by design (semantic types); use
+`LLMClassifier` or `HybridClassifier` for those.
+
+Reproduce:
+```
+PYTHONPATH=. python scripts/classifier_accuracy.py
+PYTHONPATH=. python scripts/gen_error_corpus.py  # regenerate corpus
+```
 
 ---
 

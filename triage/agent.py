@@ -572,6 +572,7 @@ class Agent:
                     index=0,
                     action="<no steps recorded>",
                     error=str(exc),
+                    exception_type=type(exc).__name__,
                 )
             )
 

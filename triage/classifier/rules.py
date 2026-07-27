@@ -28,13 +28,28 @@ _WRONG_TOOL_RE = re.compile(
     r"tool[_\s]['\"]?\w+['\"]?\s+not\s+found"  # 'tool foo not found'
     r"|no\s+tool\s+named"  # 'no tool named X'
     r"|tool_not_found"  # OpenAI structured error code
-    r"|function\s+['\"]?\w+['\"]?\s+does\s+not\s+exist"  # Anthropic-style
+    r"|function\s+['\"]?\w+['\"]?\s+does\s+not\s+exist"  # Anthropic-style (old)
+    r"|no\s+function\s+named\s+['\"]?\w+"  # openai BadRequestError: no function named 'x'
+    r"|['\"]?\w+['\"]?\s+does\s+not\s+exist\s+in\s+tools?"  # anthropic: 'x' does not exist in tools
     r"|unknown\s+tool\s+['\"]?\w+"  # generic
+    r"|tool\s+['\"]?\w+['\"]?\s+not\s+found\s+in\s+the\s+provided"  # langchain ToolException
     r")",
     re.IGNORECASE,
 )
 _SCHEMA_RE = re.compile(
-    r"validation\s+error|json.*?parse|jsondecodeerror|invalid\s+json|unexpected\s+token",
+    r"(?:"
+    r"validation\s+error"  # pydantic ValidationError
+    r"|json.*?parse"  # 'json parse failed', 'failed to parse json'
+    r"|jsondecodeerror"  # explicit class name
+    r"|invalid\s+json"  # 'invalid json in response'
+    r"|unexpected\s+token"  # 'unexpected token {'
+    # Python json.JSONDecodeError message phrasings
+    r"|expecting\s+(?:property\s+name|value|','\s+delimiter)"
+    r"|illegal\s+trailing\s+comma"
+    r"|extra\s+data"
+    # LangChain OutputParserException
+    r"|invalid\s+json\s+output"
+    r")",
     re.IGNORECASE,
 )
 # HTTP status codes matched as whole tokens. The negative lookahead excludes
@@ -53,6 +68,18 @@ _EXTERNAL_CODE_PRECEDING_RE = re.compile(
     r"(429|500|502|503)\b",
     re.IGNORECASE,
 )
+# Text-form rate-limit and server-error phrases from SDK clients that don't embed
+# HTTP codes in their message strings (openai.RateLimitError, anthropic.InternalServerError).
+_EXTERNAL_TEXT_RE = re.compile(
+    r"(?:"
+    r"\brate[\s_]limit"  # 'rate limit reached', 'rate_limit_error'
+    r"|\binternal\s+server\s+error"  # anthropic/openai InternalServerError
+    r"|\bservice\s+unavailable"  # 503 text form
+    r"|\bbad\s+gateway"  # 502 text form
+    r"|\bquota\s+exceeded"  # openai quota
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _external_code_match(text: str) -> bool:
@@ -66,6 +93,30 @@ def _external_code_match(text: str) -> bool:
 _TIMEOUT_RE = re.compile(
     r"\btimeout\b|\btimed[\s_]?out\b|\bdeadline[\s_]?exceeded\b|\btime[\s_]?limit\b",
     re.IGNORECASE,
+)
+# Exception type names that indicate timeout when str(exc) is empty or unhelpful.
+_TIMEOUT_EXCEPTION_TYPES = frozenset(
+    {
+        "TimeoutError",
+        "AsyncTimeoutError",
+        "APITimeoutError",
+        "ReadTimeout",
+        "ConnectTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "asyncio.TimeoutError",
+        "trio.TooSlowError",
+        "anyio.EndOfStream",
+    }
+)
+# Exception type names that reliably indicate an external/upstream fault, used as a
+# fallback when the error message doesn't contain an HTTP code or keyword.
+_EXTERNAL_EXCEPTION_TYPES = frozenset(
+    {
+        "InternalServerError",  # openai / anthropic SDK
+        "ServiceUnavailableError",
+        "OverloadedError",
+    }
 )
 
 # Per-framework patterns — activated when RulesClassifier(framework=...) is set.
@@ -235,16 +286,24 @@ class RulesClassifier:
             ):
                 return FailureType.SCHEMA_MISMATCH
 
-        # 4. EXTERNAL_FAULT — HTTP status codes as whole tokens
+        # 4. EXTERNAL_FAULT — HTTP status codes, text-form rate-limit/server errors,
+        # or exception type names when the message alone is insufficient.
         for step in steps:
-            if step.error and (
-                _external_code_match(step.error) or self._fw_match(step.error, _EXTERNAL_FRAMEWORK)
-            ):
+            if (
+                step.error
+                and (
+                    _external_code_match(step.error)
+                    or _EXTERNAL_TEXT_RE.search(step.error)
+                    or self._fw_match(step.error, _EXTERNAL_FRAMEWORK)
+                )
+            ) or (step.exception_type and step.exception_type in _EXTERNAL_EXCEPTION_TYPES):
                 return FailureType.EXTERNAL_FAULT
 
-        # 5. TIMEOUT — Python-level timeout exceptions
+        # 5. TIMEOUT — string match, or exception type when str(exc) is empty/unhelpful
         for step in steps:
             if step.error and _TIMEOUT_RE.search(step.error):
+                return FailureType.TIMEOUT
+            if step.exception_type and step.exception_type in _TIMEOUT_EXCEPTION_TYPES:
                 return FailureType.TIMEOUT
 
         # 6. CONSTRAINT_IGNORED — llm_output contains a forbidden constraint string
