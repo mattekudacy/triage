@@ -55,28 +55,22 @@ Four-block measurement, `RulesClassifier` default configuration:
 | Regression | In-corpus positives from `test_classifier_rules.py` | 100% (17/17) |
 | False-positive resistance | Near-miss strings that must NOT fire a rule | 100% (12/12) |
 | Corpus A (training, v0.25) | SDK exceptions used to guide v0.25 fixes | 100% (30/30) |
-| Corpus B (training, v0.26) | Sources not consulted for v0.25; guided v0.26 botocore/schema fixes | 90% (18/20) |
+| Corpus B (training, v0.26) | Guided v0.26 botocore/schema fixes | 90% (18/20) |
+| **Corpus C (held-out, v1.0)** | **Scored once, rules.py untouched** | **52% recall, 100% precision** |
 
-**90% recall at 100% precision, with a conservative failure mode.** Every miss
-returns `UNKNOWN`, never a wrong type. In a recovery library the failure modes are not
-symmetric: `UNKNOWN` falls through to your default policy (safe, degrades to blind
-retry), whereas a misroute applies the wrong recovery strategy. Adopters can set a
-strict default and get conservative behavior on unrecognized errors; no adopter gets a
-silent misroute.
+**100% precision on corpus C (held-out, scored once, rules.py never touched); 14/27 (52%) recall.**
+These two numbers have different evidentiary status. The precision result is genuine: corpus C
+(27 entries from azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, LlamaIndex, and novel
+phrasings) was scored once before any rules.py edits. All 13 misses returned `UNKNOWN` —
+zero misroutes on data the patterns had never seen. In a recovery library the two failure
+modes are not symmetric: `UNKNOWN` falls through to your default policy (safe, degrades to
+blind retry), whereas a misroute applies the wrong strategy. Adopters get conservative behavior
+on unrecognized errors; no adopter gets a silent misroute.
 
-v0.26 added a botocore error-envelope regex (fixing 5 of the 10 corpus B misses at
-once) and a `_SCHEMA_EXCEPTION_TYPES` frozenset (same technique as
-`_TIMEOUT_EXCEPTION_TYPES`) covering `JSONDecodeError`, `ValidationError`,
-`OutputParserException`, and `InvalidArgument` — fixing 2 more. Once those misses
-guided the fixes, corpus B became training data (same status as corpus A). Remaining
-2 misses are improvement targets for the next release:
-- `ServerConnectionError` "Server disconnected after N seconds of inactivity" → timeout
-- `ValueError` "Tool X is not registered" → wrong\_tool\_called
-
-Corpus A guided the v0.25 pattern fixes — its 100% score reflects tuning, not
-generalization. Sourcing note: JSON/pydantic/httpx/timeout cases were provoked and
-captured; OpenAI/Anthropic/LangChain SDK strings were transcribed from published
-exception formats (a live 429 cannot be provoked without hitting a real API).
+The 52% recall figure is the expected shape of an honest generalization curve. Corpora A and B
+are both training data (their misses guided the v0.25 and v0.26 fixes respectively). Corpus C
+stays frozen — the next improvement cycle generates corpus D, tunes against C's misses, then
+scores D. Otherwise every corpus becomes training data immediately and the measurement disappears.
 
 `PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are not scored — `RulesClassifier` returns
 `UNKNOWN` for them by design; use `LLMClassifier` or `HybridClassifier` for those.

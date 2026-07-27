@@ -48,10 +48,8 @@ Items are grouped by urgency. Within each group, order is rough priority.
 
 ### Evidence and positioning
 
-- **Cut a 1.0 with an API stability commitment** — twenty-one minor versions in a short
-  window reads as churn, and some bumps were not library changes at all (v0.18 was an
-  example file). The public API has been stable since v0.2; a 1.0 with an explicit
-  stability promise signals that to potential adopters.
+- ~~**Cut a 1.0 with an API stability commitment**~~ — shipped in v1.0.0. Public API
+  frozen; breaking changes require a major version bump.
 
 ### Longer term
 

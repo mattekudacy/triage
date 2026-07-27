@@ -1,0 +1,164 @@
+[
+  {
+    "exception_type": "HttpResponseError",
+    "error": "Operation returned an invalid status 'Too Many Requests'. Error: Code: TooManyRequests Message: Rate limit is exceeded.",
+    "label": "external_fault",
+    "provenance": "transcribed:azure-core-docs"
+  },
+  {
+    "exception_type": "HttpResponseError",
+    "error": "Operation returned an invalid status 'Service Unavailable'. Error: Code: ServiceUnavailable Message: The service is temporarily unavailable.",
+    "label": "external_fault",
+    "provenance": "transcribed:azure-core-docs"
+  },
+  {
+    "exception_type": "ResourceNotFoundError",
+    "error": "The Resource 'Microsoft.CognitiveServices/accounts/my-account/deployments/gpt-4o' under resource group 'my-rg' was not found.",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:azure-core-docs"
+  },
+  {
+    "exception_type": "HttpResponseError",
+    "error": "Operation returned an invalid status 'Bad Request'. Error: Code: InvalidRequestBody Message: Request body is not valid JSON.",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:azure-core-docs"
+  },
+  {
+    "exception_type": "ServiceRequestError",
+    "error": "An error occurred while sending the request. Connection to oai.azure.com timed out. (connect timeout=30)",
+    "label": "timeout",
+    "provenance": "transcribed:azure-core-docs"
+  },
+  {
+    "exception_type": "SDKError",
+    "error": "Status 429: Too many requests. Please retry after 60 seconds.",
+    "label": "external_fault",
+    "provenance": "transcribed:mistralai-sdk"
+  },
+  {
+    "exception_type": "SDKError",
+    "error": "Status 500: Internal server error. Please retry your request.",
+    "label": "external_fault",
+    "provenance": "transcribed:mistralai-sdk"
+  },
+  {
+    "exception_type": "SDKError",
+    "error": "Status 422: Unprocessable Entity: messages: value is not a valid list",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:mistralai-sdk"
+  },
+  {
+    "exception_type": "TooManyRequestsError",
+    "error": "You are using a Trial key, which is limited to 5 API calls / minute.",
+    "label": "external_fault",
+    "provenance": "transcribed:cohere-docs"
+  },
+  {
+    "exception_type": "BadRequestError",
+    "error": "invalid request: tool with name 'web_scrape' was not found in the provided tool definitions",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:cohere-docs"
+  },
+  {
+    "exception_type": "GatewayTimeoutError",
+    "error": "The upstream service did not respond within the 60-second timeout window.",
+    "label": "timeout",
+    "provenance": "transcribed:cohere-docs"
+  },
+  {
+    "exception_type": "RateLimitError",
+    "error": "Rate limit reached for model llama3-8b-8192 in organization org-abc123 on tokens per minute (TPM): Limit 30000, Used 29842, Requested 500.",
+    "label": "external_fault",
+    "provenance": "transcribed:groq-sdk"
+  },
+  {
+    "exception_type": "BadRequestError",
+    "error": "Error code: 400 - {'error': {'message': 'json_validate_failed: JSON schema validation failed', 'type': 'invalid_request_error'}}",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:groq-sdk"
+  },
+  {
+    "exception_type": "RateLimitError",
+    "error": "litellm.RateLimitError: AnthropicException - {'type': 'error', 'error': {'type': 'rate_limit_error', 'message': 'Number of request tokens has exceeded your daily rate limit'}}",
+    "label": "external_fault",
+    "provenance": "transcribed:litellm-docs"
+  },
+  {
+    "exception_type": "BadRequestError",
+    "error": "litellm.BadRequestError: OpenAIException - 'messages[0].content' is invalid. Expected a string but got an object.",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:litellm-docs"
+  },
+  {
+    "exception_type": "Timeout",
+    "error": "litellm.Timeout: Request timed out after 600.0 seconds. Provider: anthropic, Model: claude-3-opus-20240229",
+    "label": "timeout",
+    "provenance": "transcribed:litellm-docs"
+  },
+  {
+    "exception_type": "NotFoundError",
+    "error": "litellm.NotFoundError: OpenAIException - The model 'gpt-4-vision' does not exist or you do not have access to it.",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:litellm-docs"
+  },
+  {
+    "exception_type": "ResourceExhausted",
+    "error": "429 Quota exceeded for quota metric 'generate_content_request_count' and limit 'GenerateContentRequestsPerMinutePerProjectPerRegion' of service 'aiplatform.googleapis.com'.",
+    "label": "external_fault",
+    "provenance": "transcribed:vertex-aiplatform-docs"
+  },
+  {
+    "exception_type": "DeadlineExceeded",
+    "error": "504 Deadline of 60.0s exceeded while calling aiplatform.googleapis.com:443",
+    "label": "timeout",
+    "provenance": "transcribed:vertex-aiplatform-docs"
+  },
+  {
+    "exception_type": "NotFound",
+    "error": "404 Endpoint projects/123/locations/us-central1/endpoints/456 is not found.",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:vertex-aiplatform-docs"
+  },
+  {
+    "exception_type": "OutputParserError",
+    "error": "Got invalid output: Expected output to be formatted as a JSON instance that conforms to the JSON schema below.\nHere is the output schema:\n{...}\nHere is the output: None",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:llamaindex-docs"
+  },
+  {
+    "exception_type": "ToolException",
+    "error": "Error: Could not find tool with name `get_current_weather`. Please use a valid tool.",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:llamaindex-docs"
+  },
+  {
+    "exception_type": "asyncio.TimeoutError",
+    "error": "",
+    "label": "timeout",
+    "provenance": "transcribed:novel-empty-message"
+  },
+  {
+    "exception_type": "requests.exceptions.HTTPError",
+    "error": "503 Server Error: Service Temporarily Unavailable for url: https://api.anthropic.com/v1/messages",
+    "label": "external_fault",
+    "provenance": "transcribed:novel-requests-phrasing"
+  },
+  {
+    "exception_type": "KeyError",
+    "error": "'summarize_pdf' is not a registered agent tool",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:novel-agent-registry"
+  },
+  {
+    "exception_type": "PermissionError",
+    "error": "Permission denied: caller does not have required IAM role 'roles/aiplatform.user'",
+    "label": "unknown",
+    "provenance": "transcribed:novel-iam"
+  },
+  {
+    "exception_type": "ValueError",
+    "error": "Model output does not match expected Pydantic schema: 1 validation error for ExtractedData\nentities\n  field required (type=value_error.missing)",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:novel-pydantic-agent"
+  }
+]

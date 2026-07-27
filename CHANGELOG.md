@@ -5,6 +5,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.0.0] - 2026-07-27
+
+### Stability commitment
+
+This release formalises the API stability guarantee. The public API has been
+stable since v0.2; 1.0 makes that commitment explicit and durable.
+
+**Stable and frozen (no breaking changes without a major version bump):**
+- `FailureType` member names and string values
+- `Step`, `Trajectory`, `FailureContext`, `TriageContext` field names and types
+- `RecoveryAction` constructor names and keyword argument names
+- `FailurePolicy` field names and `_FIELD_MAP` keys
+- `Classifier.classify()` signature
+- `Agent.__init__` argument names, `Agent.run()`, `Agent.stream()`, `Agent.clone()`
+- `CheckpointStore`, `SuspensionStore`, `BreakerStore` protocol method signatures
+- Adapter `wrap_langgraph()`, `wrap_langchain()` signatures
+- All `triage.__all__` exports
+
+**Not covered by the stability promise** (internal, may change in minor releases):
+- `RecoveryAction.params` layout
+- `Agent._record_step`, `Agent._trajectory`, `Agent._pending_checkpoints`
+- `InMemoryCheckpointStore` internals
+- Checkpoint serialisation format
+
+### Added
+- **`RulesClassifier` improvements (v0.25–v0.26)** — `_SCHEMA_EXCEPTION_TYPES`
+  frozenset (`JSONDecodeError`, `ValidationError`, `OutputParserException`,
+  `InvalidArgument`, `SchemaValidationError`) classifies by exception type name
+  regardless of message wording. `_BOTOCORE_RE` + `_BOTOCORE_CODE_MAP` parse
+  the botocore error envelope (`An error occurred (ErrorCode) when calling ...`)
+  and map known code suffixes to failure types.
+- **Corpus C held-out accuracy measurement** — 27 entries from azure-core,
+  Mistral AI SDK, Cohere, Groq, LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex,
+  and novel phrasings. Scored once without editing `rules.py`. Result: **52% recall,
+  100% precision** — all 13 misses returned `UNKNOWN`, zero misroutes. Corpus C is
+  kept frozen as the genuine generalization benchmark; corpus D is the next
+  training/improvement cycle.
+- **`triage.testing` module** — `make_step()`, `RecordingAgent`,
+  `assert_classifies_as()` (shipped in v0.5, documented here for completeness).
+- **`Step.exception_type`** — captures `type(exc).__name__` for classifying exceptions
+  whose `str(exc)` is empty (e.g. `asyncio.TimeoutError → ""`).
+
+### Changed
+- Version bumped from 0.24.0 to 1.0.0.
+
+---
+
 ## [0.21.0] - 2026-07-26
 
 ### Added

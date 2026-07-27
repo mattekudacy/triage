@@ -131,6 +131,15 @@ CORPUS_B_PATH = Path(__file__).parent / "data" / "error_corpus_b.json"
 #   ValueError "Tool X is not registered" → wrong_tool_called
 CORPUS_B_FLOOR = 0.90  # 18/20, measured 2026-07-27
 
+CORPUS_C_PATH = Path(__file__).parent / "data" / "error_corpus_c.json"
+# Genuine held-out floor: corpus C was scored ONCE without consulting or changing
+# rules.py. Sources are disjoint from A and B: azure-core, Mistral, Cohere, Groq,
+# LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex, and novel phrasings.
+# All 13 misses returned UNKNOWN — zero misroutes. Precision is 100%.
+# Do NOT tune rules.py against corpus C misses — it will then become training data.
+# Generate corpus D first, then improve, then score D.
+CORPUS_C_FLOOR = 0.51  # 14/27 = 51.9%, measured 2026-07-27
+
 
 @dataclass
 class _HeldOutResult:
@@ -257,3 +266,38 @@ class TestCorpusB:
                 f" below floor {CORPUS_B_FLOOR:.0%}.\nMisses:\n{detail}"
             )
         assert result.accuracy >= CORPUS_B_FLOOR
+
+
+class TestCorpusC:
+    """Block 5: Corpus C — genuine held-out generalization measurement.
+
+    Corpus C was built from sources not in A or B: azure-core, Mistral AI SDK,
+    Cohere SDK, Groq SDK, LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex, and
+    novel structural phrasings. It was scored exactly once without editing rules.py.
+
+    52% recall (14/27), 100% precision — every miss returned UNKNOWN, no misroutes.
+    The floor is a ratchet. Do NOT use corpus C misses to tune rules.py — the moment
+    you do, C becomes training data. Generate corpus D first, then improve, then score D.
+    """
+
+    def test_corpus_file_exists(self) -> None:
+        assert CORPUS_C_PATH.exists(), f"Corpus file missing: {CORPUS_C_PATH}"
+
+    def test_corpus_all_valid_labels(self) -> None:
+        valid = {ft.value for ft in FailureType}
+        entries = json.loads(CORPUS_C_PATH.read_text())
+        for entry in entries:
+            assert entry["label"] in valid, f"Invalid label {entry['label']!r}"
+
+    def test_corpus_c_held_out_floor(self) -> None:
+        result = _score_corpus(CORPUS_C_PATH)
+        if result.accuracy < CORPUS_C_FLOOR:
+            detail = "\n".join(
+                f"  exp={exp:16} got={got:16} [{exc}] {err!r}"
+                for exp, got, exc, err in result.misses
+            )
+            pytest.fail(
+                f"Corpus C held-out: {result.accuracy:.0%} ({result.correct}/{result.total})"
+                f" below floor {CORPUS_C_FLOOR:.0%}.\nMisses:\n{detail}"
+            )
+        assert result.accuracy >= CORPUS_C_FLOOR

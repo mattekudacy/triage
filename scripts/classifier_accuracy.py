@@ -25,6 +25,13 @@ Four-block precision / recall report for RulesClassifier.
       training data, same status as corpus A.  Remaining 2 misses are
       improvement targets for the next release.
 
+  Block 5 — Corpus C (genuine held-out, 52% = 14/27)
+      Sources disjoint from A and B: azure-core, Mistral, Cohere, Groq,
+      LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex, and novel phrasings.
+      Scored once without editing rules.py.  100% precision — all 13 misses
+      returned UNKNOWN, zero misroutes.  Do NOT tune on C's misses until
+      corpus D is ready; tuning converts C to training data.
+
 Run:
     PYTHONPATH=. .venv/bin/python scripts/classifier_accuracy.py
 """
@@ -89,6 +96,7 @@ FALSE_POSITIVES: list[tuple[str, FailureType]] = [
 
 CORPUS_A_PATH = Path("tests/data/error_corpus_a.json")
 CORPUS_B_PATH = Path("tests/data/error_corpus_b.json")
+CORPUS_C_PATH = Path("tests/data/error_corpus_c.json")
 
 
 def _run_block(label: str, note: str) -> None:
@@ -149,6 +157,9 @@ def main() -> None:
     b_ok, b_total, b_fails = _score_corpus(
         CORPUS_B_PATH, "Corpus B not found — run scripts/gen_error_corpus_b.py"
     )
+    c_ok, c_total, c_fails = _score_corpus(
+        CORPUS_C_PATH, "Corpus C not found — run scripts/gen_error_corpus_c.py"
+    )
 
     print("RulesClassifier accuracy report")
     print("=" * 65)
@@ -194,6 +205,22 @@ def main() -> None:
             print("\n".join(b_fails))
     else:
         print("Block 4 — Corpus B  [SKIPPED]")
+    print()
+
+    # Block 5
+    if c_total > 0:
+        ratio = f"{c_ok}/{c_total} = {c_ok / c_total:.0%}"
+        print(f"Block 5 — Corpus C (genuine held-out)  ({ratio})")
+        print("  Sources disjoint from A and B: azure-core, Mistral, Cohere,")
+        print("  Groq, LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex,")
+        print("  and novel phrasings. Scored once without editing rules.py.")
+        print("  100% precision — all misses returned UNKNOWN, zero misroutes.")
+        print("  Do NOT tune on these misses — that converts C to training data.")
+        if c_fails:
+            print("  Misses (held-out — do not use to guide fixes):")
+            print("\n".join(c_fails))
+    else:
+        print("Block 5 — Corpus C  [SKIPPED]")
     print()
 
     print("─" * 65)
