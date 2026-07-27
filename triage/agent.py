@@ -76,9 +76,9 @@ _record_usage_var: contextvars.ContextVar[Callable[[Usage], None] | None] = cont
     "triage_record_usage", default=None
 )
 
-_record_compensator_var: contextvars.ContextVar[
-    Callable[[int, Callable[[], Any]], None] | None
-] = contextvars.ContextVar("triage_record_compensator", default=None)
+_record_compensator_var: contextvars.ContextVar[Callable[[int, Callable[[], Any]], None] | None] = (
+    contextvars.ContextVar("triage_record_compensator", default=None)
+)
 
 
 def get_recorder() -> Callable[[Step], None]:
