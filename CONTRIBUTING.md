@@ -11,10 +11,10 @@ git clone https://github.com/mattekudacy/triage
 cd triage
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev,langgraph,langchain,sqlite,redis]"
+pip install -e ".[dev]"
 ```
 
-Python 3.10–3.13 are all supported. The dev extra pulls in pytest, pytest-asyncio, ruff, mypy, and all optional deps.
+Python 3.10–3.13 are all supported. The `dev` extra pulls in pytest, pytest-asyncio, ruff, mypy, and every optional dependency the test suite touches — so the full suite runs with zero skips. CI installs exactly this extra.
 
 ---
 
@@ -30,39 +30,60 @@ The full matrix (Python 3.10–3.13) runs in CI on every push. You only need to 
 
 ---
 
-## Linting
+## Linting and type checking
+
+CI runs all three of these on every push, repo-wide. Run them before pushing:
 
 ```bash
-ruff check triage/
+ruff check .
+ruff format --check .
+mypy triage/ --strict
 ```
 
-CI enforces this. Fix all violations before pushing — auto-fix handles most of them:
+`ruff check . --fix` and `ruff format .` handle most violations automatically.
+
+`mypy --strict` must pass with zero errors. The `py.typed` marker ships with the package, so
+users type-checking their own code inherit our annotations — an untyped public API is a bug.
+Optional-dependency shims (`anthropic`, `redis`, `opentelemetry`, …) are handled by
+`ignore_missing_imports` overrides in `pyproject.toml`; add to those rather than sprinkling
+`# type: ignore`.
+
+Installing the pre-commit hooks runs the same three checks on staged files:
 
 ```bash
-ruff check triage/ --fix
+pre-commit install
 ```
-
-We don't run mypy in CI yet (the codebase uses `Any` in several adapter/OTel paths where strict typing adds noise), but the `py.typed` marker is present and PRs that add new public APIs should be typed.
 
 ---
 
 ## Project structure
 
 ```
-triage/           — core library (no framework imports; see rules below)
-  taxonomy.py     — FailureType enum, Step, FailureContext
-  trajectory.py   — Trajectory
-  checkpoint/     — Checkpoint stores (in-memory, SQLite, Redis)
-  policy.py       — RecoveryAction, FailurePolicy
-  agent.py        — Agent, lifecycle, recovery loop
-  classifier/     — RulesClassifier, LLMClassifier, HybridClassifier
-  strategies/     — retry, replan, rollback helpers
-  adapters/       — LangGraph, LangChain wrappers (framework deps here only)
-  observability/  — OTel spans (lazy import, safe without opentelemetry-sdk)
-  scorer/         — StepRiskScorer protocol, RulesRiskScorer
-tests/            — one file per source module, pytest-asyncio auto mode
-examples/         — runnable demos
-docs/             — MkDocs documentation
+triage/            — core library (no framework imports; see rules below)
+  taxonomy.py      — FailureType enum, Step, FailureContext, TriageContext
+  trajectory.py    — Trajectory
+  checkpoint/      — Checkpoint stores (in-memory, SQLite, Redis)
+  policy.py        — RecoveryAction, FailurePolicy
+  agent.py         — Agent, lifecycle, recovery loop, run()/stream()/resume()
+  classifier/      — RulesClassifier, LLMClassifier, HybridClassifier
+  strategies/      — retry, replan, rollback, circuit_breaker, saga helpers
+  suspension.py    — SuspensionStore protocol, InMemorySuspensionStore
+  suspension_redis.py — RedisSuspensionStore (requires redis)
+  breaker.py       — CircuitBreaker, BreakerState
+  breaker_store.py — BreakerStore protocol, RedisBreakerStore
+  usage.py         — Usage, UsageMeter (token/cost accounting)
+  pricing.py       — PRICE_TABLE, lookup_cost()
+  streaming.py     — StreamRetryEvent
+  scorer/          — StepRiskScorer protocol, RulesRiskScorer
+  adapters/        — LangGraph, LangChain wrappers (framework deps here only)
+  observability/   — OTel spans + metrics (lazy import, safe without the SDK)
+  bench.py         — run_benchmark(), BenchReport
+  feedback.py      — Correction, record_correction(), coverage_report()
+  testing.py       — make_step(), RecordingAgent, assert_classifies_as()
+tests/             — one file per source module, pytest-asyncio auto mode
+examples/          — runnable demos
+scripts/           — benchmark + classifier-accuracy measurement harnesses
+docs/              — MkDocs documentation
 ```
 
 ### Core import rules

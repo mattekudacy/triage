@@ -49,6 +49,55 @@ stable since v0.2; 1.0 makes that commitment explicit and durable.
 
 ### Changed
 - Version bumped from 0.24.0 to 1.0.0.
+- `Development Status` classifier raised from `3 - Alpha` to `5 - Production/Stable`.
+
+---
+
+## [0.24.0] - 2026-07-27
+
+### Added
+- **Saga / compensating rollback** — new `triage/strategies/saga.py` with
+  `compensating_rollback(checkpoint_id=None)`. Agents register undo callables via the injected
+  `record_compensator(step_index, fn)` kwarg or `triage.get_compensator_recorder()`; both sync
+  and async compensators are supported. On any `ROLLBACK` action (via `compensating_rollback()`
+  or plain `RecoveryAction.ROLLBACK`), `agent.py` runs registered compensators in **reverse
+  step-index order** before restoring the checkpoint. Compensator errors are logged
+  (`triage_event: "compensator_error"`) but never abort recovery — compensation is best-effort.
+  Compensators are in-memory only and cleared at the top of each loop iteration, so retries
+  start with an empty list.
+- **`on_compensator_error` hook** — `Agent(on_compensator_error=lambda step_index, exc: ...)`
+  fires before the compensator warning is logged, for alerting or dead-letter recording. The
+  error is still swallowed afterwards; exceptions inside the hook are swallowed too, matching
+  the other lifecycle hooks.
+- `get_compensator_recorder` added to `triage.__all__`.
+
+---
+
+## [0.23.0] - 2026-07-27
+
+### Added
+- **Cost model for `max_cost_usd`** — new `triage/pricing.py`: `PRICE_TABLE` maps model ID
+  prefixes to `(input_per_token_usd, output_per_token_usd)` tuples (Anthropic models; rates
+  as of 2026-06-24). `lookup_cost(model, input_tokens, output_tokens)` does longest-prefix
+  matching, so short IDs (`"claude-haiku-4-5"`) and dated variants
+  (`"claude-haiku-4-5-20251001"`) both resolve; unknown models return `0.0`. Patch
+  `PRICE_TABLE` at runtime to add custom rates.
+- **`LLMClassifier` populates `cost_usd`** — `_report_usage()` now calls `lookup_cost()` and
+  passes the result into `Usage`, so `max_cost_usd` enforcement actually fires for
+  Anthropic-backend classifiers instead of always accumulating `0.0`.
+- **Unknown-model warning** — the first time an unrecognised model is priced, triage logs a
+  one-shot `unknown_model_cost` structured warning so a silent `cost_usd = 0.0` is visible.
+
+---
+
+## [0.22.0] - 2026-07-27
+
+### Added
+- **`RedisSuspensionStore`** — durable human-in-the-loop pause/resume backed by Redis, so
+  suspended runs survive process restarts (`InMemorySuspensionStore` does not). Options:
+  `key_prefix` and `ttl_seconds`. Reuses the existing `serialize_run` / `deserialize_run`
+  helpers, so no new serialisation format. Requires `pip install "triage-agent[redis]"`.
+- `RedisSuspensionStore` added to `triage.__all__` via the lazy `__getattr__` path.
 
 ---
 

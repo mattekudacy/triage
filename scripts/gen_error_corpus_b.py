@@ -1,12 +1,17 @@
 """
 scripts/gen_error_corpus_b.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Generate tests/data/error_corpus_b.json — corpus B, the genuine held-out set.
+Generate tests/data/error_corpus_b.json — corpus B.
 
-Rules: rules.py was NOT consulted when assembling this corpus. Sources are
-deliberately disjoint from corpus A: boto3/botocore, google-genai/grpc,
-aiohttp, requests/urllib3, stdlib urllib, plus phrasings that differ
-structurally from the strings used to write or fix the v0.25 patterns.
+Corpus B was held out when it was built: rules.py was NOT consulted while
+assembling it. Sources are deliberately disjoint from corpus A —
+boto3/botocore, google-genai/grpc, aiohttp, requests/urllib3, stdlib urllib,
+plus phrasings that differ structurally from the strings used to write or fix
+the v0.25 patterns.
+
+**Corpus B is now training data.** Its misses guided the v0.26 botocore and
+schema-exception fixes, so its 90% score no longer measures generalization.
+Corpus C is the current held-out benchmark — see scripts/README.md.
 
 All entries are labeled with the expected FailureType value.
 

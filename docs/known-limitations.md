@@ -26,11 +26,24 @@ As of v0.10, `LLMClassifier` (and `HybridClassifier`, when wrapping one) also de
 
 ### Accuracy is corpus-dependent
 
-`RulesClassifier` scores 100% on the 26-case synthetic suite in `examples/benchmark.py` (see `docs/concepts/classifiers.md` for the full table). Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Run `python examples/benchmark.py` to test against the synthetic suite, or add your own cases to the `CASES` list to measure coverage for your specific stack.
+`RulesClassifier` scores 100% on the in-corpus synthetic suite in `examples/benchmark.py` (see `docs/concepts/classifiers.md` for the full table) — but that suite is training data, so the number says nothing about generalization.
+
+The honest figure is the held-out one. On corpus C (27 entries from azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, and LlamaIndex, scored once without editing `rules.py`), `RulesClassifier` gets **52% recall at 100% precision** — all 13 misses returned `UNKNOWN`, zero misroutes. Expect that shape on a stack the patterns have never seen: unrecognized errors fall through to your default policy rather than being routed to the wrong strategy.
+
+Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Reproduce both measurements with:
+
+```bash
+PYTHONPATH=. python scripts/classifier_accuracy.py   # four-block corpus measurement
+python examples/benchmark.py                         # synthetic suite
+```
+
+Add your own cases to `examples/benchmark.py`'s `CASES` list to measure coverage for your specific stack.
 
 ### Error messages are framework- and locale-dependent
 
-`RulesClassifier` patterns are written for English-language error messages from major Python SDKs (OpenAI, Anthropic, LangGraph, CrewAI). If your framework surfaces errors in a different language or format, pattern coverage will be lower. In that case, supply a custom classifier or use `LLMClassifier`.
+`RulesClassifier` patterns are written for English-language error messages from major Python SDKs (OpenAI, Anthropic, LangGraph, botocore, and other common providers). If your framework surfaces errors in a different language or format, pattern coverage will be lower. In that case, supply a custom classifier or use `LLMClassifier`.
+
+Note that `RulesClassifier(framework=...)` accepts only `"openai"`, `"anthropic"`, and `"langgraph"` for supplemental per-SDK patterns. Unknown values are silently ignored (generic patterns still apply), so a typo degrades coverage without raising.
 
 ---
 
