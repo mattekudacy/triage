@@ -565,7 +565,12 @@ class Agent:
         Raises ``TriageEscalationError`` / ``TriageAbortError`` / ``TriageSuspendedError``
         on any terminal outcome — the caller's except clause re-raises these.
         """
-        # Synthesize a sentinel step if the agent raised before calling record_step().
+        # Ensure the terminal exception is reachable from the trajectory so
+        # the classifier can match on it.  Two cases:
+        #   • No steps recorded: synthesize a sentinel step (existing behaviour).
+        #   • Steps recorded but last has no error: attach the exception in-place
+        #     so RulesClassifier patterns fire without disturbing the loop-detection
+        #     window (appending would push real steps out of the tail window).
         if not self._trajectory.steps:
             self._trajectory.append(
                 Step(
@@ -575,6 +580,11 @@ class Agent:
                     exception_type=type(exc).__name__,
                 )
             )
+        else:
+            last = self._trajectory.steps[-1]
+            if not last.error:
+                last.error = str(exc)
+                last.exception_type = type(exc).__name__
 
         steps = self._trajectory.steps
 

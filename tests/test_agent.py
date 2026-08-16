@@ -444,6 +444,32 @@ async def test_zero_trajectory_external_fault_detected():
     assert results[0] == FailureType.EXTERNAL_FAULT
 
 
+async def test_step_recorded_then_raise_classifies_correctly():
+    """Exception raised after record_step() must still reach the classifier.
+
+    Regression test: the sentinel-step guard was previously gated on an empty
+    trajectory, so any agent that recorded a step before raising always got
+    UNKNOWN regardless of the exception text.
+    """
+
+    async def agent_fn(task: str, *, record_step, **kw) -> str:
+        record_step(make_step(0))  # records a step BEFORE the exception
+        raise RuntimeError("HTTP 503 Service Unavailable")
+
+    results: list = []
+
+    async def capturing_strategy(ctx):
+        results.append(ctx.failure_type)
+        return RecoveryAction.ABORT(reason="stop")
+
+    policy = FailurePolicy(EXTERNAL_FAULT=capturing_strategy, UNKNOWN=capturing_strategy)
+    ag = Agent(agent_fn, policy)
+    with pytest.raises(TriageAbortError):
+        await ag.run("task")
+
+    assert results[0] == FailureType.EXTERNAL_FAULT
+
+
 # ---------------------------------------------------------------------------
 # Trajectory reset between attempts
 # ---------------------------------------------------------------------------

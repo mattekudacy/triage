@@ -7,6 +7,7 @@ strategy callables. The policy is the user-facing configuration object.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -160,7 +161,10 @@ class FailurePolicy:
                     f"No strategy registered for {ctx.failure_type.value}. Manual review required."
                 )
             )
-        return await strategy(ctx)
+        result = strategy(ctx)
+        if inspect.isawaitable(result):
+            return await result
+        return result  # type: ignore[return-value]
 
     @staticmethod
     def sequence(*strategies: StrategyFn) -> StrategyFn:
