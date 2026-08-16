@@ -60,6 +60,7 @@ try:
     import triage.suspension
     import triage.testing
     import triage.usage
+
     test("all documented modules importable", True)
 except ImportError as exc:
     test("all documented modules importable", False, str(exc))
@@ -75,9 +76,7 @@ async def test_happy_path() -> None:
     def fetch_data(task: str) -> str:
         return f"result for {task}"
 
-    async def my_agent(
-        task: str, *, record_step, update_state, _triage_hint=None, **kwargs
-    ):
+    async def my_agent(task: str, *, record_step, update_state, _triage_hint=None, **kwargs):
         data = fetch_data(task)
         record_step(
             Step(
@@ -384,9 +383,7 @@ async def test_checkpoint_rollback() -> None:
     calls = [0]
     store = triage.InMemoryCheckpointStore()
 
-    async def my_agent(
-        task: str, *, record_step, update_state, _triage_state=None, **kwargs
-    ):
+    async def my_agent(task: str, *, record_step, update_state, _triage_state=None, **kwargs):
         calls[0] += 1
         if calls[0] == 1:
             record_step(Step(index=0, action="step-a"))
@@ -401,9 +398,7 @@ async def test_checkpoint_rollback() -> None:
         EXTERNAL_FAULT=rollback_to_checkpoint(),
         default=triage.FailurePolicy.escalate_by_default(),
     )
-    agent = triage.Agent(
-        my_agent, policy=policy, checkpoint_store=store, auto_checkpoint=True
-    )
+    agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store, auto_checkpoint=True)
     result = await agent.run("task")
     test("rollback restores state from checkpoint", result == "recovered:a")
 
