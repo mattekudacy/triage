@@ -1,0 +1,11 @@
+{
+  "name": "triage-risk-gate",
+  "displayName": "Triage Risk Gate",
+  "description": "Deterministic PreToolUse safety gate: blocks/confirms destructive tool calls (rm -rf, drop table, send_email, charge_card, ...) using triage's regex-based RulesRiskScorer. Zero API calls.",
+  "version": "0.1.0",
+  "author": { "name": "cyrus2952", "email": "cyrus2952@gmail.com" },
+  "keywords": ["safety", "hooks", "risk", "triage", "pre-tool-use"],
+  "homepage": "https://github.com/mattekudacy/triage",
+  "license": "MIT",
+  "defaultEnabled": false
+}

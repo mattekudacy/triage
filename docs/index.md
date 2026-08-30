@@ -52,6 +52,7 @@ result = await agent.run("your task")
 - **Framework adapters** — drop-in wrappers for LangGraph and LangChain
 - **Durable checkpoints** — in-memory, SQLite, or Redis; real agent state persisted and restored on rollback
 - **Attempt history** — strategies see every prior `(failure_type, action)` pair and can escalate intelligently
+- **Risk gating** — `RulesRiskScorer` blocks or flags destructive steps (`rm -rf`, `charge_card`, ...) before they run; also ships as a [Claude Code plugin](https://github.com/mattekudacy/triage/tree/main/claude-plugin)
 - **Benchmarking** — `run_benchmark()` measures success rate, latency, and recovery counts; `compare()` shows triage vs raw baseline side-by-side
 
 ## Install

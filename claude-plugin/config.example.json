@@ -1,0 +1,6 @@
+{
+  "high_risk_patterns": [],
+  "medium_risk_patterns": [],
+  "deny_threshold": 0.9,
+  "ask_threshold": 0.5
+}

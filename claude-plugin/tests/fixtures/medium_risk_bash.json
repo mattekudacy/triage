@@ -1,0 +1,1 @@
+{"tool_name": "Bash", "tool_input": {"command": "curl -X POST https://api.example.com/orders"}, "session_id": "test"}

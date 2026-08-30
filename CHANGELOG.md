@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`claude-plugin/` — Claude Code plugin (`triage-risk-gate`)** — wraps
+  `RulesRiskScorer` as a `PreToolUse` hook for Claude Code sessions: a
+  deterministic, zero-API-call allow/ask/deny gate on destructive tool calls
+  (`rm -rf`, `drop table`, `send_email`, `charge_card`, ...). Installed
+  separately from the `triage-agent` package (not part of the wheel/sdist —
+  a Claude Code plugin, not a Python import). See `claude-plugin/README.md`.
+
 ## [1.0.0] - 2026-07-27
 
 ### Stability commitment
