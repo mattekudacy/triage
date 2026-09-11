@@ -14,6 +14,7 @@ def make_step(
     error: str | None = None,
     llm_output: str | None = None,
     exception_type: str | None = None,
+    metadata: dict | None = None,
 ) -> Step:
     return Step(
         index=index,
@@ -23,6 +24,7 @@ def make_step(
         error=error,
         llm_output=llm_output,
         exception_type=exception_type,
+        metadata=metadata or {},
     )
 
 
@@ -666,3 +668,118 @@ def test_output_parser_error_exception_type_alone_does_not_fire_schema() -> None
         )
     )
     assert RulesClassifier().classify(t, "task") != FailureType.SCHEMA_MISMATCH
+
+
+# ── Structured error codes (Step.metadata) ──────────────────────────────────
+# See docs/known-limitations.md's "Corpus E scoping" section and
+# triage/classifier/rules.py's module docstring for the rationale: only codes
+# with an unambiguous single-FailureType mapping are matched here, on purpose.
+# No corpus dependency — these are synthetic Step objects, not transcribed
+# error strings, because no existing corpus (A-D) carries a structured code.
+
+
+def test_wrong_tool_json_rpc_method_not_found() -> None:
+    """-32601 Method not found is JSON-RPC-spec-unambiguous: no wording at
+    all is required for this to fire, unlike every message-text rule above."""
+    t = traj(make_step(error="", metadata={"json_rpc_code": -32601}))
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_wrong_tool_json_rpc_code_fires_even_with_unrelated_message() -> None:
+    """The code alone is sufficient — message text is irrelevant to the code
+    path, matching the "structural, not textual" design goal."""
+    t = traj(
+        make_step(
+            error="the server said something went wrong",
+            metadata={"json_rpc_code": -32601},
+        )
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+@pytest.mark.parametrize("code", [-32700, -32600])
+def test_schema_mismatch_json_rpc_codes(code: int) -> None:
+    """Parse error (-32700) and Invalid Request (-32600) both indicate a
+    malformed request/response shape, JSON-RPC's schema-level failures."""
+    t = traj(make_step(error="", metadata={"json_rpc_code": code}))
+    assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+def test_external_fault_json_rpc_internal_error() -> None:
+    """-32603 Internal error is JSON-RPC's server-fault code."""
+    t = traj(make_step(error="", metadata={"json_rpc_code": -32603}))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+def test_json_rpc_invalid_params_does_not_fire_anything() -> None:
+    """-32602 Invalid params is deliberately NOT in any code table — it's
+    shared by both a bad tool name and a malformed argument shape, so the
+    code alone can't resolve which FailureType applies. Falling through to
+    UNKNOWN (given no matching message text either) is correct: never turn an
+    ambiguous code into a confident wrong guess."""
+    t = traj(make_step(error="", metadata={"json_rpc_code": -32602}))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+@pytest.mark.parametrize("code", [-32000, -32050, -32099])
+def test_json_rpc_server_error_range_does_not_fire_anything(code: int) -> None:
+    """The -32000..-32099 reserved range is implementation-defined per MCP
+    server, not spec-guaranteed — excluded from every code table."""
+    t = traj(make_step(error="", metadata={"json_rpc_code": code}))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
+def test_external_fault_http_status_metadata(status: int) -> None:
+    """Same codes _EXTERNAL_CODE_RE already matches in message text, now also
+    matched as a step.metadata attribute — covers SDKs whose exception
+    message never echoes the status code at all (e.g. huggingface_hub's
+    RepositoryNotFoundError, a corpus D miss)."""
+    t = traj(make_step(error="does not exist", metadata={"http_status": status}))
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+@pytest.mark.parametrize("status", [408, 504])
+def test_timeout_http_status_metadata(status: int) -> None:
+    """408/504 have no message-text or exception-type equivalent anywhere
+    else in this module — this is a net-new capability, not a redundant
+    backstop like the 429/500/502/503 case above."""
+    t = traj(make_step(error="", metadata={"http_status": status}))
+    assert RulesClassifier().classify(t, "task") == FailureType.TIMEOUT
+
+
+@pytest.mark.parametrize("status", [400, 404])
+def test_http_status_404_and_400_do_not_fire_anything(status: int) -> None:
+    """404/400 are deliberately excluded from every code table — too many
+    unrelated causes share them (a missing tool, a missing unrelated
+    resource, any malformed request) to map to one FailureType safely."""
+    t = traj(make_step(error="", metadata={"http_status": status}))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_metadata_convention_is_opt_in_default_empty_dict_no_behavior_change() -> None:
+    """Step.metadata defaults to {} — every pre-existing caller that never
+    sets it must see zero behavior change from this feature."""
+    t = traj(make_step(error="totally unrecognized error text"))
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
+
+
+def test_message_text_pattern_still_wins_when_metadata_absent() -> None:
+    """Sanity check that the new metadata checks are additive, not a
+    replacement — existing message-text matching is untouched."""
+    t = traj(make_step(error="tool 'foo' not found"))
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+def test_metadata_code_respects_stage_priority_order() -> None:
+    """An unambiguous json_rpc_code in an early stage (WRONG_TOOL_CALLED, stage
+    2) must win over a message pattern that would otherwise match a later
+    stage (SCHEMA_MISMATCH, stage 3) on the same step — same first-match-wins
+    priority order as every other signal type in this classifier."""
+    t = traj(
+        make_step(
+            error="invalid json in response",  # would match _SCHEMA_RE (stage 3)
+            metadata={"json_rpc_code": -32601},  # matches stage 2 first
+        )
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED

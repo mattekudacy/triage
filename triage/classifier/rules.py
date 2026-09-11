@@ -8,6 +8,17 @@ Scope: RulesClassifier reliably detects LOOP_DETECTED, WRONG_TOOL_CALLED,
 SCHEMA_MISMATCH, EXTERNAL_FAULT, TIMEOUT, and CONSTRAINT_IGNORED. It returns
 UNKNOWN for PLAN_INCOMPLETE and CONTEXT_OVERFLOW — those require semantic
 understanding and are handled by LLMClassifier or HybridClassifier.
+
+Structured error codes: in addition to message-text patterns, each rule also
+checks a caller-supplied structured code in Step.metadata — "http_status" (int)
+and/or "json_rpc_code" (int) — when present. This is opt-in: nothing populates
+Step.metadata automatically, so existing callers see no behavior change. Only
+codes with an UNAMBIGUOUS single-FailureType mapping are matched (see the
+_JSON_RPC_*/_HTTP_* tables below) — the same 100%-precision-by-construction
+guarantee every message-text rule in this module already keeps. See
+docs/concepts/classifiers.md's "Structured error codes" section for how to
+populate it and docs/known-limitations.md's "Corpus E scoping" for why this
+exists.
 """
 
 from __future__ import annotations
@@ -170,6 +181,38 @@ _SCHEMA_EXCEPTION_TYPES = frozenset(
         # specific to LlamaIndex's actual wording.
     }
 )
+
+# Structured error codes, read from Step.metadata rather than parsed from message
+# text or exception type names. Nothing populates Step.metadata automatically —
+# a wrapped agent callable must extract the code from the real exception object
+# (e.g. an httpx/anthropic/openai APIStatusError's .status_code, or an MCP
+# McpError's .error.code) and pass it via record_step(Step(..., metadata={...})).
+# See docs/concepts/classifiers.md's "Structured error codes" section and
+# docs/known-limitations.md's "Corpus E scoping" for the rationale and the
+# scoring this is meant to enable.
+#
+# Only codes with an UNAMBIGUOUS single-FailureType mapping are listed here.
+# A code shared across multiple failure types (JSON-RPC -32602 "Invalid
+# params": both a bad tool name and a malformed argument shape use it; HTTP
+# 404/400: too many unrelated causes) is deliberately excluded — the whole
+# point of this table is to never turn a code into a confident wrong guess,
+# the same 100%-precision-by-construction guarantee every other rule in this
+# module keeps. An excluded code simply falls through to the message-text
+# rules below, same as if metadata carried nothing at all.
+#
+# JSON-RPC 2.0 reserved codes (https://www.jsonrpc.org/specification#error_object).
+# The -32000..-32099 "Server error" range is implementation-defined per server
+# and NOT included — it has no spec-guaranteed meaning to map.
+_JSON_RPC_WRONG_TOOL_CODES = frozenset({-32601})  # Method not found
+_JSON_RPC_SCHEMA_CODES = frozenset({-32700, -32600})  # Parse error, Invalid Request
+_JSON_RPC_EXTERNAL_CODES = frozenset({-32603})  # Internal error
+
+# HTTP status codes as a caller-supplied int (Step.metadata["http_status"]),
+# not parsed from message text — see _EXTERNAL_CODE_RE for the message-text
+# equivalent of the codes below. 408/504 are net-new: no message-text or
+# exception-type rule covers a timeout HTTP status anywhere else in this file.
+_HTTP_EXTERNAL_STATUS_CODES = frozenset({429, 500, 502, 503})
+_HTTP_TIMEOUT_STATUS_CODES = frozenset({408, 504})
 
 # botocore wraps all errors in a uniform envelope:
 #   "An error occurred (ErrorCode) when calling the OperationName operation: message"
@@ -353,12 +396,17 @@ class RulesClassifier:
             if _is_loop_window(window, self.loop_similarity_threshold):
                 return FailureType.LOOP_DETECTED
 
-        # 2. WRONG_TOOL_CALLED
+        # 2. WRONG_TOOL_CALLED — message patterns, framework patterns, or an
+        # unambiguous structured code in step.metadata (see the _JSON_RPC_*/
+        # _HTTP_* tables above).
         for step in steps:
-            if step.error and (
-                _WRONG_TOOL_RE.search(step.error)
-                or self._fw_match(step.error, _WRONG_TOOL_FRAMEWORK)
-            ):
+            if (
+                step.error
+                and (
+                    _WRONG_TOOL_RE.search(step.error)
+                    or self._fw_match(step.error, _WRONG_TOOL_FRAMEWORK)
+                )
+            ) or step.metadata.get("json_rpc_code") in _JSON_RPC_WRONG_TOOL_CODES:
                 return FailureType.WRONG_TOOL_CALLED
 
         # 2b. botocore envelope — parse error code before generic patterns fire
@@ -371,7 +419,8 @@ class RulesClassifier:
                         if pat.search(code):
                             return FailureType(kind)
 
-        # 3. SCHEMA_MISMATCH — string patterns, framework patterns, or exception type name
+        # 3. SCHEMA_MISMATCH — string patterns, framework patterns, exception type
+        # name, or an unambiguous structured code in step.metadata.
         for step in steps:
             if step.error and (
                 _SCHEMA_RE.search(step.error) or self._fw_match(step.error, _SCHEMA_FRAMEWORK)
@@ -379,9 +428,12 @@ class RulesClassifier:
                 return FailureType.SCHEMA_MISMATCH
             if step.exception_type and step.exception_type in _SCHEMA_EXCEPTION_TYPES:
                 return FailureType.SCHEMA_MISMATCH
+            if step.metadata.get("json_rpc_code") in _JSON_RPC_SCHEMA_CODES:
+                return FailureType.SCHEMA_MISMATCH
 
-        # 4. EXTERNAL_FAULT — HTTP status codes, text-form rate-limit/server errors,
-        # or exception type names when the message alone is insufficient.
+        # 4. EXTERNAL_FAULT — HTTP status codes (message text or step.metadata),
+        # text-form rate-limit/server errors, exception type names, or a JSON-RPC
+        # code, when the message alone is insufficient.
         for step in steps:
             if (
                 step.error
@@ -390,14 +442,22 @@ class RulesClassifier:
                     or _EXTERNAL_TEXT_RE.search(step.error)
                     or self._fw_match(step.error, _EXTERNAL_FRAMEWORK)
                 )
-            ) or (step.exception_type and step.exception_type in _EXTERNAL_EXCEPTION_TYPES):
+            ) or (
+                (step.exception_type and step.exception_type in _EXTERNAL_EXCEPTION_TYPES)
+                or step.metadata.get("http_status") in _HTTP_EXTERNAL_STATUS_CODES
+                or step.metadata.get("json_rpc_code") in _JSON_RPC_EXTERNAL_CODES
+            ):
                 return FailureType.EXTERNAL_FAULT
 
-        # 5. TIMEOUT — string match, or exception type when str(exc) is empty/unhelpful
+        # 5. TIMEOUT — string match, exception type when str(exc) is empty/unhelpful,
+        # or an HTTP timeout status code (408, 504) in step.metadata — the gap
+        # that has no message-text or exception-type equivalent anywhere above.
         for step in steps:
             if step.error and _TIMEOUT_RE.search(step.error):
                 return FailureType.TIMEOUT
             if step.exception_type and step.exception_type in _TIMEOUT_EXCEPTION_TYPES:
+                return FailureType.TIMEOUT
+            if step.metadata.get("http_status") in _HTTP_TIMEOUT_STATUS_CODES:
                 return FailureType.TIMEOUT
 
         # 6. CONSTRAINT_IGNORED — llm_output contains a forbidden constraint string

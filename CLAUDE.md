@@ -126,16 +126,29 @@ without a labeled corpus.
 ## RulesClassifier rule priority
 
 1. LOOP_DETECTED — last `loop_window` steps (default 3, configurable): identical `tool_called` + canonical `tool_input`
-2. WRONG_TOOL_CALLED — error matches tool-not-found patterns across OpenAI/Anthropic/generic SDKs
-3. SCHEMA_MISMATCH — error matches `validation error|json.*parse|jsondecodeerror|invalid json|unexpected token`
-4. EXTERNAL_FAULT — error contains `\b(429|500|502|503)\b` (word-boundary, avoids false positives)
-5. TIMEOUT — error matches `timeout|timed out|deadline exceeded|time limit`
+2. WRONG_TOOL_CALLED — error matches tool-not-found patterns across OpenAI/Anthropic/generic SDKs, OR `metadata["json_rpc_code"] == -32601`
+3. SCHEMA_MISMATCH — error matches `validation error|json.*parse|jsondecodeerror|invalid json|unexpected token`, OR `metadata["json_rpc_code"] in (-32700, -32600)`
+4. EXTERNAL_FAULT — error contains `\b(429|500|502|503)\b` (word-boundary, avoids false positives), OR `metadata["http_status"] in (429, 500, 502, 503)`, OR `metadata["json_rpc_code"] == -32603`
+5. TIMEOUT — error matches `timeout|timed out|deadline exceeded|time limit`, OR `metadata["http_status"] in (408, 504)`
 6. CONSTRAINT_IGNORED — `llm_output` contains any string from `self.constraints`
 7. UNKNOWN — default
 
 **RulesClassifier scope:** Detects only structural/syntactic failures. PLAN_INCOMPLETE and
 CONTEXT_OVERFLOW require semantic understanding and always return UNKNOWN from RulesClassifier
 — use LLMClassifier or HybridClassifier for those.
+
+**Structured error codes (`Step.metadata`):** in addition to message-text patterns, rules 2-5
+also check a caller-supplied structured code in `Step.metadata` — `"http_status"` (int) and/or
+`"json_rpc_code"` (int) — when present. Opt-in: nothing populates `Step.metadata`
+automatically, so existing callers see no behavior change. Only codes with an *unambiguous*
+single-`FailureType` mapping are matched — JSON-RPC `-32602` ("Invalid params", shared by both
+a bad tool name and a malformed argument shape) and HTTP `404`/`400` are deliberately excluded,
+same 100%-precision-by-construction guarantee every message-text rule keeps. See
+`triage/classifier/rules.py`'s module docstring, `docs/concepts/classifiers.md`'s "Structured
+error codes" section, and `docs/known-limitations.md`'s "Corpus E scoping" for the full
+rationale. This is Step 1 of that section's 3-step plan — Step 2 (score it against a corpus E
+built with real codes) has not happened yet; nothing here has been measured against held-out
+data.
 
 **`StepRiskScorer` contract:** `StepRiskScorer.__call__()` is synchronous and must not make
 API calls. It is invoked on the hot path inside `_record_step` on every recorded step; keep

@@ -50,7 +50,25 @@ class FailureType(Enum):
 
 @dataclass
 class Step:
-    """A single recorded step in an agent's execution trajectory."""
+    """A single recorded step in an agent's execution trajectory.
+
+    ``metadata`` is caller-supplied and unenforced — strategies, hooks, and
+    ``RulesClassifier`` may inspect it, but nothing in ``triage`` populates it
+    automatically. Two keys have a documented convention:
+
+    - ``metadata["http_status"]`` (``int``): the real HTTP status code from
+      the exception that produced this step (e.g. an ``anthropic``/``openai``
+      ``APIStatusError.status_code``, an ``httpx.HTTPStatusError``'s
+      ``response.status_code``, or Ollama's ``ResponseError.status_code``).
+    - ``metadata["json_rpc_code"]`` (``int``): the JSON-RPC 2.0 error code
+      from an MCP tool-call failure (e.g. an ``McpError``'s ``error.code``).
+
+    ``RulesClassifier`` checks both when present, in addition to its message-text
+    patterns — see ``triage/classifier/rules.py``'s module docstring and
+    ``docs/concepts/classifiers.md``'s "Structured error codes" section. Populating
+    them is the caller's responsibility: extract the code from the real exception
+    object and pass it via ``record_step(Step(..., metadata={"http_status": 429}))``.
+    """
 
     index: int
     action: str
