@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`docs/concepts/multi-agent-failures.md`** — a design proposal, not implemented, scoping
+  what it would take to detect multi-agent failures against the published
+  [MAST taxonomy](https://github.com/multi-agent-systems-failure-taxonomy/MAST) (14 failure
+  modes, 3 categories, Cemri et al. 2025). Finds `Step`/`Trajectory` has no concept of agent
+  identity today — no MAST inter-agent failure mode is representable regardless of classifier
+  work, until a `Step.agent_id` field exists. Maps all 14 modes into three groups: 2 already
+  covered by existing `FailureType`s with no new code needed (Step Repetition →
+  `LOOP_DETECTED`, Premature Termination → `PLAN_INCOMPLETE`), 2 structurally-promising
+  candidates worth a real measured prototype (verification-claim mismatch, conversation
+  reset), and 10 semantic-only modes that would need an `LLMClassifier` prompt extension.
+  Explicitly recommends **no new `FailureType` members** in phase 1, naming the `v0.7`
+  `HALLUCINATED_STATE`/`GOAL_DRIFT` removal as the mistake not to repeat — those were added
+  without real classifier disambiguation logic behind them. See `docs/known-limitations.md`'s
+  new "Multi-agent systems" section for the pointer.
+
 - **`triage.observability.otel_ingest.trajectory_from_spans()`** — build a `Trajectory` from
   OpenTelemetry spans a framework already emits, instead of hand-writing `Step` objects.
   Every prior example had the wrapped agent construct `Step`s itself; this reads spans from
@@ -99,6 +114,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   escalation-to-LLM premise the measurement depends on silently breaks).
 
 ### Changed
+
+- **Marked `RedisSuspensionStore`, `RedisBreakerStore`, and `compensating_rollback()`
+  (saga compensators) experimental.** Each is tested but has no known production users as of
+  this writing — shipping them wasn't wrong, but presenting them with the same confidence as
+  the core classify/recover path overstated how much real-world signal they've gotten. Module
+  docstrings in `triage/suspension_redis.py`, `triage/breaker_store.py`, and
+  `triage/strategies/saga.py` now say so and ask adopters to open an issue with their use
+  case; `README.md`'s suspension section links the caveat. No functional change — nothing
+  was removed, deprecated, or had its behavior altered.
 
 - **Measured, for the first time, whether `LLMClassifier`/`HybridClassifier` actually close
   the routing-sensitive gap `RulesClassifier` can't (see the v1.1 entry below).** The

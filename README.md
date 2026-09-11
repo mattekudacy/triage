@@ -550,7 +550,7 @@ result = await agent.resume(token, action=triage.RecoveryAction.RETRY())
 # or: action=triage.RecoveryAction.REPLAN(hint="try a different approach")
 ```
 
-The core stores and reloads state; routing the token to Slack, an HTTP callback, or a CLI prompt is userland. Swap `InMemorySuspensionStore` for a Redis-backed store in production so tokens survive process restarts.
+The core stores and reloads state; routing the token to Slack, an HTTP callback, or a CLI prompt is userland. Swap `InMemorySuspensionStore` for `RedisSuspensionStore` in production so tokens survive process restarts — **experimental**: tested, but with no known production users as of this writing; see the module docstring in `triage/suspension_redis.py`.
 
 ---
 

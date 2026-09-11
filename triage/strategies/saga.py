@@ -4,6 +4,11 @@ triage.strategies.saga
 Compensating rollback strategy: runs registered compensators in reverse
 step-index order before restoring a checkpoint.
 
+**Experimental.** Tested (see tests/test_saga.py), but has no known production
+users as of this writing and receives less real-world signal than the core
+classify/recover path. The API may change based on actual usage; if you adopt
+it, please open an issue with your use case.
+
 Usage::
 
     from triage.strategies.saga import compensating_rollback
