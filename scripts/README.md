@@ -38,6 +38,12 @@ This is the part that's easy to destroy by accident:
 | B | boto3/botocore, google-genai/grpc, aiohttp, requests/urllib3 | **Training** — guided v0.26 fixes | 90% (18/20) |
 | C | azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, LlamaIndex | **Held out — frozen** | 52% recall, 100% precision |
 
+Corpus C's 52% is an average over two groups that must not be collapsed: 86% (12/14) on the
+self-healing types (`external_fault`, `timeout`) where any retry recovers regardless of
+classification, and **8% (1/12) on the routing-sensitive types** (`wrong_tool_called`,
+`schema_mismatch`) where the matched hint is the only thing that makes recovery work. Block 6
+of `classifier_accuracy.py` prints this split. Quote it whenever you quote the aggregate.
+
 A corpus becomes training data the moment its misses inform a `rules.py` edit. A and B
 already have; their scores prove the patterns fit the data they were written against and say
 nothing about generalization.

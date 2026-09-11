@@ -288,6 +288,20 @@ v0.25/v0.26 pattern fixes), so their 100%/90% scores prove nothing about general
 Corpus C is the real number — scored once, `rules.py` untouched: **52% recall, 100% precision**,
 all 13 misses returning `UNKNOWN` with zero misroutes.
 
+**Never quote the 52% aggregate on its own.** It averages two groups with opposite value, and
+block 6 of `classifier_accuracy.py` prints the split:
+
+| Group | Types | Held-out recall | Why it matters |
+|---|---|---|---|
+| Self-healing | `external_fault`, `timeout` | 12/14 — 86% | any retry recovers these; classification adds nothing |
+| Routing-sensitive | `wrong_tool_called`, `schema_mismatch` | 1/12 — 8% | only the matched hint recovers these; this is the value prop |
+
+The synthetic routing demo beats the no-recovery baseline on exactly the routing-sensitive
+types — the ones at 8% on held-out data. Both numbers are honest and they must be reported
+together. Raising routing-sensitive held-out recall is the next release's headline goal;
+feature work is deprioritised behind it.
+
 Keep corpus C frozen. Tuning `rules.py` against C's misses turns it into training data and
 the measurement disappears — generate corpus D for the next improvement cycle instead. When
-quoting accuracy anywhere, quote the held-out number and label the training ones as training.
+quoting accuracy anywhere, quote the held-out number, split it by group, and label the
+training ones as training.

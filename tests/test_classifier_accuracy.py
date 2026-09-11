@@ -140,6 +140,21 @@ CORPUS_C_PATH = Path(__file__).parent / "data" / "error_corpus_c.json"
 # Generate corpus D first, then improve, then score D.
 CORPUS_C_FLOOR = 0.51  # 14/27 = 51.9%, measured 2026-07-27
 
+# The corpus C aggregate averages two groups whose value to an adopter is opposite.
+# SELF_HEALING types recover from any retry — a bare `for _ in range(3)` loop fixes
+# them, so classifying them correctly adds nothing over blind retry.
+# ROUTING_SENSITIVE types only recover when the matched hint reaches the strategy;
+# they are the reason this library exists. Held-out recall on the two groups is
+# 86% and 8% respectively, so the 52% aggregate overstates delivered value.
+# These floors are ratchets, tracked separately so the aggregate cannot rise on the
+# back of the group that doesn't matter.
+SELF_HEALING_LABELS = ("external_fault", "timeout")
+ROUTING_SENSITIVE_LABELS = ("wrong_tool_called", "schema_mismatch")
+CORPUS_C_SELF_HEALING_FLOOR = 0.85  # 12/14 = 85.7%, measured 2026-07-27
+# Headline goal for the next release: raise this to 0.70 via corpus D.
+# Until then it is the honest ceiling on what triage delivers over a retry loop.
+CORPUS_C_ROUTING_SENSITIVE_FLOOR = 0.08  # 1/12 = 8.3%, measured 2026-07-27
+
 
 @dataclass
 class _HeldOutResult:
@@ -154,6 +169,31 @@ class _HeldOutResult:
 
 def _score_corpus(path: Path) -> _HeldOutResult:
     entries = json.loads(path.read_text())
+    clf = RulesClassifier()
+    correct = 0
+    misses = []
+    for entry in entries:
+        t = Trajectory()
+        t.append(
+            Step(
+                index=0,
+                action="a",
+                error=entry["error"],
+                exception_type=entry.get("exception_type"),
+            )
+        )
+        got = clf.classify(t, "task").value
+        exp = entry["label"]
+        if got == exp:
+            correct += 1
+        else:
+            misses.append((exp, got, entry.get("exception_type", ""), entry["error"][:60]))
+    return _HeldOutResult(total=len(entries), correct=correct, misses=misses)
+
+
+def _score_corpus_group(path: Path, labels: tuple[str, ...]) -> _HeldOutResult:
+    """Score only the entries whose true label is in ``labels``."""
+    entries = [e for e in json.loads(path.read_text()) if e["label"] in labels]
     clf = RulesClassifier()
     correct = 0
     misses = []
@@ -301,3 +341,55 @@ class TestCorpusC:
                 f" below floor {CORPUS_C_FLOOR:.0%}.\nMisses:\n{detail}"
             )
         assert result.accuracy >= CORPUS_C_FLOOR
+
+    def test_corpus_c_self_healing_floor(self) -> None:
+        """Recall on types a bare retry loop would recover anyway.
+
+        High here is expected and not worth much: EXTERNAL_FAULT and TIMEOUT heal
+        on any retry, so correct classification buys nothing over blind retry.
+        Guarded only so a regression here is still caught.
+        """
+        result = _score_corpus_group(CORPUS_C_PATH, SELF_HEALING_LABELS)
+        assert result.accuracy >= CORPUS_C_SELF_HEALING_FLOOR, (
+            f"Self-healing held-out recall {result.accuracy:.0%}"
+            f" ({result.correct}/{result.total}) below floor"
+            f" {CORPUS_C_SELF_HEALING_FLOOR:.0%}."
+        )
+
+    def test_corpus_c_routing_sensitive_floor(self) -> None:
+        """Recall on the types that justify the library.
+
+        WRONG_TOOL_CALLED and SCHEMA_MISMATCH only recover when the matched hint
+        reaches the strategy — these are the types scripts/bench_synthetic.py shows
+        triage winning on, and the only ones where classification beats blind retry.
+        Held-out recall here is the honest measure of delivered value, and it is
+        currently 1/12. Raising this floor is the next release's headline goal;
+        it must never be lowered.
+        """
+        result = _score_corpus_group(CORPUS_C_PATH, ROUTING_SENSITIVE_LABELS)
+        if result.accuracy < CORPUS_C_ROUTING_SENSITIVE_FLOOR:
+            detail = "\n".join(
+                f"  exp={exp:16} got={got:16} [{exc}] {err!r}"
+                for exp, got, exc, err in result.misses
+            )
+            pytest.fail(
+                f"Routing-sensitive held-out recall: {result.accuracy:.0%}"
+                f" ({result.correct}/{result.total}) below floor"
+                f" {CORPUS_C_ROUTING_SENSITIVE_FLOOR:.0%}.\nMisses:\n{detail}"
+            )
+        assert result.accuracy >= CORPUS_C_ROUTING_SENSITIVE_FLOOR
+
+    def test_every_corpus_c_label_is_grouped(self) -> None:
+        """Guard the split: a new failure type must be classified into a group.
+
+        If a future corpus entry carries a label in neither group, the two group
+        floors stop covering the corpus and the headline number silently drifts.
+        UNKNOWN is exempt — it is the fall-through, not a detection target.
+        """
+        entries = json.loads(CORPUS_C_PATH.read_text())
+        grouped = set(SELF_HEALING_LABELS) | set(ROUTING_SENSITIVE_LABELS) | {"unknown"}
+        ungrouped = {e["label"] for e in entries} - grouped
+        assert not ungrouped, (
+            f"Corpus C labels not assigned to a group: {sorted(ungrouped)}."
+            " Add them to SELF_HEALING_LABELS or ROUTING_SENSITIVE_LABELS."
+        )

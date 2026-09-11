@@ -30,6 +30,37 @@ As of v0.10, `LLMClassifier` (and `HybridClassifier`, when wrapping one) also de
 
 The honest figure is the held-out one. On corpus C (27 entries from azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, and LlamaIndex, scored once without editing `rules.py`), `RulesClassifier` gets **52% recall at 100% precision** — all 13 misses returned `UNKNOWN`, zero misroutes. Expect that shape on a stack the patterns have never seen: unrecognized errors fall through to your default policy rather than being routed to the wrong strategy.
 
+### The aggregate recall number is misleading — read it per type
+
+This is the most important limitation on this page. Held-out recall splits into two groups
+that point in opposite directions:
+
+| Failure type | Held-out recall (corpus C) | Does classification change the outcome? |
+|---|---|---|
+| `external_fault` | 8/9 — 89% | No — any retry heals it |
+| `timeout` | 4/5 — 80% | No — any retry heals it |
+| `schema_mismatch` | 1/6 — 17% | Yes — recovery needs the schema hint |
+| `wrong_tool_called` | 0/6 — 0% | Yes — recovery needs the manifest hint |
+| **Self-healing types** | **12/14 — 86%** | classification buys nothing over blind retry |
+| **Routing-sensitive types** | **1/12 — 8%** | classification is the entire value proposition |
+
+`external_fault` and `timeout` are self-healing: a bare `for attempt in range(3)` loop recovers
+them without knowing anything about the failure. triage classifying them correctly is real, but
+it is not worth a dependency. `wrong_tool_called` and `schema_mismatch` are the types where
+routing a *typed* hint to a *matched* strategy beats blind retry — and on error strings the
+patterns have not seen, `RulesClassifier` currently detects 1 of 12.
+
+The synthetic routing demo in the README shows triage beating a no-recovery baseline only on
+those same two types. Both numbers are honest; together they say the core claim is demonstrated
+in principle and not yet delivered on unseen error formats.
+
+**Practical implication.** If your stack's error strings resemble the ones in `rules.py`
+(OpenAI, Anthropic, LangChain, botocore), routing works. If not, expect most tool and schema
+failures to return `UNKNOWN` and fall through to `default` — safe, but no better than the retry
+loop you would have written yourself. Mitigations today: pass `framework=` for supplemental
+per-SDK patterns, use `HybridClassifier` so `UNKNOWN` escalates to an LLM, or supply a custom
+classifier. Closing this gap is the next release's headline goal.
+
 Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Reproduce both measurements with:
 
 ```bash
