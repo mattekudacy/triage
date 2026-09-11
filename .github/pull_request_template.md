@@ -4,6 +4,14 @@ surrounding cleanup, and unrelated refactors should be their own PR.
 See CONTRIBUTING.md for the full guide.
 -->
 
+**Ownership.** This PR is submitted and owned by a human contributor, not an AI tool. Using
+an AI assistant to help write the change is fine — but you reviewed every line, you
+understand why it's correct, and you're accountable for it the same as any other
+contribution. Do not add `Co-Authored-By:` trailers, "Generated with [tool]" badges, or any
+other AI-attribution footer to commit messages or this description. A footer like that
+implies the tool shares authorship or accountability; it doesn't, and code review here treats
+every PR as fully human-owned regardless of how it was drafted.
+
 **What does this change and why?**
 <!-- The failure scenario, bug, or gap this addresses. Link an issue if one exists. -->
 
@@ -27,6 +35,8 @@ See CONTRIBUTING.md for the full guide.
 
 **Checklist**
 
+- [ ] No AI-attribution trailers or badges anywhere in this PR — commit messages and this
+      description are clean. I am the author and I am responsible for this change.
 - [ ] `pytest tests/ -x --tb=short` passes locally
 - [ ] `ruff check .`, `ruff format --check .`, and `mypy triage/ --strict` are all clean
 - [ ] No new imports of `openai`/`anthropic`/`langchain`/`langgraph`/`opentelemetry`/etc. inside
