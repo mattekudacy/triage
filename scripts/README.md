@@ -10,12 +10,23 @@ All are run from the repo root with `PYTHONPATH=.`.
 | Script | What it measures |
 |---|---|
 | `bench_synthetic.py` | Routing demo — triage vs. a no-recovery baseline across three failure modes |
-| `classifier_accuracy.py` | Nine-block precision/recall report for `RulesClassifier` |
+| `classifier_accuracy.py` | Nine-block precision/recall report for `RulesClassifier` — zero API calls |
+| `llm_classifier_accuracy.py` | Scores corpus D with `LLMClassifier`/`HybridClassifier` alongside `RulesClassifier` — **requires an LLM API key**, makes real calls |
 
 ```bash
 PYTHONPATH=. python scripts/bench_synthetic.py
 PYTHONPATH=. python scripts/classifier_accuracy.py
+ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/llm_classifier_accuracy.py
 ```
+
+`llm_classifier_accuracy.py` tests a claim the docs make but had never measured: that
+`LLMClassifier`/`HybridClassifier` close the routing-sensitive gap `RulesClassifier`'s v1.1
+pattern-tuning pass could not (see corpus D above). It only *reads* corpus D — it never
+edits `rules.py` or a corpus file, so it's safe to re-run any number of times and cannot
+convert corpus D to training data the way tuning against its misses would. Runs a pre-flight
+sanity check first and refuses to print a report if it fails, since `LLMClassifier.classify()`
+silently returns `UNKNOWN` on any error (bad key, missing dependency, unreachable endpoint) —
+without that guard, a broken credential would look identical to "the LLM doesn't help either."
 
 `bench_synthetic.py` is a *mechanism* demo, not an accuracy measurement: the tasks are
 constructed so the correct recovery hint changes the outcome. It shows that routing works,
