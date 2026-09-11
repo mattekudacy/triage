@@ -544,3 +544,88 @@ def test_env_base_url_routes_to_openai_backend(monkeypatch):
         clf.classify(traj(make_step(0)), "task")
     MockOpenAI.assert_called_once()
     assert MockOpenAI.call_args[1]["base_url"] == "http://localhost:11434/v1"
+
+
+# ── max_tokens: configurable output budget (reasoning-model fix) ──────────────
+# LLMClassifier hardcoded max_tokens=32 for the classification call. Fine for
+# a plain instruct model's one-word answer; silently wrong for a reasoning
+# model, which can spend the whole budget on hidden reasoning tokens and
+# return empty content — classify() then returns UNKNOWN with no error at
+# all, indistinguishable from a real auth/network failure. Found via a real
+# gpt-oss:120b-cloud run: finish_reason="length", content="" at 32 tokens;
+# finish_reason="stop", content="ok" at 500. These tests pin the fix, not
+# just the default.
+
+
+def test_max_tokens_default_is_32():
+    clf = LLMClassifier(model=_MODEL)
+    assert clf._max_tokens == 32
+
+
+def test_max_tokens_explicit_arg_overrides_default():
+    clf = LLMClassifier(model=_MODEL, max_tokens=500)
+    assert clf._max_tokens == 500
+
+
+def test_max_tokens_env_var_used_when_no_arg(monkeypatch):
+    monkeypatch.setenv("TRIAGE_LLM_MAX_TOKENS", "500")
+    clf = LLMClassifier(model=_MODEL)
+    assert clf._max_tokens == 500
+
+
+def test_max_tokens_explicit_arg_overrides_env_var(monkeypatch):
+    monkeypatch.setenv("TRIAGE_LLM_MAX_TOKENS", "500")
+    clf = LLMClassifier(model=_MODEL, max_tokens=999)
+    assert clf._max_tokens == 999
+
+
+def test_max_tokens_passed_to_anthropic_client():
+    clf = LLMClassifier(model=_MODEL, max_tokens=500)
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = _anthropic_client("unknown")
+        MockAnthropic.return_value = client
+        clf.classify(traj(make_step(0)), "task")
+    assert client.messages.create.call_args[1]["max_tokens"] == 500
+
+
+async def test_max_tokens_passed_to_anthropic_async_client():
+    clf = LLMClassifier(model=_MODEL, max_tokens=500)
+    with patch("triage.classifier.llm._anthropic.AsyncAnthropic") as MockAsyncAnthropic:
+        client = _anthropic_async_client("unknown")
+        MockAsyncAnthropic.return_value = client
+        await clf.aclassify(traj(make_step(0)), "task")
+    assert client.messages.create.call_args[1]["max_tokens"] == 500
+
+
+def test_max_tokens_passed_to_openai_compat_client():
+    clf = LLMClassifier(
+        base_url="http://localhost:11434/v1", model="gpt-oss:120b-cloud", max_tokens=500
+    )
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        client = _openai_client("unknown")
+        MockOpenAI.return_value = client
+        clf.classify(traj(make_step(0)), "task")
+    assert client.chat.completions.create.call_args[1]["max_tokens"] == 500
+
+
+async def test_max_tokens_passed_to_openai_compat_async_client():
+    clf = LLMClassifier(
+        base_url="http://localhost:11434/v1", model="gpt-oss:120b-cloud", max_tokens=500
+    )
+    with patch(_ASYNC_OPENAI_PATCH) as MockAsyncOpenAI:
+        client = _openai_async_client("unknown")
+        MockAsyncOpenAI.return_value = client
+        await clf.aclassify(traj(make_step(0)), "task")
+    assert client.chat.completions.create.call_args[1]["max_tokens"] == 500
+
+
+def test_max_tokens_truncated_empty_content_returns_unknown():
+    """Reproduces the exact failure mode found against gpt-oss:120b-cloud:
+    the API call succeeds, content is truncated to empty by finish_reason
+    'length' — classify() must return UNKNOWN, not raise."""
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="gpt-oss:120b-cloud")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        client = _openai_client("")
+        MockOpenAI.return_value = client
+        result = clf.classify(traj(make_step(0)), "task")
+    assert result == FailureType.UNKNOWN

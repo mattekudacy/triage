@@ -120,6 +120,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   separately from the `triage-agent` package (not part of the wheel/sdist —
   a Claude Code plugin, not a Python import). See `claude-plugin/README.md`.
 
+- **`scripts/llm_classifier_accuracy.py`** — scores corpus D with
+  `RulesClassifier`, `LLMClassifier` alone, and `HybridClassifier` side by
+  side, to test (not assume) whether semantic classification closes the
+  routing-sensitive gap the v1.1 pattern-tuning pass could not. Read-only
+  against corpus D; never touches `rules.py` or a corpus file.
+
+### Fixed
+
+- **`LLMClassifier` hardcoded `max_tokens=32` for the classification call —
+  silently wrong against reasoning models.** `max_tokens` is now a
+  constructor parameter (default `32`, unchanged) and reads
+  `TRIAGE_LLM_MAX_TOKENS` as a fallback, same convention as `TRIAGE_LLM_MODEL`
+  etc. Found by running `scripts/llm_classifier_accuracy.py` against Ollama
+  Cloud's `gpt-oss:120b-cloud`: the sanity check failed with no exception
+  raised anywhere — the API call succeeded, but `finish_reason` came back
+  `"length"` with empty `content`, because a reasoning model can spend the
+  entire 32-token budget on hidden reasoning tokens before ever emitting the
+  one-word answer. `classify()` returns `UNKNOWN` on that exactly the same as
+  it does on a real auth or network failure — genuinely indistinguishable
+  without inspecting the raw response, which is what made this take several
+  rounds to diagnose. `scripts/llm_classifier_accuracy.py` gained a
+  `--max-tokens` flag and its sanity-check failure message now names this as
+  a possible cause; `docs/concepts/classifiers.md` documents the parameter
+  and the failure mode. Regression tests in `tests/test_classifier_llm.py`
+  pin the default, the constructor arg, the env var, precedence between the
+  two, that the value actually reaches all four call sites (sync/async ×
+  Anthropic/OpenAI-compat), and the truncated-empty-content → `UNKNOWN` path
+  itself.
+
 ## [1.0.0] - 2026-07-27
 
 ### Stability commitment
