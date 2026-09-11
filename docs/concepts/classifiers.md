@@ -177,6 +177,7 @@ All parameters can be set via environment variables so you can switch providers 
 | `TRIAGE_LLM_BASE_URL` | Base URL for any OpenAI-compatible API |
 | `TRIAGE_LLM_MODEL` | Model name override |
 | `TRIAGE_LLM_API_KEY` | API key fallback |
+| `TRIAGE_LLM_MAX_TOKENS` | Output token budget fallback (default 32 — see [Output budget and reasoning models](#output-budget-and-reasoning-models)) |
 
 ```bash
 # Ollama — no config change needed
@@ -197,6 +198,18 @@ Explicit constructor arguments take precedence over environment variables.
 | `base_url` | `None` | If set, uses OpenAI-compatible backend |
 | `max_retries` | `1` | Retries for transient errors before falling back to `UNKNOWN` |
 | `retry_backoff_base` | `0.5` | Backoff seconds; doubles each retry (`0.5s`, `1s`, ...) |
+| `max_tokens` | `32` (or `TRIAGE_LLM_MAX_TOKENS`) | Output token budget for the classification call |
+
+### Output budget and reasoning models
+
+As of v1.2, `max_tokens` is configurable — previously hardcoded to `32`. That default is enough for a plain instruct model to emit one category word (`"external_fault"`), but a *reasoning* model (gpt-oss, o1/o3-style, DeepSeek-R1, Qwen3 "thinking" mode, ...) can spend the entire budget on hidden reasoning tokens before ever emitting the answer. The failure is silent and easy to misdiagnose: the API call succeeds, `finish_reason` comes back `"length"`, content is `""`, and `classify()` returns `UNKNOWN` — indistinguishable from a real auth or network failure unless you inspect the raw response yourself.
+
+```python
+clf = LLMClassifier(base_url="https://ollama.com/v1",
+                    model="gpt-oss:120b-cloud", max_tokens=500)
+```
+
+Or via env var: `TRIAGE_LLM_MAX_TOKENS=500`. A few hundred tokens is usually enough headroom for a reasoning model's hidden thinking plus the final word. If you're not sure whether your model needs this, test it directly: a `finish_reason` of `"length"` with empty `content` on a plain "say ok" prompt at the default budget is the tell.
 
 ### Retrying transient errors
 

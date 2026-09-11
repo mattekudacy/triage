@@ -128,13 +128,18 @@ def _sanity_check(clf: LLMClassifier) -> None:
             "SANITY CHECK FAILED: LLMClassifier returned "
             f"{got.value!r} for an unambiguous '429 Too Many Requests' string "
             "(expected 'external_fault').\n"
-            "classify() returns UNKNOWN on ANY error — network, auth, bad "
-            "model name, unreachable base_url — so this almost certainly means "
-            "the classifier never successfully reached the model, not that the "
-            "model is inaccurate. Refusing to score corpus D against a "
+            "classify() returns UNKNOWN both on ANY error (network, auth, bad "
+            "model name, unreachable base_url) AND on a successful call that "
+            "comes back with empty content — which happens with a reasoning "
+            "model (gpt-oss, o1/o3-style, DeepSeek-R1, Qwen3 'thinking' mode, "
+            "...) if the default 32-token budget gets spent entirely on hidden "
+            "reasoning before the answer. Refusing to score corpus D against a "
             "classifier that fails this trivially.\n\n"
-            "Check: API key set and valid, --model / TRIAGE_LLM_MODEL correct, "
-            "TRIAGE_LLM_BASE_URL reachable if set.",
+            "Check, in order: (1) API key set and valid, (2) --model / "
+            "TRIAGE_LLM_MODEL correct and TRIAGE_LLM_BASE_URL reachable, "
+            "(3) if this is a reasoning model, retry with --max-tokens 500 "
+            "(or higher) — a real gpt-oss:120b-cloud run needed >32 tokens to "
+            "get past its reasoning and actually answer.",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -197,6 +202,21 @@ def main() -> None:
         default=os.environ.get("TRIAGE_LLM_MODEL") or _DEFAULT_MODEL,
         help=f"Model name (default: TRIAGE_LLM_MODEL env var, else {_DEFAULT_MODEL!r})",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Output token budget for the classification call (default: "
+            "TRIAGE_LLM_MAX_TOKENS env var, else 32 — see LLMClassifier's "
+            "docstring). Reasoning models (gpt-oss, o1/o3-style, DeepSeek-R1, "
+            "Qwen3 'thinking' mode, ...) can burn the whole default budget on "
+            "hidden reasoning tokens and return empty content, which "
+            "classify() can't distinguish from a real failure — the sanity "
+            "check below will fail with no other clue. If you're pointing "
+            "this at a reasoning model, pass e.g. --max-tokens 500."
+        ),
+    )
     args = parser.parse_args()
 
     if not CORPUS_D_PATH.exists():
@@ -205,8 +225,9 @@ def main() -> None:
 
     _check_backend_installed()
 
-    llm = LLMClassifier(model=args.model)
+    llm = LLMClassifier(model=args.model, max_tokens=args.max_tokens)
     print(f"Model: {args.model}")
+    print(f"Max tokens: {llm._max_tokens}")
     if os.environ.get("TRIAGE_LLM_BASE_URL"):
         print(f"Base URL: {os.environ['TRIAGE_LLM_BASE_URL']}")
     print("Running sanity check...", end=" ", flush=True)
@@ -226,7 +247,7 @@ def main() -> None:
     llm_by_type = _score(llm, entries)
     _print_report(f"LLMClassifier alone ({args.model})", llm_by_type)
 
-    hybrid = HybridClassifier(llm=LLMClassifier(model=args.model))
+    hybrid = HybridClassifier(llm=LLMClassifier(model=args.model, max_tokens=args.max_tokens))
     hybrid_by_type = _score(hybrid, entries)
     _print_report("HybridClassifier (rules + LLM fallback — recommended config)", hybrid_by_type)
 

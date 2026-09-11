@@ -20,6 +20,19 @@ Both paths use a synchronous client so they work inside a running async event
 loop without calling asyncio.run(). Called only on failure — not in the per-step
 hot path — so the ~100-400ms blocking latency is acceptable.
 
+The classification call defaults to ``max_tokens=32`` — enough for a plain
+instruct model to emit one category word, but too small for a *reasoning*
+model (gpt-oss, o1/o3-style, DeepSeek-R1, Qwen3 "thinking" mode, ...), which
+can spend the entire budget on hidden reasoning tokens before ever emitting
+the answer. That failure mode is silent: the API call succeeds, the response
+just has empty content, so ``classify()`` returns ``UNKNOWN`` with no error at
+all. If you're pointing this at a reasoning model, pass a larger
+``max_tokens`` explicitly (a few hundred is usually enough) or set
+``TRIAGE_LLM_MAX_TOKENS``::
+
+    clf = LLMClassifier(base_url="https://ollama.com/v1",
+                        model="gpt-oss:120b-cloud", max_tokens=500)
+
 Install:
     pip install triage-agent[anthropic]          # Anthropic backend
     pip install triage-agent[openai]             # OpenAI-compatible backend
@@ -94,7 +107,15 @@ class LLMClassifier:
     compatible with Ollama, Groq, OpenAI, and any OpenAI-compatible provider
     (requires ``pip install triage-agent[openai]`` or ``pip install openai``).
 
-    Falls back to ``FailureType.UNKNOWN`` on any error (network, parse, rate limit).
+    ``max_tokens`` (default 32, or ``TRIAGE_LLM_MAX_TOKENS``) bounds the
+    classification call's output. 32 suffices for a plain instruct model's
+    one-word answer; a reasoning model (gpt-oss, o1/o3-style, DeepSeek-R1,
+    Qwen3 "thinking" mode, ...) needs far more or the response is truncated to
+    empty content before the answer is ever emitted — silently, since that's
+    not an error. Falls back to ``FailureType.UNKNOWN`` on any error (network,
+    parse, rate limit) — an empty response from a starved reasoning model
+    fails the same way, indistinguishably, unless you've set ``max_tokens``
+    high enough for that model.
     """
 
     def __init__(
@@ -105,6 +126,7 @@ class LLMClassifier:
         base_url: str | None = None,
         max_retries: int = 1,
         retry_backoff_base: float = 0.5,
+        max_tokens: int | None = None,
     ) -> None:
         # Explicit args take precedence; env vars are the fallback.
         self._base_url = base_url or os.environ.get("TRIAGE_LLM_BASE_URL") or None
@@ -127,6 +149,13 @@ class LLMClassifier:
         # top of an agent that's already failing.
         self._max_retries = max_retries
         self._retry_backoff_base = retry_backoff_base
+        # Output token budget for the classification call itself. 32 is enough
+        # for a plain instruct model's one-word answer; a reasoning model needs
+        # far more, or the answer gets truncated to empty content before it's
+        # ever emitted — see the module docstring. TRIAGE_LLM_MAX_TOKENS lets
+        # this be set without a code change, matching TRIAGE_LLM_MODEL etc.
+        env_max_tokens = os.environ.get("TRIAGE_LLM_MAX_TOKENS")
+        self._max_tokens = max_tokens or (int(env_max_tokens) if env_max_tokens else None) or 32
         self._client: Any = None
         self._async_client: Any = None
         self._lock = threading.Lock()
@@ -241,7 +270,7 @@ class LLMClassifier:
         if self._base_url is not None:
             response = client.chat.completions.create(
                 model=self._model,
-                max_tokens=32,
+                max_tokens=self._max_tokens,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
@@ -251,7 +280,7 @@ class LLMClassifier:
             return str(response.choices[0].message.content or "")
         message = client.messages.create(
             model=self._model,
-            max_tokens=32,
+            max_tokens=self._max_tokens,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -263,7 +292,7 @@ class LLMClassifier:
         if self._base_url is not None:
             response = await client.chat.completions.create(
                 model=self._model,
-                max_tokens=32,
+                max_tokens=self._max_tokens,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
@@ -273,7 +302,7 @@ class LLMClassifier:
             return str(response.choices[0].message.content or "")
         message = await client.messages.create(
             model=self._model,
-            max_tokens=32,
+            max_tokens=self._max_tokens,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
