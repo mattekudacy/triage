@@ -114,11 +114,44 @@ azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, LlamaIndex — corpora A,
 routing works as demonstrated in the synthetic benchmark above. On any other stack — which,
 per corpus D, is most of them — expect most tool and schema failures to land in `UNKNOWN`
 and fall through to your `default` policy: safe, but no better than the retry loop you would
-have written yourself. `LLMClassifier`/`HybridClassifier` do not have this ceiling — semantic
-classification generalizes across wording by construction — so prefer them over `RulesClassifier`
-alone for routing-sensitive types on any stack not covered above. Supply `constraints=`, a
-`framework=` hint, or please [open an issue](https://github.com/mattekudacy/triage/issues)
-with strings that miss.
+have written yourself.
+
+#### Does LLMClassifier/HybridClassifier actually close the gap? Measured, not assumed.
+
+`LLMClassifier`/`HybridClassifier` don't have `RulesClassifier`'s wording ceiling by
+construction — semantic classification reads the meaning, not a literal string. That claim
+sat in this README untested for most of the v1.1 cycle. It's now measured: corpus D scored
+with `HybridClassifier(llm=LLMClassifier(model="gpt-oss:120b-cloud"))`, a real reasoning
+model via Ollama Cloud (reproduce with `scripts/llm_classifier_accuracy.py`):
+
+| Classifier | Routing-sensitive recall | Misroutes (of 20) |
+|---|---|---|
+| `RulesClassifier` | 1/12 — 8% | 0 |
+| `LLMClassifier` alone | 9–10/12 — 75–83% (two runs) | 4/20 — 20% |
+| `HybridClassifier` (recommended) | 10/12 — 83% | 3/20 — 15% |
+
+The recall claim holds: 8% → 83%. But it's not free — `RulesClassifier`'s 100%-precision
+guarantee (every miss falls to safe `UNKNOWN`, never a wrong guess) does not carry over.
+`HybridClassifier` still misrouted 3 of 20 entries. One misroute is structural, not just LLM
+noise: corpus D's one genuinely unclassifiable entry (true label `unknown`) was correctly
+left as `UNKNOWN` by `RulesClassifier` — and `HybridClassifier` overturned that correct,
+conservative answer into a confident wrong guess anyway, because its fallback rule is
+`if rules_result is UNKNOWN: ask the LLM`, with no way to distinguish "rules doesn't
+recognize this wording but there's a real answer" from "this genuinely has no answer." Every
+LLM-involving run in this measurement misrouted that same entry. (n=1 in corpus D — a
+real, reproducible mechanism, not yet a measured rate.) The remaining 2 misroutes were both
+in `wrong_tool_called`, at a consistent 6/8 across runs — some tool-not-found phrasings
+apparently read as ambiguous to this model even semantically.
+
+Results vary run to run (reasoning-model sampling, not a bug) — these are representative
+runs, not a frozen benchmark the way `RulesClassifier`'s corpus D floor is. If you adopt
+`HybridClassifier` for routing-sensitive types, budget for occasional confident misroutes,
+not just occasional `UNKNOWN`s — a stronger or more expensive model, or a stricter
+classification prompt, may trade some recall back for precision if that matters more for
+your recovery strategies.
+
+Supply `constraints=`, a `framework=` hint, or please
+[open an issue](https://github.com/mattekudacy/triage/issues) with strings that miss.
 
 Corpus D stays frozen. The next improvement cycle generates corpus E and, given what corpus D
 found, should weigh a structural fix (broader signal than literal string patterns — see
