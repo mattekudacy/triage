@@ -9,6 +9,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`triage.observability.otel_ingest.trajectory_from_spans()`** — build a `Trajectory` from
+  OpenTelemetry spans a framework already emits, instead of hand-writing `Step` objects.
+  Every prior example had the wrapped agent construct `Step`s itself; this reads spans from
+  `InMemorySpanExporter.get_finished_spans()` (or any span batch) and converts them, so
+  `record_step()` becomes a replay loop over already-captured spans rather than per-tool-call
+  instrumentation. Error extraction (`Step.error`/`exception_type`) uses OTel's stable
+  "exception" event convention. Tool extraction (`tool_called`/`tool_input`/`tool_output`) uses
+  the GenAI semantic conventions (`gen_ai.tool.name`, `gen_ai.tool.call.arguments`/
+  `gen_ai.tool.input`, ...) — flagged explicitly as best-effort, since that spec is still
+  Development-stability and has already renamed attributes between revisions; both known key
+  spellings are tried. A span carrying the stable `http.response.status_code`/`http.status_code`
+  attribute gets it copied into `Step.metadata["http_status"]`, feeding directly into
+  `RulesClassifier`'s structured-error-code matching with zero extra code from the caller. Only
+  spans that look like meaningful work (a `gen_ai.*` attribute, an HTTP status attribute, or an
+  `ERROR` status) become a `Step` by default — pass `include_all=True` to convert every span
+  given. Requires `triage-agent[otel]`; raises `RuntimeError` if OTel isn't installed, since
+  there's no sensible empty-`Trajectory` fallback for spans you can't actually read.
+  See `examples/otel_trajectory.py` / `docs/examples/otel-trajectory.md` for a full runnable
+  demo, and `tests/test_observability_otel_ingest.py` (17 tests, all against real
+  `opentelemetry-sdk` span objects, not mocks). This is a pure conversion function, not an
+  `Agent`-level auto-capture — see `CLAUDE.md`'s design-decisions section for why that's
+  deliberately scoped out of this change.
+
 - **Corpus E, scored once — Step 2 of the "Corpus E scoping" plan.** Tests whether the
   structured-error-code matching added below generalizes on fresh sources (MCP capturing
   `json_rpc_code` this time, plus Together AI, Fireworks AI, Replicate, Cerebras, Perplexity,

@@ -47,6 +47,7 @@ triage/                   — importable package
   observability/
     otel.py               — resolve_tracer(), run_span/classify_span/dispatch_span context managers (lazy OTel import)
     metrics.py            — resolve_meter() + five instruments (lazy OTel import)
+    otel_ingest.py         — trajectory_from_spans() — build a Trajectory from spans a framework already emits (inverse of otel.py)
   bench.py                — run_benchmark(), BenchReport, BenchResult — eval harness with baseline comparison
   feedback.py             — Correction, record_correction(), coverage_report() — misclassification feedback loop
   testing.py              — make_step(), RecordingAgent, assert_classifies_as()
@@ -234,6 +235,7 @@ the optional dep is missing.
 | `triage-agent[langgraph]` | `langgraph>=0.2` | `wrap_langgraph` |
 | `triage-agent[langchain]` | `langchain-core>=0.1`, `langchain>=0.1` | `wrap_langchain` |
 | `triage-agent[yaml]` | `pyyaml>=6.0` | `FailurePolicy.from_yaml()` with `.yaml`/`.yml` files |
+| `triage-agent[otel]` | `opentelemetry-sdk>=1.20`, `opentelemetry-api>=1.20` | Span emission (`triage/observability/otel.py`), metrics (`metrics.py`), and `trajectory_from_spans()` (`otel_ingest.py`) |
 
 ## Public API stability (v0.2)
 
@@ -303,6 +305,22 @@ are caller-supplied metadata for strategies and hooks to inspect — `agent.py` 
 them. The one exception is opt-in: `Agent(strict_idempotency=True)` escalates rather than
 retrying when a non-idempotent step is in the trajectory. `Trajectory.append()` warns
 (`non_monotonic_step_index`) on a non-increasing index but still appends.
+
+**`otel_ingest.trajectory_from_spans()` is a pure function, not an `Agent`-level auto-capture.**
+It takes finished spans and returns a `Trajectory` — the caller still loops over
+`trajectory.steps` and calls `record_step()` themselves (see `examples/otel_trajectory.py`).
+Wiring this directly into `Agent.run()`'s lifecycle (auto-capturing spans around the wrapped
+callable's execution window, merging with any manual `record_step()` calls without duplicating
+them) was deliberately deferred rather than rushed into the same change — it needs its own
+design pass on span-capture timing and de-duplication, and `Agent.__init__`'s stable arg list
+shouldn't grow for a mechanism that hasn't been used in anger yet. `RulesClassifier` field
+extraction is intentionally asymmetric in reliability: `Step.error`/`exception_type` come from
+OTel's stable "exception" event convention; `Step.tool_called`/`tool_input`/`tool_output` come
+from the GenAI semantic conventions, which are Development-stability and have already renamed
+attributes between spec revisions (see the module docstring for the exact key spellings tried).
+`Step.metadata["http_status"]` is extracted from the stable HTTP semconv and feeds directly into
+`RulesClassifier`'s structured-error-code matching above — a real HTTP client span with a
+429/500/502/503/408/504 status classifies correctly with zero code from the caller.
 
 ## Classifier accuracy measurement
 
