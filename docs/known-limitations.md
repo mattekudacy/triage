@@ -28,38 +28,88 @@ As of v0.10, `LLMClassifier` (and `HybridClassifier`, when wrapping one) also de
 
 `RulesClassifier` scores 100% on the in-corpus synthetic suite in `examples/benchmark.py` (see `docs/concepts/classifiers.md` for the full table) — but that suite is training data, so the number says nothing about generalization.
 
-The honest figure is the held-out one. On corpus C (27 entries from azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, and LlamaIndex, scored once without editing `rules.py`), `RulesClassifier` gets **52% recall at 100% precision** — all 13 misses returned `UNKNOWN`, zero misroutes. Expect that shape on a stack the patterns have never seen: unrecognized errors fall through to your default policy rather than being routed to the wrong strategy.
+The honest figure is the held-out one, and it currently comes from corpus D, not corpus C.
+Corpus C (27 entries from azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, and
+LlamaIndex) was genuinely held-out through v1.0 — scored once, **52% recall at 100%
+precision**. The v1.1 release then tuned `rules.py` directly against corpus C's 13 misses,
+which converts a corpus to training data (the same thing that happened to corpus A in v0.25
+and corpus B in v0.26) — corpus C now scores 100% and that number is no longer evidence of
+generalization. Corpus D (20 entries from `huggingface_hub`, Ollama, OpenRouter, the Model
+Context Protocol, CrewAI, Semantic Kernel, and novel phrasings) replaced it, scored once
+immediately after the v1.1 tuning pass: **40% recall at 100% precision**.
 
-### The aggregate recall number is misleading — read it per type
+### The v1.1 tuning pass did not generalize — read recall per type, and across corpora
 
 This is the most important limitation on this page. Held-out recall splits into two groups
-that point in opposite directions:
+that point in opposite directions, and the split has to be read across both corpora to see
+what actually happened:
 
-| Failure type | Held-out recall (corpus C) | Does classification change the outcome? |
-|---|---|---|
-| `external_fault` | 8/9 — 89% | No — any retry heals it |
-| `timeout` | 4/5 — 80% | No — any retry heals it |
-| `schema_mismatch` | 1/6 — 17% | Yes — recovery needs the schema hint |
-| `wrong_tool_called` | 0/6 — 0% | Yes — recovery needs the manifest hint |
-| **Self-healing types** | **12/14 — 86%** | classification buys nothing over blind retry |
-| **Routing-sensitive types** | **1/12 — 8%** | classification is the entire value proposition |
+| Failure type | Corpus C pre-tuning (v1.0) | Corpus D post-tuning (v1.1) | Does classification change the outcome? |
+|---|---|---|---|
+| `external_fault` | 8/9 — 89% | 3/4 — 75% | No — any retry heals it |
+| `timeout` | 4/5 — 80% | 3/3 — 100% | No — any retry heals it |
+| `schema_mismatch` | 1/6 — 17% | 1/4 — 25% | Yes — recovery needs the schema hint |
+| `wrong_tool_called` | 0/6 — 0% | 0/8 — 0% | Yes — recovery needs the manifest hint |
+| **Self-healing types** | **12/14 — 86%** | **6/7 — 86%** | classification buys nothing over blind retry |
+| **Routing-sensitive types** | **1/12 — 8%** | **1/12 — 8%** | classification is the entire value proposition |
 
 `external_fault` and `timeout` are self-healing: a bare `for attempt in range(3)` loop recovers
 them without knowing anything about the failure. triage classifying them correctly is real, but
-it is not worth a dependency. `wrong_tool_called` and `schema_mismatch` are the types where
-routing a *typed* hint to a *matched* strategy beats blind retry — and on error strings the
-patterns have not seen, `RulesClassifier` currently detects 1 of 12.
+it is not worth a dependency, and — as the identical 86% on both corpora shows — it's also easy
+to sustain, because that group clusters around a small, largely SDK-independent vocabulary (HTTP
+status codes, the words "timeout" and "rate limit"). `wrong_tool_called` and `schema_mismatch`
+are the types where routing a *typed* hint to a *matched* strategy beats blind retry, and where
+`RulesClassifier` actually needs to work — the routing-sensitive column shows it detects 1 of 12
+on both corpora, before and after an entire tuning cycle aimed directly at improving it.
+
+**Why the tuning pass didn't move the number.** v1.1 added roughly 15 new regex alternatives
+and two exception-type entries, all reverse-engineered from corpus C's 13 exact miss strings
+(e.g. `"tool with name 'x' was not found in the provided tool definitions"`, an Azure
+resource-path shape). Every one of corpus C's misses became a hit. None of that transferred:
+Ollama phrases a missing model as `"model 'x' not found, try pulling it first"`; MCP servers
+say `"Unknown tool: x"` or the completely generic `"Method not found"`; Semantic Kernel says
+`"Function 'x' not found in any plugin."`; CrewAI says `"Action 'x' don't exist"`. Four
+different vendors, four unrelated ways to say the same failure, none matching a pattern tuned
+on a fifth vendor's wording. This is not a bug in the specific patterns added — it's a property
+of the approach: **literal string/regex tuning against one held-out corpus's misses does not
+generalize to a different corpus of the same failure types**, because SDK vendors do not share
+a vocabulary for "no such tool" or "malformed request" the way they share HTTP status codes.
+
+One precision defect did surface during the corpus D pass and was fixed on the spot (not left
+for a future cycle, and not counted as "using D as training data" — it is a bug fix, not a
+recall improvement): the v1.1 patterns had added `OutputParserError` as a blanket
+exception-type match for LlamaIndex's schema-parsing failures, and corpus D found CrewAI raises
+an unrelated exception with the identical class name for an unrecognized action. That fallback
+was replaced with a message pattern specific to LlamaIndex's actual wording. Corpus D's
+precision is 100% as a result — the general risk this illustrates is worth restating: an
+exception *class name* is not a stable cross-SDK identity, and a blanket match on one is exactly
+as fragile as the string patterns above, just less visible until a second framework reuses the
+name for something else.
 
 The synthetic routing demo in the README shows triage beating a no-recovery baseline only on
-those same two types. Both numbers are honest; together they say the core claim is demonstrated
-in principle and not yet delivered on unseen error formats.
+the routing-sensitive types. Both that number and this one are honest; together they say the
+core claim is demonstrated in principle and, after one tuning cycle aimed squarely at closing
+the gap, still not delivered on error formats `rules.py` hasn't specifically seen.
 
 **Practical implication.** If your stack's error strings resemble the ones in `rules.py`
-(OpenAI, Anthropic, LangChain, botocore), routing works. If not, expect most tool and schema
-failures to return `UNKNOWN` and fall through to `default` — safe, but no better than the retry
-loop you would have written yourself. Mitigations today: pass `framework=` for supplemental
-per-SDK patterns, use `HybridClassifier` so `UNKNOWN` escalates to an LLM, or supply a custom
-classifier. Closing this gap is the next release's headline goal.
+(OpenAI, Anthropic, LangChain, botocore, azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI,
+LlamaIndex), routing works. If not — and corpus D suggests most stacks won't — expect most tool
+and schema failures to return `UNKNOWN` and fall through to `default`: safe, but no better than
+the retry loop you would have written yourself. `LLMClassifier`/`HybridClassifier` generalize
+across wording by construction (they read the meaning, not a literal string), so for
+routing-sensitive types on any stack not in the list above, prefer them over `RulesClassifier`
+alone rather than waiting on further pattern tuning. Other mitigations: pass `framework=` for
+the three SDKs it supports, or supply a custom classifier for your stack's specific wording.
+
+**What this means for where effort goes next.** Another round of "generate corpus E, tune
+`rules.py` against D's misses, score E" would very likely repeat this exact result — the
+approach, not the pattern set, is the ceiling. Closing the routing-sensitive gap for
+`RulesClassifier` probably needs a structural change (broader signal than literal message
+patterns — e.g. deriving matches from a smaller number of stable field names or error-code
+enums that SDKs *do* share, rather than free-text message wording) rather than another
+tuning cycle. Corpus E should be generated either to test such a structural approach, or to
+confirm this finding is not an artifact of corpus D's particular source mix before committing
+to that redesign.
 
 Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Reproduce both measurements with:
 

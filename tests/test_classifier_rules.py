@@ -13,6 +13,7 @@ def make_step(
     tool_input: dict | None = None,
     error: str | None = None,
     llm_output: str | None = None,
+    exception_type: str | None = None,
 ) -> Step:
     return Step(
         index=index,
@@ -21,6 +22,7 @@ def make_step(
         tool_input=tool_input,
         error=error,
         llm_output=llm_output,
+        exception_type=exception_type,
     )
 
 
@@ -540,3 +542,127 @@ def test_timeout_true_positive_corpus(msg: str) -> None:
     """Timeout-related strings must fire TIMEOUT."""
     t = traj(make_step(error=msg))
     assert RulesClassifier().classify(t, "task") == FailureType.TIMEOUT
+
+
+# ── corpus C (v1.1) pattern additions: true positives + adversarial near-misses ──
+# rules.py was tuned against corpus C's held-out misses for v1.1 (see CHANGELOG
+# and tests/test_classifier_accuracy.py's routing-sensitive floor). These tables
+# pin the true positives that motivated each new pattern and the near-misses
+# found while narrowing them, so a future edit can't silently widen scope back
+# into a false positive without failing a test.
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "invalid request: tool with name 'web_scrape' was not found in the "
+        "provided tool definitions",
+        "Error: Could not find tool with name `get_current_weather`. Please use a valid tool.",
+        "'summarize_pdf' is not a registered agent tool",
+        "Tool lookup_weather is not registered. Available tools: search, calculator",
+        "The model 'gpt-4-vision' does not exist or you do not have access to it.",
+        "404 Endpoint projects/123/locations/us-central1/endpoints/456 is not found.",
+        "The Resource 'Microsoft.CognitiveServices/accounts/my-account/deployments"
+        "/gpt-4o' under resource group 'my-rg' was not found.",
+    ],
+)
+def test_wrong_tool_corpus_c_true_positive(msg: str) -> None:
+    """Held-out wrong_tool_called strings (corpus C) that guided v1.1 patterns."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # "endpoint" near a plain-English noun, not a resource path — the
+        # vertex aiplatform pattern requires a "/" in the identifier.
+        "the API endpoint documentation is not found in the wiki",
+        "endpoint reference is not found in the OpenAPI spec",
+        # "model" in a non-SDK sense — the litellm/openai pattern still
+        # requires the literal "does not exist" wording immediately after.
+        "this pricing model does not exist in isolation from market conditions",
+        # "deployment" outside the Azure resource-path shape — narrowed to
+        # require "<provider>/deployments/<name>' under resource group"
+        # specifically so CI/CD language doesn't misfire.
+        "the new deployment pipeline was not found in the CI config",
+    ],
+)
+def test_wrong_tool_corpus_c_false_positive(msg: str) -> None:
+    """Near-misses found while narrowing the v1.1 wrong_tool patterns."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") != FailureType.WRONG_TOOL_CALLED
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "Operation returned an invalid status 'Bad Request'. "
+        "Error: Code: InvalidRequestBody Message: Request body is not valid JSON.",
+        "Status 422: Unprocessable Entity: messages: value is not a valid list",
+        "Error code: 400 - {'error': {'message': 'json_validate_failed: "
+        "JSON schema validation failed', 'type': 'invalid_request_error'}}",
+        "litellm.BadRequestError: OpenAIException - 'messages[0].content' "
+        "is invalid. Expected a string but got an object.",
+    ],
+)
+def test_schema_mismatch_corpus_c_true_positive(msg: str) -> None:
+    """Held-out schema_mismatch strings (corpus C) that guided v1.1 patterns."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "504 Deadline of 60.0s exceeded while calling aiplatform.googleapis.com:443",
+        "Server disconnected after 30.0 seconds of inactivity",
+    ],
+)
+def test_timeout_corpus_c_true_positive(msg: str) -> None:
+    """Held-out timeout strings (corpus C / corpus B target) for v1.1 patterns."""
+    t = traj(make_step(error=msg))
+    assert RulesClassifier().classify(t, "task") == FailureType.TIMEOUT
+
+
+def test_external_fault_corpus_c_true_positive_exception_type() -> None:
+    """Cohere TooManyRequestsError carries no HTTP code or 'rate limit' text —
+    detected via exception_type fallback, added for the v1.1 pattern pass."""
+    t = traj(
+        make_step(
+            error="You are using a Trial key, which is limited to 5 API calls / minute.",
+            exception_type="TooManyRequestsError",
+        )
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.EXTERNAL_FAULT
+
+
+def test_schema_mismatch_corpus_c_true_positive_message_pattern() -> None:
+    """LlamaIndex's distinctive phrasing, matched by message content — NOT by
+    exception_type. An earlier v1.1 draft matched on exception_type
+    "OutputParserError" instead; corpus D found CrewAI raises a
+    same-named-but-unrelated exception (an unrecognized ReAct Action, not a
+    schema problem), which that blanket match misrouted to SCHEMA_MISMATCH.
+    See test_wrong_tool_corpus_d_false_positive."""
+    t = traj(
+        make_step(
+            error="Got invalid output: Expected output to be formatted as a JSON instance "
+            "that conforms to the JSON schema below.",
+            exception_type="OutputParserError",
+        )
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+def test_output_parser_error_exception_type_alone_does_not_fire_schema() -> None:
+    """Same exception_type as above, but message content unrelated to schema —
+    must NOT fire SCHEMA_MISMATCH via a blanket exception-type match. Pins the
+    corpus D misroute fix: CrewAI's OutputParserError is not LlamaIndex's."""
+    t = traj(
+        make_step(
+            error="Action 'search_the_web' don't exist, these are the only "
+            "available Actions: web_search, calculator",
+            exception_type="OutputParserError",
+        )
+    )
+    assert RulesClassifier().classify(t, "task") != FailureType.SCHEMA_MISMATCH

@@ -1,0 +1,122 @@
+[
+  {
+    "exception_type": "HfHubHTTPError",
+    "error": "503 Server Error: Service Temporarily Unavailable for url: https://api-inference.huggingface.co/models/gpt2",
+    "label": "external_fault",
+    "provenance": "transcribed:huggingface_hub-github-issue-2060"
+  },
+  {
+    "exception_type": "InferenceTimeoutError",
+    "error": "Model microsoft/DialoGPT-medium is currently loading. Please retry with a higher timeout.",
+    "label": "timeout",
+    "provenance": "transcribed:huggingface_hub-docs"
+  },
+  {
+    "exception_type": "RepositoryNotFoundError",
+    "error": "Model repo 'invalid/model-name' does not exist",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:huggingface_hub-docs"
+  },
+  {
+    "exception_type": "ResponseError",
+    "error": "model 'codellama:7b-instruct-q6_K' not found, try pulling it first",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:ollama-github-issue-2203"
+  },
+  {
+    "exception_type": "ResponseError",
+    "error": "invalid character '}' looking for beginning of value",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:ollama-go-json-error-shape"
+  },
+  {
+    "exception_type": "RateLimitError",
+    "error": "Rate limit exceeded: free-tier models are limited to 20 requests per minute",
+    "label": "external_fault",
+    "provenance": "transcribed:openrouter-docs"
+  },
+  {
+    "exception_type": "PaymentRequiredError",
+    "error": "Insufficient credits. Please top up your account to continue.",
+    "label": "unknown",
+    "provenance": "transcribed:openrouter-docs"
+  },
+  {
+    "exception_type": "BadRequestError",
+    "error": "Invalid request: 'messages' must be a non-empty array",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:openrouter-docs"
+  },
+  {
+    "exception_type": "McpError",
+    "error": "Unknown tool: invalid_tool_name",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:mcp-typescript-sdk-issue-1510"
+  },
+  {
+    "exception_type": "McpError",
+    "error": "Method not found",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:mcpevals-io-error-codes"
+  },
+  {
+    "exception_type": "OutputParserError",
+    "error": "Action 'search_the_web' don't exist, these are the only available Actions: web_search, calculator",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:crewai-community-forum"
+  },
+  {
+    "exception_type": "ValidationError",
+    "error": "Arguments validation failed: tool_input\n  field required (type=value_error.missing)",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:crewai-tools-pydantic-shape"
+  },
+  {
+    "exception_type": "KernelFunctionNotFoundError",
+    "error": "Function 'get_weather' not found in any plugin.",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:semantic-kernel-source"
+  },
+  {
+    "exception_type": "TimeoutError",
+    "error": "Operation timed out while waiting for the completion.",
+    "label": "timeout",
+    "provenance": "transcribed:semantic-kernel-azure-openai-wrapper"
+  },
+  {
+    "exception_type": "OverloadedError",
+    "error": "Upstream provider returned a non-2xx status: 529",
+    "label": "external_fault",
+    "provenance": "transcribed:novel-529-overloaded"
+  },
+  {
+    "exception_type": "OutputValidationError",
+    "error": "Failed to coerce output to schema: missing required key 'answer'",
+    "label": "schema_mismatch",
+    "provenance": "transcribed:novel-schema-coerce"
+  },
+  {
+    "exception_type": "ValueError",
+    "error": "Agent attempted to call an undefined action 'convert_currency'",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:novel-undefined-action"
+  },
+  {
+    "exception_type": "OperationCanceledError",
+    "error": "The operation was canceled due to timeout of 30000ms exceeded",
+    "label": "timeout",
+    "provenance": "transcribed:novel-canceled-timeout"
+  },
+  {
+    "exception_type": "RuntimeError",
+    "error": "Too many requests, please slow down",
+    "label": "external_fault",
+    "provenance": "transcribed:novel-generic-rate-limit"
+  },
+  {
+    "exception_type": "KeyError",
+    "error": "No handler registered for action 'summarize_document'",
+    "label": "wrong_tool_called",
+    "provenance": "transcribed:novel-unregistered-handler"
+  }
+]

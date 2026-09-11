@@ -1,27 +1,34 @@
 """tests/test_classifier_accuracy.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Classifier accuracy tests with three labeled measurement blocks.
+Classifier accuracy tests. See scripts/classifier_accuracy.py's module
+docstring for the full nine-block breakdown this file's TestCorpus* classes
+correspond to; summary:
 
   Block 1 — Regression:
-      32 positive examples from test_classifier_rules.py fixtures.
-      Expected: 100%. This is tautological by design — the regexes were
-      written against these strings. The purpose is to prevent *regression*,
-      not to measure generalization.
+      In-corpus positive examples from test_classifier_rules.py fixtures.
+      Expected: 100%. Tautological by design — the regexes were written
+      against these strings. Prevents *regression*, not generalization.
 
   Block 2 — False-positive resistance:
       Near-miss strings that must NOT trigger a rule. A false positive routes
       a failure to the wrong recovery strategy, which is worse than UNKNOWN.
       Expected: 100%. Treated as a hard constraint.
 
-  Block 3 — Corpus A (second regression suite, NOT held-out):
-      Real exceptions from json/asyncio/httpx/pydantic, plus SDK error strings
-      transcribed from published exception formats. This corpus was used to guide
-      the v0.25 pattern fixes — rules.py was edited until it passed. It is now a
-      second regression suite, not a generalization measurement.
+  Blocks 3-4 — Corpus A, Corpus B (training data, regression guards):
+      Both were held-out once, guided a pattern-fix pass, and are now
+      regression suites at 100% — same status corpus C reaches below.
 
-      Corpus B (from sources not seen when writing the rules) will replace this
-      as the held-out block. A floor assertion here prevents regression against
-      the patterns that were already tuned.
+  Block 5 — Corpus C (training data as of v1.1, regression guard):
+      Genuinely held-out through v1.0 (52% recall). The v1.1 pattern pass
+      tuned rules.py directly against its 13 misses, which is what converts
+      a corpus to training data — CORPUS_C_FLOOR is now a regression guard,
+      not a generalization claim. See TestCorpusD below for the current one.
+
+  Blocks 7-8 — Corpus D (genuine held-out as of v1.1):
+      Fresh sources disjoint from A/B/C, scored once after the v1.1 tuning
+      pass. Routing-sensitive recall (1/12 = 8%) is statistically unchanged
+      from corpus C's pre-tuning number — the v1.1 patterns did not
+      generalize past corpus C's own wording. See CHANGELOG.
 """
 
 from __future__ import annotations
@@ -124,36 +131,55 @@ CORPUS_A_FLOOR = 1.0
 
 CORPUS_B_PATH = Path(__file__).parent / "data" / "error_corpus_b.json"
 # Floor ratchet: corpus B guided the v0.26 botocore/schema fixes — it is now
-# training data (same status as corpus A). 90% is expected because the rules
-# were tuned against it. Update upward only; never decrease.
-# Remaining misses (improvement targets for next release):
-#   ServerConnectionError "Server disconnected after N seconds" → timeout
-#   ValueError "Tool X is not registered" → wrong_tool_called
-CORPUS_B_FLOOR = 0.90  # 18/20, measured 2026-07-27
+# training data (same status as corpus A). Its last 2 misses (both explicit
+# "improvement targets" left over from v0.26 — the aiohttp inactivity-timeout
+# phrasing and the "Tool X is not registered" wording) were closed in the
+# v1.1 pattern pass. Update upward only; never decrease.
+CORPUS_B_FLOOR = 1.0  # 20/20, measured 2026-09-11 (v1.1 tuning pass)
 
 CORPUS_C_PATH = Path(__file__).parent / "data" / "error_corpus_c.json"
-# Genuine held-out floor: corpus C was scored ONCE without consulting or changing
-# rules.py. Sources are disjoint from A and B: azure-core, Mistral, Cohere, Groq,
-# LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex, and novel phrasings.
-# All 13 misses returned UNKNOWN — zero misroutes. Precision is 100%.
-# Do NOT tune rules.py against corpus C misses — it will then become training data.
-# Generate corpus D first, then improve, then score D.
-CORPUS_C_FLOOR = 0.51  # 14/27 = 51.9%, measured 2026-07-27
+# STATUS CHANGE (v1.1): corpus C was genuinely held-out through v1.0 (52%
+# recall, 100% precision, scored once). The v1.1 pattern pass tuned rules.py
+# directly against its 13 misses — that is what converts a corpus to
+# training data, the same way it happened to corpus A (v0.25) and corpus B
+# (v0.26) before it. CORPUS_C_FLOOR is now a regression guard, like
+# CORPUS_A_FLOOR, not a generalization claim. Corpus D (below) carries that
+# claim now.
+CORPUS_C_FLOOR = 1.0  # 27/27, measured 2026-09-11 (v1.1 tuning pass)
 
-# The corpus C aggregate averages two groups whose value to an adopter is opposite.
+# Groups shared by the corpus C and corpus D per-type tests below.
 # SELF_HEALING types recover from any retry — a bare `for _ in range(3)` loop fixes
 # them, so classifying them correctly adds nothing over blind retry.
 # ROUTING_SENSITIVE types only recover when the matched hint reaches the strategy;
-# they are the reason this library exists. Held-out recall on the two groups is
-# 86% and 8% respectively, so the 52% aggregate overstates delivered value.
-# These floors are ratchets, tracked separately so the aggregate cannot rise on the
-# back of the group that doesn't matter.
+# they are the reason this library exists.
 SELF_HEALING_LABELS = ("external_fault", "timeout")
 ROUTING_SENSITIVE_LABELS = ("wrong_tool_called", "schema_mismatch")
-CORPUS_C_SELF_HEALING_FLOOR = 0.85  # 12/14 = 85.7%, measured 2026-07-27
-# Headline goal for the next release: raise this to 0.70 via corpus D.
-# Until then it is the honest ceiling on what triage delivers over a retry loop.
-CORPUS_C_ROUTING_SENSITIVE_FLOOR = 0.08  # 1/12 = 8.3%, measured 2026-07-27
+# Now regression guards (corpus C is training data as of v1.1 — see above).
+CORPUS_C_SELF_HEALING_FLOOR = 1.0  # 14/14, measured 2026-09-11
+CORPUS_C_ROUTING_SENSITIVE_FLOOR = 1.0  # 12/12, measured 2026-09-11
+
+CORPUS_D_PATH = Path(__file__).parent / "data" / "error_corpus_d.json"
+# Genuine held-out floor (v1.1): corpus D was scored ONCE, immediately after
+# the v1.1 pattern pass against corpus C, without any further rules.py edit.
+# Sources are disjoint from A, B, and C: huggingface_hub, Ollama, OpenRouter,
+# Model Context Protocol (MCP), CrewAI, Semantic Kernel, and novel phrasings
+# chosen to stress the v1.1 patterns' boundaries.
+# One misroute this scoring pass found (CrewAI's OutputParserError colliding
+# with LlamaIndex's same-named exception) was fixed as a precision bug before
+# freezing this floor — see test_output_parser_error_exception_type_alone_
+# does_not_fire_schema in test_classifier_rules.py. 100% precision as a
+# result: every remaining miss returns UNKNOWN, zero misroutes.
+# Do NOT tune rules.py against corpus D misses — it will then become
+# training data the same way it happened to corpus C. Generate corpus E.
+CORPUS_D_FLOOR = 0.40  # 8/20 = 40%, measured 2026-09-11
+
+# Headline finding of the v1.1 cycle: this floor is statistically unchanged
+# from corpus C's PRE-tuning routing-sensitive floor (1/12 = 8.3%, same
+# number). The v1.1 patterns were narrow string literals keyed close to
+# corpus C's exact wording and did not transfer to fresh SDKs. Raising this
+# floor is the next cycle's headline goal; it must never be lowered.
+CORPUS_D_SELF_HEALING_FLOOR = 0.85  # 6/7 = 85.7%, measured 2026-09-11
+CORPUS_D_ROUTING_SENSITIVE_FLOOR = 0.08  # 1/12 = 8.3%, measured 2026-09-11
 
 
 @dataclass
@@ -309,15 +335,18 @@ class TestCorpusB:
 
 
 class TestCorpusC:
-    """Block 5: Corpus C — genuine held-out generalization measurement.
+    """Block 5: Corpus C — training data as of v1.1 (regression guard).
 
     Corpus C was built from sources not in A or B: azure-core, Mistral AI SDK,
     Cohere SDK, Groq SDK, LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex, and
-    novel structural phrasings. It was scored exactly once without editing rules.py.
+    novel structural phrasings. It was genuinely held-out through v1.0 (52%
+    recall, 100% precision, scored once).
 
-    52% recall (14/27), 100% precision — every miss returned UNKNOWN, no misroutes.
-    The floor is a ratchet. Do NOT use corpus C misses to tune rules.py — the moment
-    you do, C becomes training data. Generate corpus D first, then improve, then score D.
+    STATUS CHANGE (v1.1): rules.py was tuned directly against corpus C's 13
+    misses — the same act that converted corpus A (v0.25) and corpus B
+    (v0.26) to training data converted this one. These three tests are now
+    regression guards, same status as TestCorpusA/TestCorpusB, not a
+    generalization claim. See TestCorpusD for the current held-out measurement.
     """
 
     def test_corpus_file_exists(self) -> None:
@@ -329,7 +358,7 @@ class TestCorpusC:
         for entry in entries:
             assert entry["label"] in valid, f"Invalid label {entry['label']!r}"
 
-    def test_corpus_c_held_out_floor(self) -> None:
+    def test_corpus_c_no_regression(self) -> None:
         result = _score_corpus(CORPUS_C_PATH)
         if result.accuracy < CORPUS_C_FLOOR:
             detail = "\n".join(
@@ -337,35 +366,20 @@ class TestCorpusC:
                 for exp, got, exc, err in result.misses
             )
             pytest.fail(
-                f"Corpus C held-out: {result.accuracy:.0%} ({result.correct}/{result.total})"
+                f"Corpus C regression: {result.accuracy:.0%} ({result.correct}/{result.total})"
                 f" below floor {CORPUS_C_FLOOR:.0%}.\nMisses:\n{detail}"
             )
         assert result.accuracy >= CORPUS_C_FLOOR
 
-    def test_corpus_c_self_healing_floor(self) -> None:
-        """Recall on types a bare retry loop would recover anyway.
-
-        High here is expected and not worth much: EXTERNAL_FAULT and TIMEOUT heal
-        on any retry, so correct classification buys nothing over blind retry.
-        Guarded only so a regression here is still caught.
-        """
+    def test_corpus_c_self_healing_no_regression(self) -> None:
         result = _score_corpus_group(CORPUS_C_PATH, SELF_HEALING_LABELS)
         assert result.accuracy >= CORPUS_C_SELF_HEALING_FLOOR, (
-            f"Self-healing held-out recall {result.accuracy:.0%}"
+            f"Self-healing recall {result.accuracy:.0%}"
             f" ({result.correct}/{result.total}) below floor"
             f" {CORPUS_C_SELF_HEALING_FLOOR:.0%}."
         )
 
-    def test_corpus_c_routing_sensitive_floor(self) -> None:
-        """Recall on the types that justify the library.
-
-        WRONG_TOOL_CALLED and SCHEMA_MISMATCH only recover when the matched hint
-        reaches the strategy — these are the types scripts/bench_synthetic.py shows
-        triage winning on, and the only ones where classification beats blind retry.
-        Held-out recall here is the honest measure of delivered value, and it is
-        currently 1/12. Raising this floor is the next release's headline goal;
-        it must never be lowered.
-        """
+    def test_corpus_c_routing_sensitive_no_regression(self) -> None:
         result = _score_corpus_group(CORPUS_C_PATH, ROUTING_SENSITIVE_LABELS)
         if result.accuracy < CORPUS_C_ROUTING_SENSITIVE_FLOOR:
             detail = "\n".join(
@@ -373,7 +387,7 @@ class TestCorpusC:
                 for exp, got, exc, err in result.misses
             )
             pytest.fail(
-                f"Routing-sensitive held-out recall: {result.accuracy:.0%}"
+                f"Routing-sensitive recall: {result.accuracy:.0%}"
                 f" ({result.correct}/{result.total}) below floor"
                 f" {CORPUS_C_ROUTING_SENSITIVE_FLOOR:.0%}.\nMisses:\n{detail}"
             )
@@ -391,5 +405,115 @@ class TestCorpusC:
         ungrouped = {e["label"] for e in entries} - grouped
         assert not ungrouped, (
             f"Corpus C labels not assigned to a group: {sorted(ungrouped)}."
+            " Add them to SELF_HEALING_LABELS or ROUTING_SENSITIVE_LABELS."
+        )
+
+
+class TestCorpusD:
+    """Blocks 7-8: Corpus D — genuine held-out generalization measurement (v1.1).
+
+    Corpus D was built from sources not in A, B, or C: huggingface_hub, Ollama,
+    OpenRouter, Model Context Protocol (MCP), CrewAI, Semantic Kernel, and
+    novel phrasings chosen to stress the boundaries of the v1.1 patterns added
+    for corpus C. Scored exactly once, immediately after the v1.1 tuning pass
+    against corpus C, before any further rules.py edit.
+
+    One misroute this scoring pass found (CrewAI's OutputParserError colliding
+    with LlamaIndex's same-named-but-unrelated exception) was fixed as a
+    precision bug — not as recall tuning — before this floor was frozen; see
+    test_output_parser_error_exception_type_alone_does_not_fire_schema in
+    test_classifier_rules.py. 100% precision as a result.
+
+    40% recall (8/20) overall. The routing-sensitive floor (1/12 = 8.3%) is
+    the headline finding of the v1.1 cycle: it is statistically unchanged
+    from corpus C's PRE-tuning number (also 1/12 = 8.3%). The v1.1 patterns
+    were narrow string literals keyed close to corpus C's exact wording and
+    did not transfer to fresh SDKs' phrasing — see CHANGELOG for the full
+    writeup. Do NOT use corpus D misses to tune rules.py — the moment you do,
+    D becomes training data like C before it. Generate corpus E first.
+    """
+
+    def test_corpus_file_exists(self) -> None:
+        assert CORPUS_D_PATH.exists(), f"Corpus file missing: {CORPUS_D_PATH}"
+
+    def test_corpus_all_valid_labels(self) -> None:
+        valid = {ft.value for ft in FailureType}
+        entries = json.loads(CORPUS_D_PATH.read_text())
+        for entry in entries:
+            assert entry["label"] in valid, f"Invalid label {entry['label']!r}"
+
+    def test_corpus_d_held_out_floor(self) -> None:
+        result = _score_corpus(CORPUS_D_PATH)
+        if result.accuracy < CORPUS_D_FLOOR:
+            detail = "\n".join(
+                f"  exp={exp:16} got={got:16} [{exc}] {err!r}"
+                for exp, got, exc, err in result.misses
+            )
+            pytest.fail(
+                f"Corpus D held-out: {result.accuracy:.0%} ({result.correct}/{result.total})"
+                f" below floor {CORPUS_D_FLOOR:.0%}.\nMisses:\n{detail}"
+            )
+        assert result.accuracy >= CORPUS_D_FLOOR
+
+    def test_corpus_d_no_misroutes(self) -> None:
+        """Precision guard, independent of the recall floor above: every miss
+        on corpus D must land in UNKNOWN, never in a different concrete type.
+        A misroute is worse than UNKNOWN — it applies the wrong strategy."""
+        result = _score_corpus(CORPUS_D_PATH)
+        misroutes = [m for m in result.misses if m[1] != "unknown"]
+        assert not misroutes, (
+            f"Corpus D misroutes (must be zero): "
+            f"{[(exp, got, err) for exp, got, _, err in misroutes]}"
+        )
+
+    def test_corpus_d_self_healing_floor(self) -> None:
+        """Recall on types a bare retry loop would recover anyway.
+
+        High here is expected and not worth much: EXTERNAL_FAULT and TIMEOUT heal
+        on any retry, so correct classification buys nothing over blind retry.
+        Guarded only so a regression here is still caught.
+        """
+        result = _score_corpus_group(CORPUS_D_PATH, SELF_HEALING_LABELS)
+        assert result.accuracy >= CORPUS_D_SELF_HEALING_FLOOR, (
+            f"Self-healing held-out recall {result.accuracy:.0%}"
+            f" ({result.correct}/{result.total}) below floor"
+            f" {CORPUS_D_SELF_HEALING_FLOOR:.0%}."
+        )
+
+    def test_corpus_d_routing_sensitive_floor(self) -> None:
+        """Recall on the types that justify the library.
+
+        WRONG_TOOL_CALLED and SCHEMA_MISMATCH only recover when the matched hint
+        reaches the strategy — these are the types scripts/bench_synthetic.py shows
+        triage winning on, and the only ones where classification beats blind retry.
+        Held-out recall here is the honest measure of delivered value, and it is
+        currently 1/12 — unchanged from corpus C's pre-tuning number. Raising this
+        floor is the next cycle's headline goal; it must never be lowered.
+        """
+        result = _score_corpus_group(CORPUS_D_PATH, ROUTING_SENSITIVE_LABELS)
+        if result.accuracy < CORPUS_D_ROUTING_SENSITIVE_FLOOR:
+            detail = "\n".join(
+                f"  exp={exp:16} got={got:16} [{exc}] {err!r}"
+                for exp, got, exc, err in result.misses
+            )
+            pytest.fail(
+                f"Routing-sensitive held-out recall: {result.accuracy:.0%}"
+                f" ({result.correct}/{result.total}) below floor"
+                f" {CORPUS_D_ROUTING_SENSITIVE_FLOOR:.0%}.\nMisses:\n{detail}"
+            )
+        assert result.accuracy >= CORPUS_D_ROUTING_SENSITIVE_FLOOR
+
+    def test_every_corpus_d_label_is_grouped(self) -> None:
+        """Guard the split: a new failure type must be classified into a group.
+
+        If a future corpus entry carries a label in neither group, the two group
+        floors stop covering the corpus and the headline number silently drifts.
+        UNKNOWN is exempt — it is the fall-through, not a detection target.
+        """
+        entries = json.loads(CORPUS_D_PATH.read_text())
+        grouped = set(SELF_HEALING_LABELS) | set(ROUTING_SENSITIVE_LABELS) | {"unknown"}
+        ungrouped = {e["label"] for e in entries} - grouped
+        assert not ungrouped, (
+            f"Corpus D labels not assigned to a group: {sorted(ungrouped)}."
             " Add them to SELF_HEALING_LABELS or ROUTING_SENSITIVE_LABELS."
         )
