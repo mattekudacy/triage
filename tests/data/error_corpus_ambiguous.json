@@ -1,0 +1,114 @@
+[
+  {
+    "exception_type": "AccessDeniedException",
+    "error": "User: arn:aws:iam::123456789012:user/agent-runner is not authorized to perform: bedrock:InvokeModel on resource: arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3",
+    "label": "unknown",
+    "provenance": "transcribed:aws-bedrock-repost-knowledge-center",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "BadRequestError",
+    "error": "Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try again with a different prompt.",
+    "label": "unknown",
+    "provenance": "transcribed:openai-content-policy-error-library",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "PermissionError",
+    "error": "Access to Anthropic models is not allowed from unsupported countries, regions, or territories. See https://www.anthropic.com/supported-countries for details.",
+    "label": "unknown",
+    "provenance": "transcribed:anthropic-supported-countries",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "BadRequestError",
+    "error": "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. Please modify your prompt and retry. To learn more: ResponsibleAIPolicyViolation.",
+    "label": "unknown",
+    "provenance": "transcribed:azure-openai-content-filter-docs",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "ForbiddenError",
+    "error": "Your account has been suspended for violating our Terms of Service. Contact support to appeal this decision.",
+    "label": "unknown",
+    "provenance": "transcribed:generic-saas-account-suspension-pattern",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "SubscriptionExpiredError",
+    "error": "Your subscription expired on 2026-08-15. Renew your plan to continue making API requests.",
+    "label": "unknown",
+    "provenance": "transcribed:generic-saas-billing-lapse-pattern",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "PermissionDenied",
+    "error": "403 The caller does not have permission to access resource projects/my-project/locations/us-central1/publishers/google/models/gemini-pro:predict",
+    "label": "unknown",
+    "provenance": "transcribed:google-cloud-iam-error-shape",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "ComplianceError",
+    "error": "Request blocked: EU data residency requirements are not met for this operation. Route this request through an EU region endpoint.",
+    "label": "unknown",
+    "provenance": "transcribed:generic-data-residency-compliance-pattern",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "ExportComplianceError",
+    "error": "This request cannot be fulfilled: the destination account is associated with a region subject to U.S. export control restrictions (OFAC).",
+    "label": "unknown",
+    "provenance": "transcribed:anthropic-ofac-restriction-pattern",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "DeprecatedEndpointError",
+    "error": "This API version has been permanently discontinued as of 2026-03-01 and will not be reinstated. See the migration guide for v2.",
+    "label": "unknown",
+    "provenance": "transcribed:generic-permanent-deprecation-pattern",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "InternalError",
+    "error": "Internal error: policy engine returned no verdict for this request.",
+    "label": "unknown",
+    "provenance": "transcribed:generic-vague-internal-error-pattern",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "PaymentRequiredError",
+    "error": "Your free trial has ended. Add a payment method to continue using this API.",
+    "label": "unknown",
+    "provenance": "transcribed:generic-trial-ended-billing-pattern",
+    "group": "unknown_labeled"
+  },
+  {
+    "exception_type": "RuntimeError",
+    "error": "The function you tried to call doesn't correspond to any of the tools I currently have available.",
+    "label": "wrong_tool_called",
+    "provenance": "constructed:oblique-wrong-tool-phrasing",
+    "group": "tricky_but_classifiable"
+  },
+  {
+    "exception_type": "RuntimeError",
+    "error": "I couldn't make sense of what came back from that call \u2014 it wasn't in the shape I was expecting at all.",
+    "label": "schema_mismatch",
+    "provenance": "constructed:oblique-schema-mismatch-phrasing",
+    "group": "tricky_but_classifiable"
+  },
+  {
+    "exception_type": "RuntimeError",
+    "error": "Something went wrong on our end while handling that request. Please try again in a little while.",
+    "label": "external_fault",
+    "provenance": "constructed:oblique-external-fault-phrasing",
+    "group": "tricky_but_classifiable"
+  },
+  {
+    "exception_type": "RuntimeError",
+    "error": "That operation was taking far too long to finish, so we gave up waiting and aborted it.",
+    "label": "timeout",
+    "provenance": "constructed:oblique-timeout-phrasing",
+    "group": "tricky_but_classifiable"
+  }
+]

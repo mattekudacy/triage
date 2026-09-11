@@ -12,11 +12,13 @@ All are run from the repo root with `PYTHONPATH=.`.
 | `bench_synthetic.py` | Routing demo — triage vs. a no-recovery baseline across three failure modes |
 | `classifier_accuracy.py` | Nine-block precision/recall report for `RulesClassifier` — zero API calls |
 | `llm_classifier_accuracy.py` | Scores corpus D with `LLMClassifier`/`HybridClassifier` alongside `RulesClassifier` — **requires an LLM API key**, makes real calls |
+| `hybrid_ambiguity_accuracy.py` | Measures `HybridClassifier`'s override rate on genuinely-ambiguous inputs — **requires an LLM API key**, makes real calls |
 
 ```bash
 PYTHONPATH=. python scripts/bench_synthetic.py
 PYTHONPATH=. python scripts/classifier_accuracy.py
 ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/llm_classifier_accuracy.py
+ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py
 ```
 
 `llm_classifier_accuracy.py` tests a claim the docs make but had never measured: that
@@ -39,6 +41,22 @@ LLMClassifier/HybridClassifier actually close the gap?" and `docs/known-limitati
 the full table and writeup. Results vary run to run (reasoning-model sampling) — this is a
 representative measurement, not a frozen, CI-enforced benchmark like `RulesClassifier`'s
 corpus D floor.
+
+`hybrid_ambiguity_accuracy.py` follows up on a finding `llm_classifier_accuracy.py` could only
+show with `n=1`: `HybridClassifier` overturned corpus D's one genuinely out-of-taxonomy entry
+(correctly classified `UNKNOWN` by `RulesClassifier`) into a confident wrong guess, in every
+LLM-involving run. That's a confirmed *mechanism* — `HybridClassifier.classify()` escalates to
+the LLM on any rules `UNKNOWN`, with no way to tell "unrecognized wording, real answer exists"
+from "genuinely no answer" — but not yet a measured *rate*. This script scores
+`tests/data/error_corpus_ambiguous.json` (16 entries: 12 genuinely out-of-taxonomy sourced
+from real, cited SDK/API errors — IAM/permission denial, content-policy blocks, region/export
+restrictions, account suspension, billing lapse — plus 4 real `FailureType`s phrased
+obliquely, to check the measurement isn't one-sided) to get one. Same read-only discipline as
+`llm_classifier_accuracy.py`: never touches `rules.py` or edits a corpus file. Unlike corpus
+D, this corpus isn't frozen — it's designed to grow, since a rate benefits from more data and
+nothing here feeds back into `rules.py` the way tuning would. `tests/test_classifier_ambiguity.py`
+guards its precondition with zero API calls: every entry must be a `RulesClassifier` `UNKNOWN`,
+or the escalation-to-LLM premise silently breaks.
 
 `bench_synthetic.py` is a *mechanism* demo, not an accuracy measurement: the tasks are
 constructed so the correct recovery hint changes the outcome. It shows that routing works,

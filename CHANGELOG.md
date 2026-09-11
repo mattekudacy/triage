@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/hybrid_ambiguity_accuracy.py` + `tests/data/error_corpus_ambiguous.json`** —
+  turns the `n=1` finding below (`HybridClassifier` overturning corpus D's one genuinely
+  out-of-taxonomy `unknown` entry into a confident wrong guess) into a measured rate. The new
+  16-entry corpus (`scripts/gen_error_corpus_ambiguous.py`) has two groups: 12
+  `unknown_labeled` entries — real, cited out-of-taxonomy SDK/API errors (IAM/permission
+  denial, content-policy blocks, region/export restrictions, account suspension, billing
+  lapse, compliance holds) that `RulesClassifier` correctly classifies `UNKNOWN` — and 4
+  `tricky_but_classifiable` entries — real `FailureType`s phrased obliquely enough that
+  `RulesClassifier` also can't match them, checking the measurement isn't one-sided. The
+  script reports `HybridClassifier`'s **override rate** on the first group (lower is better —
+  every override is a correct, safe `UNKNOWN` turned into a wrong confident guess) and its
+  **recall** on the second (higher is better). Same read-only discipline as
+  `llm_classifier_accuracy.py`: never touches `rules.py` or a corpus file, requires an LLM
+  API key, not CI-enforced (LLM sampling varies run to run). This is **not** corpus E — see
+  `scripts/README.md`'s Corpus discipline for why the two are orthogonal.
+  `tests/test_classifier_ambiguity.py` adds 7 zero-API-call regression tests guarding the
+  corpus's precondition (every entry must be a `RulesClassifier` `UNKNOWN`, or the
+  escalation-to-LLM premise the measurement depends on silently breaks).
+
 ### Changed
 
 - **Measured, for the first time, whether `LLMClassifier`/`HybridClassifier` actually close
