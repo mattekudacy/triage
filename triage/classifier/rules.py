@@ -307,6 +307,10 @@ def _is_loop_window(steps: list[Step], threshold: float | None) -> bool:
     Consecutive comparison (not all-vs-first) so a loop where the query drifts
     gradually across the window is still caught — e.g. step 1 vs step 2 close,
     step 2 vs step 3 close, even if step 1 vs step 3 has drifted further apart.
+
+    Does not look at ``Step.agent_id`` at all — a loop is the same tool call
+    repeated, regardless of which agent(s) made it. This is intentional, not
+    an oversight: see the caller's comment in ``classify()``.
     """
     if steps[0].tool_called is None:
         return False
@@ -399,7 +403,13 @@ class RulesClassifier:
 
         # 1. LOOP_DETECTED — last loop_window steps share identical tool_called,
         # and either identical (default) or fuzzy-similar (loop_similarity_threshold)
-        # tool_input.
+        # tool_input. Deliberately agent_id-agnostic: matching is purely on
+        # tool_called/tool_input, so a step repeated across two different agents
+        # (MAST's "Step Repetition" — a handoff-caused re-do of already-completed
+        # work, not just one agent looping on itself) is caught by the exact same
+        # check, with no separate cross-agent code path. See
+        # test_loop_detected_across_different_agent_ids and
+        # docs/concepts/multi-agent-failures.md.
         if len(steps) >= self.loop_window:
             window = steps[-self.loop_window :]
             if _is_loop_window(window, self.loop_similarity_threshold):

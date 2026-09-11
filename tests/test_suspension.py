@@ -386,6 +386,7 @@ def _make_suspended_run(*, kwargs: dict[str, Any] | None = None) -> SuspendedRun
         metadata={"source": "unit-test"},
         idempotent=True,
         partial=False,
+        agent_id="agent-researcher",
     )
     ctx = FailureContext(
         failure_type=FailureType.EXTERNAL_FAULT,
@@ -460,6 +461,7 @@ def test_serialize_deserialize_round_trip():
     assert s.metadata == {"source": "unit-test"}
     assert s.idempotent is True
     assert s.partial is False
+    assert s.agent_id == "agent-researcher"
 
 
 def test_serialize_non_primitive_tool_output_coerced_to_str():

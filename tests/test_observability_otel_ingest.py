@@ -292,6 +292,72 @@ def test_spans_sorted_by_end_time_regardless_of_input_order():
     assert [s.tool_called for s in traj.steps] == ["first", "second"]
 
 
+# ── agent identity -> Step.agent_id (feeds MAST-alignment phase 1) ──────────
+
+
+@pytestmark_otel
+def test_agent_id_extracted_from_gen_ai_agent_id():
+    from triage.observability.otel_ingest import trajectory_from_spans
+
+    tracer, exporter = _make_exporter()
+    with tracer.start_as_current_span(
+        "invoke_agent Researcher",
+        attributes={"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.id": "agent-123"},
+    ):
+        pass
+
+    traj = trajectory_from_spans(exporter.get_finished_spans())
+    assert traj[0].agent_id == "agent-123"
+
+
+@pytestmark_otel
+def test_agent_id_falls_back_to_gen_ai_agent_name():
+    from triage.observability.otel_ingest import trajectory_from_spans
+
+    tracer, exporter = _make_exporter()
+    with tracer.start_as_current_span(
+        "invoke_agent Researcher",
+        attributes={"gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "Researcher"},
+    ):
+        pass
+
+    traj = trajectory_from_spans(exporter.get_finished_spans())
+    assert traj[0].agent_id == "Researcher"
+
+
+@pytestmark_otel
+def test_agent_id_prefers_id_over_name_when_both_present():
+    from triage.observability.otel_ingest import trajectory_from_spans
+
+    tracer, exporter = _make_exporter()
+    with tracer.start_as_current_span(
+        "invoke_agent Researcher",
+        attributes={
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.agent.id": "agent-123",
+            "gen_ai.agent.name": "Researcher",
+        },
+    ):
+        pass
+
+    traj = trajectory_from_spans(exporter.get_finished_spans())
+    assert traj[0].agent_id == "agent-123"
+
+
+@pytestmark_otel
+def test_agent_id_absent_when_span_carries_no_agent_attribute():
+    from triage.observability.otel_ingest import trajectory_from_spans
+
+    tracer, exporter = _make_exporter()
+    with tracer.start_as_current_span(
+        "execute_tool search", attributes={"gen_ai.tool.name": "search"}
+    ):
+        pass
+
+    traj = trajectory_from_spans(exporter.get_finished_spans())
+    assert traj[0].agent_id is None
+
+
 # ── action field ──────────────────────────────────────────────────────────────
 
 

@@ -13,7 +13,7 @@ No framework imports anywhere in `triage/` core — adapters live in `triage/ada
 
 ```
 triage/                   — importable package
-  taxonomy.py             — FailureType enum (9 members), Step (with idempotent field), FailureContext
+  taxonomy.py             — FailureType enum (9 members), Step (with idempotent, agent_id fields), FailureContext
   trajectory.py           — Trajectory class (append / replay_from / last_n_steps)
   checkpoint/             — Checkpoint package
     __init__.py           — re-exports Checkpoint, CheckpointStore, InMemoryCheckpointStore, make_checkpoint
@@ -126,7 +126,7 @@ without a labeled corpus.
 
 ## RulesClassifier rule priority
 
-1. LOOP_DETECTED — last `loop_window` steps (default 3, configurable): identical `tool_called` + canonical `tool_input`
+1. LOOP_DETECTED — last `loop_window` steps (default 3, configurable): identical `tool_called` + canonical `tool_input`, regardless of `Step.agent_id` — catches a step repeated across two different agents, not just one agent looping on itself (MAST "Step Repetition")
 2. WRONG_TOOL_CALLED — error matches tool-not-found patterns across OpenAI/Anthropic/generic SDKs, OR `metadata["json_rpc_code"] == -32601`
 3. SCHEMA_MISMATCH — error matches `validation error|json.*parse|jsondecodeerror|invalid json|unexpected token`, OR `metadata["json_rpc_code"] == -32700`
 4. EXTERNAL_FAULT — error contains `\b(429|500|502|503)\b` (word-boundary, avoids false positives), OR `metadata["http_status"] in (429, 500, 502, 503)`, OR `metadata["json_rpc_code"] == -32603`
@@ -321,6 +321,20 @@ attributes between spec revisions (see the module docstring for the exact key sp
 `Step.metadata["http_status"]` is extracted from the stable HTTP semconv and feeds directly into
 `RulesClassifier`'s structured-error-code matching above — a real HTTP client span with a
 429/500/502/503/408/504 status classifies correctly with zero code from the caller.
+`Step.agent_id` is extracted from a span's `gen_ai.agent.id` (preferred) or `gen_ai.agent.name`
+attribute the same way, feeding MAST-alignment phase 1 below.
+
+**`Step.agent_id` and `LOOP_DETECTED`'s agent-agnostic matching (MAST phase 1).** `Step.agent_id:
+str | None = None` records which agent produced a step — optional, `None` by default, zero
+behavior change for single-agent callers. `RulesClassifier`'s `_is_loop_window()` matches purely
+on `tool_called`/`tool_input` equality and has never looked at agent identity, so it already
+catches a step repeated across two different `agent_id`s (MAST's "Step Repetition" — see
+`docs/concepts/multi-agent-failures.md`) with zero changes to the matching logic itself; adding
+the field was the entire change. Don't "fix" this into requiring same-`agent_id` matching by
+default — that would silently break single-agent loop detection for any caller who happens to
+tag steps with an agent id, and the whole point of MAST phase 1 is that a loop spanning a
+handoff is still a loop. Regression guard:
+`tests/test_classifier_rules.py::test_loop_detected_across_different_agent_ids`.
 
 ## Classifier accuracy measurement
 

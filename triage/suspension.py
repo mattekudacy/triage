@@ -212,6 +212,7 @@ def serialize_run(run: SuspendedRun) -> str:
                         "metadata": s.metadata,
                         "idempotent": s.idempotent,
                         "partial": s.partial,
+                        "agent_id": s.agent_id,
                     }
                     for s in ctx.trajectory
                 ],
@@ -239,6 +240,7 @@ def deserialize_run(data: str) -> SuspendedRun:
             metadata=s.get("metadata") or {},
             idempotent=s.get("idempotent", False),
             partial=s.get("partial", False),
+            agent_id=s.get("agent_id"),
         )
         for s in ctx_d["trajectory"]
     ]
