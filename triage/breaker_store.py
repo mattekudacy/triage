@@ -3,6 +3,11 @@ triage.breaker_store
 ~~~~~~~~~~~~~~~~~~~~
 Persistence protocol for CircuitBreaker state.
 
+**Experimental.** Tested (see tests/test_breaker_store.py, fakeredis-backed), but
+has no known production users as of this writing and receives less real-world
+signal than the core classify/recover path. The API may change based on actual
+usage; if you adopt it, please open an issue with your use case.
+
 The in-process CircuitBreaker stores all state in memory — safe for a single
 worker, but invisible to other processes. Swap in a ``BreakerStore`` to share
 OPEN/HALF_OPEN state across workers and survive process restarts.

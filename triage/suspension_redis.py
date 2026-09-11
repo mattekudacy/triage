@@ -3,6 +3,11 @@ triage.suspension_redis
 ~~~~~~~~~~~~~~~~~~~~~~~
 Redis-backed SuspensionStore for durable human-in-the-loop pause/resume.
 
+**Experimental.** Tested (see tests/test_suspension_redis.py, fakeredis-backed),
+but has no known production users as of this writing and receives less real-world
+signal than the core classify/recover path. The API may change based on actual
+usage; if you adopt it, please open an issue with your use case.
+
 Install: pip install triage-agent[redis]
 """
 
