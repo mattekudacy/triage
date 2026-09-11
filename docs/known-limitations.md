@@ -215,18 +215,23 @@ corpus E built to exercise it and still change nothing in production until that 
 is documented (or provided as an opt-in helper) for the frameworks people actually use — a gap
 in *adoption*, not in the classifier, and one a corpus score can't detect.
 
-**Recommended scoping, in order — not started yet, pending a decision on priority:**
+**Recommended scoping, in order:**
 
-1. Add the `Step.metadata` convention (e.g. `metadata["http_status"]`, `metadata["json_rpc_code"]`)
+1. ✅ **Done.** The `Step.metadata` convention (`metadata["http_status"]`, `metadata["json_rpc_code"]`)
    and a new `RulesClassifier` matching stage for it, validated with synthetic `Step` objects in
-   unit tests — no corpus dependency, testable in isolation, no risk to existing behavior since
-   it only fires when the field is present.
-2. Build corpus E capturing the real code alongside message and exception type for each entry
-   (fresh sources, not corpus D's — D stays frozen), and score routing-sensitive recall with the
-   new stage active against corpus D's 8% baseline.
-3. Only after (2) shows the signal actually helps: document (or build) the per-framework
-   extraction step needed for it to fire on real traffic, since (1) and (2) alone don't get
-   any user's agent to populate `metadata` on their own.
+   unit tests — no corpus dependency, no risk to existing behavior since it only fires when the
+   field is present, and only for codes with an unambiguous single-`FailureType` mapping (`-32602`
+   and HTTP `404`/`400` are deliberately excluded — see `triage/classifier/rules.py`'s module
+   docstring). Also closed the independent HTTP 408/504 → `TIMEOUT` gap this scoping surfaced.
+   See `docs/concepts/classifiers.md`'s "Structured error codes" section for the usage contract.
+2. **Not started.** Build corpus E capturing the real code alongside message and exception type
+   for each entry (fresh sources, not corpus D's — D stays frozen), and score routing-sensitive
+   recall with the new stage active against corpus D's 8% baseline. This is the step that
+   actually answers whether the structural signal generalizes — (1) only shipped the mechanism
+   and proved it doesn't regress anything; it hasn't been measured against real held-out data yet.
+3. **Not started, blocked on (2).** Only after (2) shows the signal actually helps: document (or
+   build) the per-framework extraction step needed for it to fire on real traffic, since (1) and
+   (2) alone don't get any user's agent to populate `metadata` on their own.
 
 Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Reproduce both measurements with:
 

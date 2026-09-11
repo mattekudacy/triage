@@ -9,6 +9,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`RulesClassifier` now checks structured error codes in `Step.metadata`, in addition to
+  message-text patterns.** Step 1 of the 3-step plan in `docs/known-limitations.md`'s "Corpus E
+  scoping" section — opt-in, additive, no behavior change for callers that never set
+  `Step.metadata`. Two keys: `metadata["http_status"]` (int) maps `429/500/502/503` →
+  `EXTERNAL_FAULT` and `408/504` → `TIMEOUT` (the latter a net-new capability — no
+  message-text or exception-type rule covered an HTTP timeout status anywhere before this);
+  `metadata["json_rpc_code"]` (int) maps MCP's JSON-RPC `-32601` → `WRONG_TOOL_CALLED`,
+  `-32700`/`-32600` → `SCHEMA_MISMATCH`, `-32603` → `EXTERNAL_FAULT`. Only codes with an
+  *unambiguous* single-`FailureType` mapping are matched — JSON-RPC `-32602` ("Invalid
+  params", shared by both a bad tool name and a malformed argument shape) and HTTP `404`/`400`
+  are deliberately excluded, preserving `RulesClassifier`'s 100%-precision-by-construction
+  guarantee rather than turning an ambiguous code into a confident wrong guess. See
+  `Step`'s docstring in `triage/taxonomy.py` and `docs/concepts/classifiers.md`'s "Structured
+  error codes" section for the usage contract, and `triage/classifier/rules.py`'s module
+  docstring for the code tables. Tested with synthetic `Step` objects only — no corpus
+  dependency, and not yet scored against held-out data (that's Step 2 of the same plan, not
+  started).
+
 - **`scripts/hybrid_ambiguity_accuracy.py` + `tests/data/error_corpus_ambiguous.json`** —
   turns the `n=1` finding below (`HybridClassifier` overturning corpus D's one genuinely
   out-of-taxonomy `unknown` entry into a confident wrong guess) into a measured rate. The new

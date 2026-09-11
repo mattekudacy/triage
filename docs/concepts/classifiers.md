@@ -80,6 +80,34 @@ Default is `None` — exact match only, unchanged from pre-v0.12 behavior. This 
 
 A threshold around `0.85`–`0.95` is a reasonable starting point; lower values risk false-positiving on genuinely different queries that happen to share a lot of characters (e.g. two searches with the same long boilerplate prefix).
 
+### Structured error codes
+
+Every rule above also checks a caller-supplied structured code in `Step.metadata`, in addition to its message-text pattern — a second, independent signal for the same failure type, not a separate rule. It's opt-in: nothing in `triage` populates `Step.metadata` automatically, so if you never set it, behavior is unchanged.
+
+```python
+async def my_agent(task: str, *, record_step, **kwargs) -> Any:
+    try:
+        result = await call_tool(...)
+    except httpx.HTTPStatusError as e:
+        record_step(Step(
+            index=0, action="call_tool",
+            error=str(e),
+            metadata={"http_status": e.response.status_code},
+        ))
+        raise
+```
+
+Two keys are recognized:
+
+| `metadata` key | Type | Source | Mapped `FailureType`s |
+|---|---|---|---|
+| `"http_status"` | `int` | `anthropic`/`openai` `APIStatusError.status_code`, `httpx.HTTPStatusError.response.status_code`, Ollama `ResponseError.status_code`, etc. | `429/500/502/503` → `EXTERNAL_FAULT`; `408/504` → `TIMEOUT` |
+| `"json_rpc_code"` | `int` | An MCP `McpError`'s `error.code` (JSON-RPC 2.0) | `-32601` → `WRONG_TOOL_CALLED`; `-32700`/`-32600` → `SCHEMA_MISMATCH`; `-32603` → `EXTERNAL_FAULT` |
+
+Only codes with an **unambiguous** single-`FailureType` mapping are matched. `404`/`400` HTTP statuses and JSON-RPC `-32602` ("Invalid params" — shared by both a bad tool name and a malformed argument shape) are deliberately excluded: a code that maps to more than one failure type would turn `RulesClassifier`'s zero-false-positive guarantee into a coin flip. An excluded or absent code simply falls through to the message-text rules, same as if `metadata` carried nothing at all.
+
+This exists to test whether a structural signal — a stable field or protocol code, rather than free-text SDK wording — generalizes across SDKs better than pattern tuning does. See `docs/known-limitations.md`'s "Corpus E scoping" section for the full rationale and what would still need to happen (a corpus built with real codes, and a per-framework extraction helper) before this changes measured accuracy on unfamiliar stacks.
+
 ### Accuracy on the synthetic suite
 
 The benchmark in `examples/benchmark.py` runs trajectories covering all structurally-detectable failure types plus known negative cases (inputs that should **not** match). Results as of v0.14:
