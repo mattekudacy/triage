@@ -102,9 +102,11 @@ Two keys are recognized:
 | `metadata` key | Type | Source | Mapped `FailureType`s |
 |---|---|---|---|
 | `"http_status"` | `int` | `anthropic`/`openai` `APIStatusError.status_code`, `httpx.HTTPStatusError.response.status_code`, Ollama `ResponseError.status_code`, etc. | `429/500/502/503` → `EXTERNAL_FAULT`; `408/504` → `TIMEOUT` |
-| `"json_rpc_code"` | `int` | An MCP `McpError`'s `error.code` (JSON-RPC 2.0) | `-32601` → `WRONG_TOOL_CALLED`; `-32700`/`-32600` → `SCHEMA_MISMATCH`; `-32603` → `EXTERNAL_FAULT` |
+| `"json_rpc_code"` | `int` | An MCP `McpError`'s `error.code` (JSON-RPC 2.0) | `-32601` → `WRONG_TOOL_CALLED`; `-32700` → `SCHEMA_MISMATCH`; `-32603` → `EXTERNAL_FAULT` |
 
 Only codes with an **unambiguous** single-`FailureType` mapping are matched. `404`/`400` HTTP statuses and JSON-RPC `-32602` ("Invalid params" — shared by both a bad tool name and a malformed argument shape) are deliberately excluded: a code that maps to more than one failure type would turn `RulesClassifier`'s zero-false-positive guarantee into a coin flip. An excluded or absent code simply falls through to the message-text rules, same as if `metadata` carried nothing at all.
+
+`-32600` ("Invalid Request") is excluded too, despite the JSON-RPC spec describing it as an unambiguous "malformed request" code — corpus E (see `docs/known-limitations.md`'s "Corpus E scoping") found a real MCP server reusing it for a session/auth-lifecycle condition, not a malformed request. A code the spec defines cleanly and real servers use loosely is not safe to match on; only `-32700` (Parse error — can only mean the request body failed to parse as JSON) stayed in the `SCHEMA_MISMATCH` mapping.
 
 This exists to test whether a structural signal — a stable field or protocol code, rather than free-text SDK wording — generalizes across SDKs better than pattern tuning does. See `docs/known-limitations.md`'s "Corpus E scoping" section for the full rationale and what would still need to happen (a corpus built with real codes, and a per-framework extraction helper) before this changes measured accuracy on unfamiliar stacks.
 

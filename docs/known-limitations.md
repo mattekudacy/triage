@@ -224,19 +224,59 @@ in *adoption*, not in the classifier, and one a corpus score can't detect.
    and HTTP `404`/`400` are deliberately excluded — see `triage/classifier/rules.py`'s module
    docstring). Also closed the independent HTTP 408/504 → `TIMEOUT` gap this scoping surfaced.
    See `docs/concepts/classifiers.md`'s "Structured error codes" section for the usage contract.
-2. **Not started.** Build corpus E capturing the real code alongside message and exception type
-   for each entry (fresh sources, not corpus D's — D stays frozen), and score routing-sensitive
-   recall with the new stage active against corpus D's 8% baseline. This is the step that
-   actually answers whether the structural signal generalizes — (1) only shipped the mechanism
-   and proved it doesn't regress anything; it hasn't been measured against real held-out data yet.
-3. **Not started, blocked on (2).** Only after (2) shows the signal actually helps: document (or
-   build) the per-framework extraction step needed for it to fire on real traffic, since (1) and
-   (2) alone don't get any user's agent to populate `metadata` on their own.
+2. ✅ **Done — scored once.** Corpus E (fresh sources, disjoint from A-D: MCP capturing
+   `json_rpc_code` this time instead of just message text, plus Together AI, Fireworks AI,
+   Replicate, Cerebras, Perplexity, DeepSeek, NVIDIA NIM, xAI) scored routing-sensitive recall
+   at **44% (4/9)**, up from corpus D's 8% (1/12). Read past the headline number, though — see
+   "Corpus E result" below for what actually drove it, which is not the uniform win the
+   aggregate suggests.
+3. **Not started, and the corpus E result changes what it should mean.** The original framing —
+   "document or build the per-framework extraction step" — assumed the structural signal would
+   generalize broadly once it existed. It doesn't: see below. Building an extraction helper for
+   HTTP status codes specifically would mostly help nothing, since the HTTP codes real vendors
+   return for `wrong_tool_called`/`schema_mismatch` are exactly the ones excluded as ambiguous.
+   An MCP-specific extraction helper (reading `McpError.error.code`) is a smaller, better-justified
+   version of this step — worth doing on its own, since JSON-RPC is where the signal actually
+   worked. Not started.
+
+**Corpus E result: the structural signal generalizes for JSON-RPC, not for HTTP.** Of corpus
+E's 9 routing-sensitive entries, only the 2 carrying an MCP `json_rpc_code` (`-32601`,
+`-32700`) were caught by the new structural stage. The other 7 — Together AI, Fireworks AI,
+Replicate (×2), Cerebras, Perplexity, all HTTP-status vendors — used `404`, `400`, or `422` for
+their "wrong tool"/"bad schema" failures, every one of them a code deliberately excluded from
+`_HTTP_EXTERNAL_STATUS_CODES` as too ambiguous to map safely (see `triage/classifier/rules.py`'s
+module docstring). This is not a corpus-construction artifact: it is what these vendors
+actually return, cited from their own docs and bug reports (see
+`scripts/gen_error_corpus_e.py`). The mechanism generalizes exactly where a protocol *spec*
+guarantees a code's single meaning — JSON-RPC 2.0's `-32601` means "Method not found" for every
+compliant server, full stop — and does nothing where the shared signal is only a coarse HTTP
+status code with a dozen unrelated causes. Widening the HTTP table to include `404`/`400`/`422`
+would recover some of this gap, at the direct cost of `RulesClassifier`'s 100%-precision
+guarantee this whole design was built to protect — not a free improvement, a different tradeoff
+that would need its own corpus to justify.
+
+One more finding earned its own fix. Corpus E's design deliberately included an adversarial
+case: a real MCP server (`langgenius/dify#22675`) returned `-32600` ("Invalid Request" per the
+JSON-RPC spec) for what its own bug-report analysis could not rule out as a session/auth
+condition, not a malformed request. It scored as a misroute (`SCHEMA_MISMATCH` instead of the
+true `UNKNOWN`) on first run — the same "generic code reused for an unrelated failure" pattern
+that made corpus D drop `OutputParserError` from `_SCHEMA_EXCEPTION_TYPES`. Fixed the same way:
+`-32600` was dropped from `_JSON_RPC_SCHEMA_CODES` before this floor was frozen, leaving only
+`-32700` (Parse error, which has no such ambiguity — it can only mean the request body failed
+to parse as JSON). 100% precision on corpus E as a result. This is a second, independent data
+point for a pattern worth naming explicitly: **a code a spec defines cleanly is not proof a
+real implementation uses it that cleanly** — same caution that already applied to exception
+type names now demonstrably applies to protocol-level codes too.
+
+Both corpus D and corpus E are now frozen. A corpus F, if pursued, should either test a
+different spec-guaranteed signal (gRPC status codes are the next obvious candidate — same
+"protocol spec, not vendor convention" property that made JSON-RPC work) or confirm the
+HTTP-code finding isn't an artifact of this particular vendor mix.
 
 Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Reproduce both measurements with:
 
 ```bash
-PYTHONPATH=. python scripts/classifier_accuracy.py   # four-block corpus measurement
+PYTHONPATH=. python scripts/classifier_accuracy.py   # ten-block corpus measurement
 python examples/benchmark.py                         # synthetic suite
 ```
 

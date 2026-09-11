@@ -204,7 +204,16 @@ _SCHEMA_EXCEPTION_TYPES = frozenset(
 # The -32000..-32099 "Server error" range is implementation-defined per server
 # and NOT included — it has no spec-guaranteed meaning to map.
 _JSON_RPC_WRONG_TOOL_CODES = frozenset({-32601})  # Method not found
-_JSON_RPC_SCHEMA_CODES = frozenset({-32700, -32600})  # Parse error, Invalid Request
+# -32600 "Invalid Request" is deliberately NOT included here, despite the
+# JSON-RPC spec describing it as an unambiguous "malformed request" code.
+# Corpus E found a real MCP server (langgenius/dify#22675) using -32600 for
+# what its own bug-report analysis could not rule out as a session/auth
+# lifecycle condition, not a malformed request — the same "generic code
+# reused for an unrelated failure" pattern that made corpus D drop
+# OutputParserError from _SCHEMA_EXCEPTION_TYPES. -32700 (Parse error) stays:
+# it can only mean the request body failed to parse as JSON at all, which has
+# no such ambiguity.
+_JSON_RPC_SCHEMA_CODES = frozenset({-32700})  # Parse error
 _JSON_RPC_EXTERNAL_CODES = frozenset({-32603})  # Internal error
 
 # HTTP status codes as a caller-supplied int (Step.metadata["http_status"]),

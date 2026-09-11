@@ -29,6 +29,13 @@ correspond to; summary:
       pass. Routing-sensitive recall (1/12 = 8%) is statistically unchanged
       from corpus C's pre-tuning number — the v1.1 patterns did not
       generalize past corpus C's own wording. See CHANGELOG.
+
+  Blocks 9-10 — Corpus E (Step 2 of the Corpus E scoping plan):
+      Fresh sources disjoint from A-D, testing whether Step.metadata
+      structured-error-code matching (added after corpus D) generalizes
+      better than message-text tuning did. Routing-sensitive recall rose to
+      4/9 = 44% — but almost entirely via MCP's json_rpc_code, not HTTP
+      status; see TestCorpusE's docstring and docs/known-limitations.md.
 """
 
 from __future__ import annotations
@@ -181,6 +188,27 @@ CORPUS_D_FLOOR = 0.40  # 8/20 = 40%, measured 2026-09-11
 CORPUS_D_SELF_HEALING_FLOOR = 0.85  # 6/7 = 85.7%, measured 2026-09-11
 CORPUS_D_ROUTING_SENSITIVE_FLOOR = 0.08  # 1/12 = 8.3%, measured 2026-09-11
 
+CORPUS_E_PATH = Path(__file__).parent / "data" / "error_corpus_e.json"
+# Step 2 of docs/known-limitations.md's "Corpus E scoping" plan: does the
+# Step.metadata structured-error-code matching added after corpus D (see
+# triage/classifier/rules.py's _JSON_RPC_*/_HTTP_* tables) generalize better
+# than the v1.1 message-text patterns did? Sources disjoint from A-D: MCP
+# (this time capturing json_rpc_code, not just message text), Together AI,
+# Fireworks AI, Replicate, Cerebras, Perplexity, DeepSeek, NVIDIA NIM, xAI.
+# Scored once. One adversarial case (a real MCP server reusing -32600 for a
+# session/auth condition, not a malformed request — see
+# scripts/gen_error_corpus_e.py) found a genuine precision bug before this
+# floor was frozen: -32600 was dropped from _JSON_RPC_SCHEMA_CODES, same
+# "generic code reused for an unrelated failure" pattern as corpus D's
+# OutputParserError/CrewAI fix. 100% precision as a result — every miss
+# below returns UNKNOWN, zero misroutes.
+# Do NOT tune rules.py against corpus E's remaining misses — that converts E
+# to training data the same way it happened to C and would to D. Generate a
+# corpus F to test a further change.
+CORPUS_E_FLOOR = 0.6875  # 11/16 = 68.75%, measured 2026-09-11
+CORPUS_E_SELF_HEALING_FLOOR = 1.0  # 6/6 = 100%, measured 2026-09-11
+CORPUS_E_ROUTING_SENSITIVE_FLOOR = 0.44  # 4/9 = 44.4%, measured 2026-09-11
+
 
 @dataclass
 class _HeldOutResult:
@@ -206,6 +234,7 @@ def _score_corpus(path: Path) -> _HeldOutResult:
                 action="a",
                 error=entry["error"],
                 exception_type=entry.get("exception_type"),
+                metadata=entry.get("metadata") or {},
             )
         )
         got = clf.classify(t, "task").value
@@ -231,6 +260,7 @@ def _score_corpus_group(path: Path, labels: tuple[str, ...]) -> _HeldOutResult:
                 action="a",
                 error=entry["error"],
                 exception_type=entry.get("exception_type"),
+                metadata=entry.get("metadata") or {},
             )
         )
         got = clf.classify(t, "task").value
@@ -517,3 +547,131 @@ class TestCorpusD:
             f"Corpus D labels not assigned to a group: {sorted(ungrouped)}."
             " Add them to SELF_HEALING_LABELS or ROUTING_SENSITIVE_LABELS."
         )
+
+
+class TestCorpusE:
+    """Blocks 9-10: Corpus E — Step 2 of the Corpus E scoping plan.
+
+    Tests whether RulesClassifier's structured-error-code matching
+    (Step.metadata["http_status"]/["json_rpc_code"], added after corpus D)
+    generalizes better on fresh sources than the v1.1 message-text patterns
+    did. Sources disjoint from A-D: MCP (capturing json_rpc_code this time,
+    not just message text), Together AI, Fireworks AI, Replicate, Cerebras,
+    Perplexity, DeepSeek, NVIDIA NIM, xAI. Scored once.
+
+    Result: routing-sensitive recall is 4/9 = 44.4%, up from corpus D's
+    1/12 = 8.3% — but nearly all of the gain is the two MCP json_rpc_code
+    entries (-32601/-32700). Every fresh HTTP-only vendor's "wrong tool"/
+    "bad schema" failure in this corpus used 404/400/422 — codes
+    deliberately excluded from the HTTP tables for the same ambiguity
+    reasons the JSON-RPC exclusions use. The structural signal generalizes
+    where a spec-mandated code exists (JSON-RPC); it does nothing for
+    HTTP-only vendors, because the codes they actually return for these
+    failure types are the ones excluded on purpose. See CHANGELOG and
+    docs/known-limitations.md's "Corpus E scoping" for the full breakdown.
+
+    One adversarial case (a real MCP server reusing -32600 for a
+    session/auth condition, not a malformed request per
+    langgenius/dify#22675 — see scripts/gen_error_corpus_e.py) found a
+    genuine precision bug before this floor was frozen: -32600 was dropped
+    from _JSON_RPC_SCHEMA_CODES, same "generic code reused for an unrelated
+    failure" pattern as corpus D's OutputParserError/CrewAI fix. 100%
+    precision as a result — every miss below returns UNKNOWN.
+
+    Do NOT use corpus E's remaining misses to tune rules.py — that converts
+    E to training data the same way it happened to C and would to D.
+    """
+
+    def test_corpus_file_exists(self) -> None:
+        assert CORPUS_E_PATH.exists(), f"Corpus file missing: {CORPUS_E_PATH}"
+
+    def test_corpus_all_valid_labels(self) -> None:
+        valid = {ft.value for ft in FailureType}
+        entries = json.loads(CORPUS_E_PATH.read_text())
+        for entry in entries:
+            assert entry["label"] in valid, f"Invalid label {entry['label']!r}"
+
+    def test_corpus_e_held_out_floor(self) -> None:
+        result = _score_corpus(CORPUS_E_PATH)
+        if result.accuracy < CORPUS_E_FLOOR:
+            detail = "\n".join(
+                f"  exp={exp:16} got={got:16} [{exc}] {err!r}"
+                for exp, got, exc, err in result.misses
+            )
+            pytest.fail(
+                f"Corpus E held-out: {result.accuracy:.0%} ({result.correct}/{result.total})"
+                f" below floor {CORPUS_E_FLOOR:.0%}.\nMisses:\n{detail}"
+            )
+        assert result.accuracy >= CORPUS_E_FLOOR
+
+    def test_corpus_e_no_misroutes(self) -> None:
+        """Precision guard, independent of the recall floor above: every miss
+        on corpus E must land in UNKNOWN, never in a different concrete type.
+        This is also the regression guard for the -32600 adversarial case —
+        if it ever fires SCHEMA_MISMATCH again, this test catches it."""
+        result = _score_corpus(CORPUS_E_PATH)
+        misroutes = [m for m in result.misses if m[1] != "unknown"]
+        assert not misroutes, (
+            f"Corpus E misroutes (must be zero): "
+            f"{[(exp, got, err) for exp, got, _, err in misroutes]}"
+        )
+
+    def test_corpus_e_self_healing_floor(self) -> None:
+        result = _score_corpus_group(CORPUS_E_PATH, SELF_HEALING_LABELS)
+        assert result.accuracy >= CORPUS_E_SELF_HEALING_FLOOR, (
+            f"Self-healing held-out recall {result.accuracy:.0%}"
+            f" ({result.correct}/{result.total}) below floor"
+            f" {CORPUS_E_SELF_HEALING_FLOOR:.0%}."
+        )
+
+    def test_corpus_e_routing_sensitive_floor(self) -> None:
+        """The number that answers Step 2's actual question: did the
+        structured-code mechanism move routing-sensitive recall on fresh
+        sources? 4/9 = 44.4%, up from corpus D's 1/12 = 8.3% — see this
+        class's docstring for the honest breakdown of where the gain came
+        from (JSON-RPC only, not HTTP status)."""
+        result = _score_corpus_group(CORPUS_E_PATH, ROUTING_SENSITIVE_LABELS)
+        if result.accuracy < CORPUS_E_ROUTING_SENSITIVE_FLOOR:
+            detail = "\n".join(
+                f"  exp={exp:16} got={got:16} [{exc}] {err!r}"
+                for exp, got, exc, err in result.misses
+            )
+            pytest.fail(
+                f"Routing-sensitive held-out recall: {result.accuracy:.0%}"
+                f" ({result.correct}/{result.total}) below floor"
+                f" {CORPUS_E_ROUTING_SENSITIVE_FLOOR:.0%}.\nMisses:\n{detail}"
+            )
+        assert result.accuracy >= CORPUS_E_ROUTING_SENSITIVE_FLOOR
+
+    def test_every_corpus_e_label_is_grouped(self) -> None:
+        """Guard the split — see test_every_corpus_d_label_is_grouped."""
+        entries = json.loads(CORPUS_E_PATH.read_text())
+        grouped = set(SELF_HEALING_LABELS) | set(ROUTING_SENSITIVE_LABELS) | {"unknown"}
+        ungrouped = {e["label"] for e in entries} - grouped
+        assert not ungrouped, (
+            f"Corpus E labels not assigned to a group: {sorted(ungrouped)}."
+            " Add them to SELF_HEALING_LABELS or ROUTING_SENSITIVE_LABELS."
+        )
+
+    def test_corpus_e_unknown_labeled_entry_stays_unknown(self) -> None:
+        """The adversarial MCP -32600 case must score as a hit (correctly
+        left UNKNOWN), not just avoid a misroute in aggregate — pins the
+        specific entry this corpus was built to catch."""
+        entries = json.loads(CORPUS_E_PATH.read_text())
+        unknown_entries = [e for e in entries if e["label"] == "unknown"]
+        assert unknown_entries, "Expected at least one unknown-labeled entry in corpus E"
+        for entry in unknown_entries:
+            t = Trajectory()
+            t.append(
+                Step(
+                    index=0,
+                    action="a",
+                    error=entry["error"],
+                    exception_type=entry.get("exception_type"),
+                    metadata=entry.get("metadata") or {},
+                )
+            )
+            got = RulesClassifier().classify(t, "task")
+            assert got == FailureType.UNKNOWN, (
+                f"Expected UNKNOWN for adversarial entry {entry['error'][:50]!r}, got {got.value}"
+            )

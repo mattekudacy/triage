@@ -153,9 +153,13 @@ your recovery strategies.
 Supply `constraints=`, a `framework=` hint, or please
 [open an issue](https://github.com/mattekudacy/triage/issues) with strings that miss.
 
-Corpus D stays frozen. The next improvement cycle generates corpus E and, given what corpus D
-found, should weigh a structural fix (broader signal than literal string patterns — see
-Known Limitations) over another round of pattern tuning before spending it.
+Corpus D stays frozen. The structural fix that finding pointed at — matching a caller-supplied
+structured code in `Step.metadata` (`"http_status"`, `"json_rpc_code"`) rather than message
+text — shipped and was scored against a fresh corpus E: routing-sensitive recall rose to 44%
+(4/9), but almost entirely via MCP's spec-guaranteed JSON-RPC codes, not HTTP status. Every
+fresh HTTP-only vendor's "wrong tool"/"bad schema" failure used a code (`404`/`400`/`422`)
+deliberately excluded from the mapping as too ambiguous to resolve safely. See Known
+Limitations' "Corpus E scoping" for the full breakdown.
 
 `PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are not scored — `RulesClassifier` returns
 `UNKNOWN` for them by design; use `LLMClassifier` or `HybridClassifier` for those.
