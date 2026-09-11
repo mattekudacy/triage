@@ -9,6 +9,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`Step.agent_id: str | None = None`** — Phase 1 of the MAST multi-agent alignment scoped in
+  `docs/concepts/multi-agent-failures.md`. Records which agent produced a step; optional,
+  `None` by default, zero behavior change for existing single-agent callers.
+  `triage.observability.otel_ingest.trajectory_from_spans()` now populates it from a span's
+  `gen_ai.agent.id` (preferred) or `gen_ai.agent.name` attribute when present — the same
+  extraction pattern already used for `tool_called`/`metadata["http_status"]`.
+
+  The finding worth calling out: `RulesClassifier`'s `LOOP_DETECTED` needed **zero changes**
+  to catch a step repeated across two different agents (MAST's "Step Repetition"), not the
+  small extension originally estimated. `_is_loop_window()` was already agent-identity-agnostic
+  — it only ever compared `tool_called`/`tool_input`, because there was no agent field to look
+  at — so adding `Step.agent_id` made the existing single-agent matching logic correct for the
+  multi-agent case for free. Pinned by
+  `test_loop_detected_across_different_agent_ids` in `tests/test_classifier_rules.py`, and
+  documented as deliberate (not an oversight to "fix" later) in `rules.py`'s comments and
+  `RulesClassifier`'s docstring — see `CLAUDE.md`'s design-decisions section for the full
+  rationale on why same-agent-only matching would be the wrong default.
+
+  Also wires `agent_id` through `triage/suspension.py`'s `serialize_run`/`deserialize_run` so
+  a suspended run's trajectory round-trips it correctly (`triage/checkpoint/base.py`'s
+  checkpoint serialization has a pre-existing, separate gap here — it already didn't round-trip
+  `idempotent`/`partial` either, before this change — left as-is since fixing it is unrelated
+  to this phase).
+
 - **`docs/concepts/multi-agent-failures.md`** — a design proposal, not implemented, scoping
   what it would take to detect multi-agent failures against the published
   [MAST taxonomy](https://github.com/multi-agent-systems-failure-taxonomy/MAST) (14 failure

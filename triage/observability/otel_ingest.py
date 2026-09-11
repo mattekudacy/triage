@@ -39,6 +39,13 @@ or 408/504 status is enough to fire EXTERNAL_FAULT/TIMEOUT without any
 message-text or exception-type support at all, with zero extra code from
 the caller.
 
+Multi-agent systems: a span's gen_ai.agent.id (preferred) or gen_ai.agent.name
+attribute — set on invoke_agent spans per the GenAI conventions — is copied
+into Step.agent_id, the same field docs/concepts/multi-agent-failures.md
+scopes MAST alignment around. This is the connection that proposal's phase 1
+relies on: a real multi-agent framework that emits per-agent spans populates
+agent_id here for free, no extra caller code.
+
 Usage::
 
     from opentelemetry.sdk.trace import TracerProvider
@@ -96,6 +103,10 @@ _TOOL_OUTPUT_KEYS = ("gen_ai.tool.call.result", "gen_ai.tool.output")
 _OPERATION_NAME_KEYS = ("gen_ai.operation.name",)
 _HTTP_STATUS_KEYS = ("http.response.status_code", "http.status_code")
 _ERROR_TYPE_FALLBACK_KEYS = ("error.type",)
+# gen_ai.agent.id is the spec's "stable unique identifier"; gen_ai.agent.name
+# is only "human-readable" — id preferred when both are present, name as a
+# fallback for instrumentation that only sets the name.
+_AGENT_ID_KEYS = ("gen_ai.agent.id", "gen_ai.agent.name")
 
 _GEN_AI_PREFIX = "gen_ai."
 
@@ -150,6 +161,7 @@ def trajectory_from_spans(spans: Sequence[Any], *, include_all: bool = False) ->
             continue
 
         error, exception_type = _extract_error(span, attrs, is_error)
+        agent_id = _first_present(attrs, _AGENT_ID_KEYS)
         step = Step(
             index=i,
             action=_first_present(attrs, _OPERATION_NAME_KEYS) or getattr(span, "name", "") or "",
@@ -159,6 +171,7 @@ def trajectory_from_spans(spans: Sequence[Any], *, include_all: bool = False) ->
             error=error,
             exception_type=exception_type,
             metadata=_extract_metadata(attrs),
+            agent_id=str(agent_id) if agent_id is not None else None,
         )
         timestamp = getattr(span, "end_time", None) or getattr(span, "start_time", None)
         if timestamp is not None:

@@ -68,6 +68,16 @@ class Step:
     ``docs/concepts/classifiers.md``'s "Structured error codes" section. Populating
     them is the caller's responsibility: extract the code from the real exception
     object and pass it via ``record_step(Step(..., metadata={"http_status": 429}))``.
+
+    ``agent_id`` is caller-supplied and optional — which agent produced this step,
+    for multi-agent systems where a single ``Trajectory`` interleaves steps from
+    more than one agent. ``None`` (the default) means either a single-agent system
+    or an agent identity the caller didn't track; existing single-agent callers
+    need no changes. ``RulesClassifier``'s loop detection does not currently key on
+    it — see ``docs/concepts/multi-agent-failures.md`` for why that turned out to
+    already be correct rather than a gap to close.
+    ``triage.observability.otel_ingest.trajectory_from_spans()`` populates it from
+    an OTel span's ``gen_ai.agent.id``/``gen_ai.agent.name`` attribute when present.
     """
 
     index: int
@@ -83,6 +93,7 @@ class Step:
     metadata: dict[str, Any] = field(default_factory=dict)
     idempotent: bool = False
     partial: bool = False
+    agent_id: str | None = None
 
 
 @dataclass

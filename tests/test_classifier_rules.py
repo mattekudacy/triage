@@ -15,6 +15,7 @@ def make_step(
     llm_output: str | None = None,
     exception_type: str | None = None,
     metadata: dict | None = None,
+    agent_id: str | None = None,
 ) -> Step:
     return Step(
         index=index,
@@ -25,6 +26,7 @@ def make_step(
         llm_output=llm_output,
         exception_type=exception_type,
         metadata=metadata or {},
+        agent_id=agent_id,
     )
 
 
@@ -44,6 +46,21 @@ def test_loop_detected():
         step,
         make_step(1, tool_called="search", tool_input={"q": "hello"}),
         make_step(2, tool_called="search", tool_input={"q": "hello"}),
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.LOOP_DETECTED
+
+
+def test_loop_detected_across_different_agent_ids():
+    """MAST's "Step Repetition" (see docs/concepts/multi-agent-failures.md):
+    a handoff causes a second agent to unnecessarily redo work a first agent
+    already completed. Loop matching is deliberately agent_id-agnostic —
+    tool_called/tool_input equality alone is enough, regardless of who made
+    the call — so this fires with zero code change beyond Step.agent_id
+    existing as a field. Pins that as a verified fact, not an assumption."""
+    t = traj(
+        make_step(0, tool_called="search", tool_input={"q": "hello"}, agent_id="agent-a"),
+        make_step(1, tool_called="search", tool_input={"q": "hello"}, agent_id="agent-b"),
+        make_step(2, tool_called="search", tool_input={"q": "hello"}, agent_id="agent-a"),
     )
     assert RulesClassifier().classify(t, "task") == FailureType.LOOP_DETECTED
 

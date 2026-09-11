@@ -1,6 +1,6 @@
 # Multi-Agent Failures: MAST Scoping
 
-**Status: a design proposal, not yet implemented.** Nothing in this document has shipped. It exists to answer one question concretely before any code is written: what would it actually take for `triage` to detect multi-agent failure modes, and how much of that can be done honestly with the same rigor the rest of this project holds itself to — measured, not assumed, and never a new `FailureType` without real disambiguation logic behind it.
+**Status: phase 1 shipped (see "Recommended phasing" below); phases 2-3 are still a design proposal, not implemented.** This document exists to answer one question concretely before writing code: what would it actually take for `triage` to detect multi-agent failure modes, and how much of that can be done honestly with the same rigor the rest of this project holds itself to — measured, not assumed, and never a new `FailureType` without real disambiguation logic behind it.
 
 ## Why this exists
 
@@ -45,7 +45,7 @@ Single-agent failure modes — wrong tool, bad schema, a timeout — are increas
 
 Before any classification question, there's a data-model question that blocks all of it. `Step`/`Trajectory` today represent one flat, single-actor sequence — there is no field recording *which agent* produced a given step. None of MAST's category 2 (inter-agent) failure modes are even representable in triage's current model, independent of how good a classifier gets — "ignored other agent's input" requires knowing there *was* another agent and what it said.
 
-The minimal, additive fix: `Step.agent_id: str | None = None`, the same low-risk pattern `Step.metadata` already established — an optional field with zero effect on any existing caller. It connects directly to work already shipped: the OTel GenAI semantic conventions already define `gen_ai.agent.id`/`gen_ai.agent.name` on `invoke_agent` spans (verified directly against the spec), so `triage.observability.otel_ingest.trajectory_from_spans()` could capture agent identity the same way it already captures `tool_called`/`http_status` — real frameworks that emit per-agent spans would populate this for free, the same story as the HTTP-status connection to `RulesClassifier`'s structured-code matching.
+**✅ Done (phase 1):** `Step.agent_id: str | None = None`, the same low-risk pattern `Step.metadata` already established — an optional field with zero effect on any existing caller. It connects directly to work already shipped: the OTel GenAI semantic conventions already define `gen_ai.agent.id`/`gen_ai.agent.name` on `invoke_agent` spans (verified directly against the spec), so `triage.observability.otel_ingest.trajectory_from_spans()` now captures agent identity the same way it already captured `tool_called`/`http_status` — real frameworks that emit per-agent spans populate this for free, the same story as the HTTP-status connection to `RulesClassifier`'s structured-code matching.
 
 ## Mapping the 14 modes
 
@@ -55,7 +55,7 @@ Honesty matters more here than coverage. Three groups, by how they'd actually ge
 
 | MAST mode | Existing mapping |
 |---|---|
-| 1.3 Step Repetition | `LOOP_DETECTED` — triage already detects this for one agent (`_is_loop_window()` in `rules.py`). Once `agent_id` exists, the same mechanism extends to catch a step repeated *across* agents — a small, concrete code change, not a new concept. |
+| 1.3 Step Repetition | `LOOP_DETECTED` — ✅ done (phase 1, see below): `_is_loop_window()` in `rules.py` was already agent-identity-agnostic, so adding `Step.agent_id` made it catch a step repeated *across* agents with zero matching-logic changes — not the "small code change" this doc originally estimated, but no change at all. |
 | 3.1 Premature Termination | `PLAN_INCOMPLETE` — CLAUDE.md's own taxonomy table already defines this as "agent declared success but not all required sub-goals were completed," which *is* MAST's 3.1 definition, just framed for one agent. Needs a docs update connecting the two, not a new type. |
 
 Finding two direct hits here — including one where triage already has *working, tested code* for the single-agent case — is the strongest evidence this taxonomy is worth aligning with rather than inventing categories from scratch.
@@ -81,10 +81,10 @@ CLAUDE.md documents exactly this failure mode already happening once: `HALLUCINA
 
 ## Recommended phasing
 
-1. **`Step.agent_id: str | None = None`** — pure additive field, zero behavior change for existing callers. Extend `otel_ingest.trajectory_from_spans()` to populate it from `gen_ai.agent.id`/`gen_ai.agent.name` when present. Extend `LOOP_DETECTED`'s matching to also catch identical steps across different `agent_id`s. This alone ships something real: cross-agent loop detection, using code that already exists and is already tested.
-2. **Prototype 3.3 (verification mismatch) and 2.1 (conversation reset)** as candidate `RulesClassifier` rules, validated against a constructed corpus of real multi-agent framework traces (AutoGen, CrewAI, LangGraph multi-agent) — same sourcing discipline as `tests/data/error_corpus_*.json`, not synthetic examples built to make the rule look good.
-3. **Only after (1) and (2) ship and are measured:** extend `LLMClassifier`'s prompt to recognize the ten semantic-only modes, evaluate it against real multi-agent traces, and only then consider whether any of them earn a stable `FailureType` member — each one needs its own answer to "how does a classifier actually tell this apart from the others," not just a taxonomy citation.
+1. ✅ **Done.** `Step.agent_id: str | None = None` — pure additive field, zero behavior change for existing callers. `otel_ingest.trajectory_from_spans()` populates it from `gen_ai.agent.id`/`gen_ai.agent.name` when present (`id` preferred when both are set). Cross-agent loop detection ships too — but the honest correction to this doc's own earlier estimate: it needed **zero changes** to `_is_loop_window()`'s matching logic, not an extension of it. That function was already agent-agnostic (it only ever compared `tool_called`/`tool_input`, never looked at agent identity, because the field didn't exist) — adding `agent_id` to `Step` made the existing single-agent test suite's matching logic correct for the multi-agent case for free. Pinned by `test_loop_detected_across_different_agent_ids` in `tests/test_classifier_rules.py`, so a future change can't accidentally narrow it back to same-agent-only without a test failing. `RulesClassifier`'s docstring and the `classify()` comment above the loop check now document this as deliberate, not unnoticed.
+2. **Not started.** Prototype 3.3 (verification mismatch) and 2.1 (conversation reset) as candidate `RulesClassifier` rules, validated against a constructed corpus of real multi-agent framework traces (AutoGen, CrewAI, LangGraph multi-agent) — same sourcing discipline as `tests/data/error_corpus_*.json`, not synthetic examples built to make the rule look good.
+3. **Not started, blocked on (2).** Only after (1) and (2) ship and are measured: extend `LLMClassifier`'s prompt to recognize the ten semantic-only modes, evaluate it against real multi-agent traces, and only then consider whether any of them earn a stable `FailureType` member — each one needs its own answer to "how does a classifier actually tell this apart from the others," not just a taxonomy citation.
 
 ## Non-goals
 
-This is not a plan to add 14 new `FailureType` members. It is not a plan to build a multi-agent orchestration framework — triage still wraps whatever callable you give it, single- or multi-agent. It is not started — `git blame` on this file should show it arriving with no corresponding change to `taxonomy.py`.
+This is not a plan to add 14 new `FailureType` members. It is not a plan to build a multi-agent orchestration framework — triage still wraps whatever callable you give it, single- or multi-agent. Phase 1 is done (see above); phases 2 and 3 are not.

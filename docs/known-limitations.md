@@ -437,9 +437,11 @@ The conditional-import fallback pattern (`Tracer = Any`, `_otel_trace = None`) d
 
 ## Multi-agent systems
 
-`Step`/`Trajectory` represent one flat, single-actor sequence — there is no field recording *which agent* produced a given step. Failures specific to multi-agent coordination (a handoff losing context, one agent ignoring another's output, a verifier claiming success on a broken result) aren't representable in triage's data model today, independent of classifier sophistication — you can't detect "agent A ignored agent B's input" without knowing there were two agents and what each said.
+`Step.agent_id: str | None = None` records which agent produced a given step (optional, `None` by default — no effect on single-agent callers), and `triage.observability.otel_ingest.trajectory_from_spans()` populates it automatically from a span's `gen_ai.agent.id`/`gen_ai.agent.name` attribute when present. `RulesClassifier`'s `LOOP_DETECTED` already catches a step repeated across two different agents, not just the same agent looping on itself — its matching was always agent-identity-agnostic, so this needed no new matching logic once the field existed.
 
-See [`docs/concepts/multi-agent-failures.md`](concepts/multi-agent-failures.md) for a full scoping against the published [MAST taxonomy](https://github.com/multi-agent-systems-failure-taxonomy/MAST) (14 failure modes, 3 categories) — what maps onto `triage`'s *existing* `FailureType`s with no new code, what's a plausible new `RulesClassifier` rule worth measuring, and what's semantic-only and would need an `LLMClassifier` prompt extension. This is a design proposal, not implemented — `Step.agent_id` doesn't exist yet.
+That's as far as multi-agent detection goes today. Failures that need semantic understanding of what multiple agents actually said to each other (a handoff losing context, one agent ignoring another's output, a verifier claiming success on a broken result) aren't detectable yet — RulesClassifier has no way to reach them, and LLMClassifier's prompt doesn't yet know to look for them.
+
+See [`docs/concepts/multi-agent-failures.md`](concepts/multi-agent-failures.md) for the full scoping against the published [MAST taxonomy](https://github.com/multi-agent-systems-failure-taxonomy/MAST) (14 failure modes, 3 categories): what's shipped (phase 1, above), what's a plausible new `RulesClassifier` rule worth measuring next, and what's semantic-only and would need an `LLMClassifier` prompt extension — deliberately not built yet.
 
 ## Comparison with framework-native error handling
 
