@@ -1,7 +1,7 @@
 """
 scripts/classifier_accuracy.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Six-block precision / recall report for RulesClassifier.
+Nine-block precision / recall report for RulesClassifier.
 
   Block 1 — Regression
       In-corpus positive examples from test_classifier_rules.py.
@@ -17,30 +17,49 @@ Six-block precision / recall report for RulesClassifier.
       transcribed from published formats.  Corpus A was used to guide the v0.25
       pattern fixes, so 100% there reflects tuning, not generalization.
 
-  Block 4 — Corpus B (training data after v0.26 fixes, 90% = 18/20)
+  Block 4 — Corpus B (training data after v0.26 fixes, 100% = 20/20)
       Assembled from sources not seen when writing the v0.25 patterns:
       botocore, google-genai, aiohttp, requests/urllib3, and structural
       phrasings that differ from corpus A.  Corpus B's misses guided the
-      v0.26 botocore regex and _SCHEMA_EXCEPTION_TYPES fixes — it is now
-      training data, same status as corpus A.  Remaining 2 misses are
-      improvement targets for the next release.
+      v0.26 fixes — it is now training data, same status as corpus A. Its
+      last 2 misses (ServerConnectionError inactivity timeout, "Tool X is
+      not registered") were closed in the v1.1 pattern pass.
 
-  Block 5 — Corpus C (genuine held-out, 52% = 14/27)
+  Block 5 — Corpus C (training data as of v1.1, 100% = 27/27)
       Sources disjoint from A and B: azure-core, Mistral, Cohere, Groq,
       LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex, and novel phrasings.
-      Scored once without editing rules.py.  100% precision — all 13 misses
-      returned UNKNOWN, zero misroutes.  Do NOT tune on C's misses until
-      corpus D is ready; tuning converts C to training data.
+      Was genuinely held-out through v1.0 (52% recall, 100% precision,
+      scored once). v1.1 tuned rules.py directly against its 13 misses —
+      that is what converts a corpus to training data, so 100% here now
+      reflects tuning, not generalization. Corpus D (blocks 7-8) is the
+      current held-out measurement.
 
-  Block 6 — Corpus C recall by failure type
-      The aggregate in block 5 averages two groups with opposite value.
-      EXTERNAL_FAULT and TIMEOUT are self-healing: any retry fixes them, so
-      classifying them correctly buys nothing a bare retry loop wouldn't.
-      WRONG_TOOL_CALLED and SCHEMA_MISMATCH are routing-sensitive: recovery
-      only works if the strategy receives the matching hint, which is the
-      entire premise of the library.  Split that way, held-out recall is
-      86% on the types that don't need classification and 8% on the types
-      that do.  Report both numbers, never just the average.
+  Block 6 — Corpus C recall by failure type (retained for history)
+      Kept for continuity with the pre-v1.1 measurement. Not a held-out
+      number as of v1.1 — see the caveat on block 5.
+
+  Block 7 — Corpus D (genuine held-out, scored once after the v1.1 tuning
+      pass, before any further rules.py edits)
+      Sources disjoint from A, B, and C: huggingface_hub, Ollama, OpenRouter,
+      Model Context Protocol (MCP), CrewAI, Semantic Kernel, and novel
+      phrasings chosen to stress the boundaries of the v1.1 patterns.
+      100% precision — the one misroute this scoring pass found (CrewAI's
+      OutputParserError colliding with LlamaIndex's same-named exception)
+      was fixed as a precision bug, not as recall tuning; see
+      test_output_parser_error_exception_type_alone_does_not_fire_schema.
+      Do NOT tune rules.py against D's misses — that converts D to training
+      data the same way it happened to C. Generate corpus E instead.
+
+  Block 8 — Corpus D recall by failure type
+      Split the same way as block 6. This is the number that answers
+      whether the v1.1 tuning pass generalized: routing-sensitive recall on
+      fresh sources is 1/12 = 8%, statistically unchanged from corpus C's
+      pre-tuning 1/12 = 8%. The v1.1 patterns were narrow string literals
+      keyed close to corpus C's exact phrasings and did not transfer to new
+      SDKs' wording. Self-healing recall held at 86%, as expected — that
+      group clusters around a small, largely SDK-independent vocabulary
+      (HTTP codes, "timeout", "rate limit") that routing-sensitive failures
+      do not share.
 
 Run:
     PYTHONPATH=. .venv/bin/python scripts/classifier_accuracy.py
@@ -108,6 +127,7 @@ FALSE_POSITIVES: list[tuple[str, FailureType]] = [
 CORPUS_A_PATH = Path("tests/data/error_corpus_a.json")
 CORPUS_B_PATH = Path("tests/data/error_corpus_b.json")
 CORPUS_C_PATH = Path("tests/data/error_corpus_c.json")
+CORPUS_D_PATH = Path("tests/data/error_corpus_d.json")
 
 
 def _run_block(label: str, note: str) -> None:
@@ -201,6 +221,9 @@ def main() -> None:
     c_ok, c_total, c_fails = _score_corpus(
         CORPUS_C_PATH, "Corpus C not found — run scripts/gen_error_corpus_c.py"
     )
+    d_ok, d_total, d_fails = _score_corpus(
+        CORPUS_D_PATH, "Corpus D not found — run scripts/gen_error_corpus_d.py"
+    )
 
     print("RulesClassifier accuracy report")
     print("=" * 65)
@@ -240,7 +263,8 @@ def main() -> None:
         print("  Sources not seen when writing v0.25 patterns: botocore,")
         print("  google-genai, aiohttp, requests/urllib3, novel phrasings.")
         print("  Corpus B's misses guided the v0.26 fixes — it is now")
-        print("  training data. 90% reflects tuning, not generalization.")
+        print("  training data; reflects tuning, not generalization. Its")
+        print("  last 2 misses (90% -> 100%) were closed in the v1.1 pass.")
         if b_fails:
             print("  Remaining misses (targets for next release):")
             print("\n".join(b_fails))
@@ -251,24 +275,55 @@ def main() -> None:
     # Block 5
     if c_total > 0:
         ratio = f"{c_ok}/{c_total} = {c_ok / c_total:.0%}"
-        print(f"Block 5 — Corpus C (genuine held-out)  ({ratio})")
+        print(f"Block 5 — Corpus C (training data as of v1.1)  ({ratio})")
         print("  Sources disjoint from A and B: azure-core, Mistral, Cohere,")
         print("  Groq, LiteLLM, Vertex AI (aiplatform SDK), LlamaIndex,")
-        print("  and novel phrasings. Scored once without editing rules.py.")
-        print("  100% precision — all misses returned UNKNOWN, zero misroutes.")
-        print("  Do NOT tune on these misses — that converts C to training data.")
+        print("  and novel phrasings. Genuinely held-out through v1.0 (52%")
+        print("  recall, 100% precision). v1.1 tuned rules.py directly")
+        print("  against C's 13 misses — 100% here now reflects tuning, not")
+        print("  generalization. Corpus D (blocks 7-8) is current held-out.")
         if c_fails:
-            print("  Misses (held-out — do not use to guide fixes):")
+            print("  Remaining misses:")
             print("\n".join(c_fails))
     else:
         print("Block 5 — Corpus C  [SKIPPED]")
     print()
 
-    # Block 6 — per-type breakdown of the held-out corpus
-    by_type = _score_by_type(CORPUS_C_PATH)
+    # Block 6 — per-type breakdown of corpus C (history only, see block 5 caveat)
+    by_type_c = _score_by_type(CORPUS_C_PATH)
+    if by_type_c:
+        print("Block 6 — Corpus C recall by failure type (history — not held-out)")
+        for label, (hits, total) in by_type_c.items():
+            group = ""
+            if label in SELF_HEALING:
+                group = "  (self-healing)"
+            elif label in ROUTING_SENSITIVE:
+                group = "  (routing-sensitive)"
+            print(f"    {label:20} {hits}/{total} = {hits / total:3.0%}{group}")
+        print()
+
+    # Block 7
+    if d_total > 0:
+        ratio = f"{d_ok}/{d_total} = {d_ok / d_total:.0%}"
+        print(f"Block 7 — Corpus D (genuine held-out)  ({ratio})")
+        print("  Sources disjoint from A, B, and C: huggingface_hub, Ollama,")
+        print("  OpenRouter, MCP, CrewAI, Semantic Kernel, and novel phrasings")
+        print("  stress-testing the v1.1 patterns' boundaries. Scored once")
+        print("  after the v1.1 tuning pass, before any further rules.py edit.")
+        print("  Do NOT tune on these misses — that converts D to training")
+        print("  data. Generate corpus E instead.")
+        if d_fails:
+            print("  Misses (held-out — do not use to guide fixes):")
+            print("\n".join(d_fails))
+    else:
+        print("Block 7 — Corpus D  [SKIPPED]")
+    print()
+
+    # Block 8 — per-type breakdown of the held-out corpus
+    by_type = _score_by_type(CORPUS_D_PATH)
     if by_type:
-        print("Block 6 — Corpus C recall by failure type")
-        print("  The block 5 aggregate averages two groups with opposite value.")
+        print("Block 8 — Corpus D recall by failure type")
+        print("  The block 7 aggregate averages two groups with opposite value.")
         print()
         for label, (hits, total) in by_type.items():
             group = ""
@@ -292,9 +347,9 @@ def main() -> None:
                 "  — classification is the whole value"
             )
         print()
-        print("  Read together with scripts/bench_synthetic.py, which shows triage")
-        print("  beating a no-recovery baseline *only* on the routing-sensitive")
-        print("  types. That is the gap this measurement says is not yet closed.")
+        print("  Compare to corpus C pre-v1.1 (1/12 = 8% routing-sensitive):")
+        print("  the v1.1 tuning pass did not generalize past corpus C's own")
+        print("  wording. See CHANGELOG and known-limitations.md.")
         print()
 
     print("─" * 65)

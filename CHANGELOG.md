@@ -9,6 +9,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **RulesClassifier: pattern pass against corpus C's held-out misses (v1.1) — did not
+  generalize to fresh sources.** Full writeup in `docs/known-limitations.md` and
+  `CLAUDE.md`; summary here.
+
+  Corpus C (azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, LlamaIndex) was
+  genuinely held-out through v1.0 at 52% recall / 100% precision. This pass tuned
+  `rules.py` directly against its 13 misses — the act that converts a corpus to
+  training data, same as corpus A (v0.25) and corpus B (v0.26) before it. `rules.py`
+  gained:
+  - ~10 new `_WRONG_TOOL_RE` alternatives (tool-with-name/could-not-find/is-not-a-
+    registered-tool/model-does-not-exist/endpoint-not-found/Azure deployment-resource
+    shape/"Tool X is not registered")
+  - 4 new `_SCHEMA_RE` alternatives (request-body-not-valid-json/unprocessable-entity/
+    json-schema-validation/is-invalid-expected/expected-output-to-be-formatted-as)
+  - 2 new `_TIMEOUT_RE` alternatives (Vertex AI's "Deadline of Ns exceeded", aiohttp's
+    "disconnected after Ns of inactivity")
+  - `TooManyRequestsError` added to `_EXTERNAL_EXCEPTION_TYPES`
+
+  Corpus C: 27/27 (100%), corpus B: 20/20 (100%, closing its 2 remaining v0.26
+  targets). Both are now training-data regression guards, not held-out measurements.
+
+  **Corpus D** (fresh, disjoint sources: `huggingface_hub`, Ollama, OpenRouter, Model
+  Context Protocol, CrewAI, Semantic Kernel, novel phrasings) was generated and scored
+  exactly once, immediately after this tuning pass, before any further `rules.py` edit —
+  the actual test of whether the new patterns generalized:
+
+  | Group | Corpus C pre-tuning | Corpus D post-tuning |
+  |---|---|---|
+  | Self-healing (`external_fault`, `timeout`) | 12/14 — 86% | 6/7 — 86% |
+  | Routing-sensitive (`wrong_tool_called`, `schema_mismatch`) | 1/12 — 8% | 1/12 — 8% |
+
+  Routing-sensitive recall on corpus D is statistically unchanged from corpus C's
+  *pre-tuning* number. The new patterns were narrow string literals keyed to corpus
+  C's exact wording (an Azure resource-path shape, `"tool with name 'x' was not
+  found in the provided tool definitions"`) and had near-zero overlap with how other
+  SDKs phrase the same two failure types (Ollama: `"model 'x' not found, try pulling
+  it first"`; MCP: `"Unknown tool: x"` / `"Method not found"`; Semantic Kernel:
+  `"Function 'x' not found in any plugin."`; CrewAI: `"Action 'x' don't exist"`).
+  Self-healing recall held at 86% on both corpora, consistent with that group
+  clustering around a small, largely SDK-shared vocabulary (HTTP codes, "timeout",
+  "rate limit") that routing-sensitive failures do not have. Corpus D: 8/20 (40%
+  recall), 100% precision.
+
+  One precision defect surfaced and was fixed during the corpus D pass, distinct
+  from the recall finding above: the v1.1 patterns had added `OutputParserError` to
+  `_SCHEMA_EXCEPTION_TYPES` as a blanket exception-type match for LlamaIndex's
+  schema-parsing failures. Corpus D found CrewAI raises an unrelated exception with
+  the identical class name for an unrecognized ReAct action — the blanket match
+  misrouted it to `SCHEMA_MISMATCH`. Fixed by dropping the exception-type match and
+  adding a message pattern specific to LlamaIndex's actual wording
+  (`"expected output to be formatted as"`). This is a bug fix, not recall tuning —
+  it was applied before this floor was frozen, and corpus D's precision is 100% as a
+  result. General lesson kept in `rules.py`'s comments: an exception *class name* is
+  not a stable cross-SDK identity; a blanket match on one is exactly as fragile as
+  the string patterns above.
+
+  **Implication for the next cycle**, recorded in `docs/known-limitations.md`:
+  literal string/regex pattern tuning against one held-out corpus's specific misses
+  does not generalize to a different corpus of the same failure types. This is
+  evidence about the approach, not just this pattern set. Before spending a corpus E
+  on another tuning round, prefer a structural change (matching on field names or
+  error-code enums SDKs actually share, rather than free-text message wording) or use
+  corpus E to confirm this finding isn't an artifact of corpus D's particular source
+  mix.
+
+  `tests/test_classifier_rules.py` gained a "corpus C (v1.1) true positives +
+  adversarial near-misses" section pinning every new pattern's motivating case and
+  the near-miss found while narrowing it (e.g. "endpoint documentation is not found
+  in the wiki" must not fire `WRONG_TOOL_CALLED`; "deployment pipeline was not found"
+  must not fire on the Azure resource-path pattern). `tests/test_classifier_accuracy.py`
+  gained `TestCorpusD` (mirroring the retired `TestCorpusC` held-out tests) and
+  reduced `TestCorpusC`/existing corpus-B tests to regression guards.
+
 - **Held-out accuracy is now reported per failure type, not as one average.**
   The corpus C headline (52% recall) averaged two groups whose value to an
   adopter is opposite, and the aggregate overstated what triage delivers over a

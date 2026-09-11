@@ -33,6 +33,26 @@ _WRONG_TOOL_RE = re.compile(
     r"|['\"]?\w+['\"]?\s+does\s+not\s+exist\s+in\s+tools?"  # anthropic: 'x' does not exist in tools
     r"|unknown\s+tool\s+['\"]?\w+"  # generic
     r"|tool\s+['\"]?\w+['\"]?\s+not\s+found\s+in\s+the\s+provided"  # langchain ToolException
+    # corpus C (v1.1): patterns below were added from held-out misses — see
+    # CHANGELOG and tests/data/error_corpus_c.json for provenance.
+    r"|\btool\s+with\s+name\s+[`'\"]?[\w.\-]+[`'\"]?\s+(?:was\s+)?not\s+found"  # cohere/llamaindex
+    r"|could\s+not\s+find\s+tool\s+with\s+name"  # llamaindex ToolException
+    r"|is\s+not\s+a\s+registered\s+(?:agent\s+)?tool"  # generic agent-registry KeyError
+    r"|\bmodel\s+['\"]?\S+?['\"]?\s+does\s+not\s+exist"  # litellm/openai: model 'x' does not exist
+    # Requires a "/" in the identifier so this matches a resource path
+    # ("Endpoint projects/.../endpoints/456") and not plain-English phrasing
+    # like "endpoint documentation is not found" — see
+    # test_wrong_tool_false_positive_corpus.
+    r"|\bendpoint\s+\S*/\S+\s+is\s+not\s+found"
+    r"|\btool\s+[\w.\-]+\s+is\s+not\s+registered\b"  # corpus B target: Tool X is not registered
+    # azure-core ResourceNotFoundError: message-only (not exception-type-based —
+    # ResourceNotFoundError is reused across unrelated Azure resource kinds, so
+    # matching on the type name alone would be too broad). Anchored to the
+    # Azure resource-path shape ("<provider>/deployments/<name>' under
+    # resource group") rather than a loose "deployment...not found" proximity
+    # match, which would also fire on unrelated CI/CD "deployment pipeline"
+    # language — see test_wrong_tool_false_positive_corpus.
+    r"|\bdeployments?/[\w\-.]+['\"]?\s+under\s+resource\s+group"
     r")",
     re.IGNORECASE,
 )
@@ -49,6 +69,13 @@ _SCHEMA_RE = re.compile(
     r"|extra\s+data"
     # LangChain OutputParserException
     r"|invalid\s+json\s+output"
+    # corpus C (v1.1): patterns below were added from held-out misses — see
+    # CHANGELOG and tests/data/error_corpus_c.json for provenance.
+    r"|request\s+body\s+is\s+not\s+valid\s+json"  # azure-core InvalidRequestBody
+    r"|unprocessable\s+entity"  # HTTP 422 text form, used across many SDKs
+    r"|json\s+schema\s+validation"  # groq: json_validate_failed / JSON schema validation failed
+    r"|is\s+invalid\.\s+expected"  # litellm: 'x' is invalid. Expected a string, got object.
+    r"|expected\s+output\s+to\s+be\s+formatted\s+as"  # llamaindex OutputParserError
     r")",
     re.IGNORECASE,
 )
@@ -91,7 +118,13 @@ def _external_code_match(text: str) -> bool:
 
 
 _TIMEOUT_RE = re.compile(
-    r"\btimeout\b|\btimed[\s_]?out\b|\bdeadline[\s_]?exceeded\b|\btime[\s_]?limit\b",
+    r"\btimeout\b|\btimed[\s_]?out\b|\bdeadline[\s_]?exceeded\b|\btime[\s_]?limit\b"
+    # corpus C (v1.1): vertex aiplatform phrases the deadline with an
+    # interposed duration — "Deadline of 60.0s exceeded" — the fixed-width
+    # pattern above requires "deadline exceeded" adjacent.
+    r"|\bdeadline\s+of\s+[\d.]+s?\s+exceeded\b"
+    # corpus B target: aiohttp ServerConnectionError has no "timeout" keyword.
+    r"|disconnected\s+after\s+[\d.]+\s*seconds?\s+of\s+inactivity\b",
     re.IGNORECASE,
 )
 # Exception type names that indicate timeout when str(exc) is empty or unhelpful.
@@ -116,6 +149,7 @@ _EXTERNAL_EXCEPTION_TYPES = frozenset(
         "InternalServerError",  # openai / anthropic SDK
         "ServiceUnavailableError",
         "OverloadedError",
+        "TooManyRequestsError",  # cohere: message text carries no HTTP code or "rate limit"
     }
 )
 # Exception type names that indicate schema/validation failure regardless of message
@@ -125,9 +159,15 @@ _SCHEMA_EXCEPTION_TYPES = frozenset(
     {
         "JSONDecodeError",
         "ValidationError",  # pydantic
-        "OutputParserException",  # langchain
+        "OutputParserException",  # langchain — reserved for parser failures by design
         "SchemaValidationError",
         "InvalidArgument",  # google-genai / grpc
+        # NOTE: llamaindex's OutputParserError is deliberately NOT listed here.
+        # Corpus D found CrewAI raises a class of the same name for an
+        # unrelated failure (an unrecognized ReAct Action, not a schema
+        # problem) — matching on this name alone misroutes it to
+        # SCHEMA_MISMATCH. See the message pattern below instead, which is
+        # specific to LlamaIndex's actual wording.
     }
 )
 

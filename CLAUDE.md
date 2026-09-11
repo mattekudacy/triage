@@ -282,26 +282,50 @@ retrying when a non-idempotent step is in the trajectory. `Trajectory.append()` 
 
 ## Classifier accuracy measurement
 
-Corpora live in `tests/data/error_corpus_{a,b,c}.json`; `scripts/classifier_accuracy.py`
-scores all blocks. As of v1.0: corpora A and B are **training data** (their misses guided the
-v0.25/v0.26 pattern fixes), so their 100%/90% scores prove nothing about generalization.
-Corpus C is the real number — scored once, `rules.py` untouched: **52% recall, 100% precision**,
-all 13 misses returning `UNKNOWN` with zero misroutes.
+Corpora live in `tests/data/error_corpus_{a,b,c,d}.json`; `scripts/classifier_accuracy.py`
+scores all blocks. As of v1.1: corpora A, B, **and C** are **training data** (their misses
+guided the v0.25/v0.26/v1.1 pattern fixes respectively), so their 100% scores prove nothing
+about generalization. Corpus C was genuinely held-out through v1.0 (52% recall, 100%
+precision) — the v1.1 pattern pass tuned `rules.py` directly against its 13 misses, which is
+the act that converts a corpus to training data. **Corpus D is the real number now** — scored
+once, immediately after the v1.1 tuning pass, before any further `rules.py` edit: **40%
+recall, 100% precision**.
 
-**Never quote the 52% aggregate on its own.** It averages two groups with opposite value, and
-block 6 of `classifier_accuracy.py` prints the split:
+**Never quote a corpus aggregate on its own.** It averages two groups with opposite value, and
+blocks 7-8 of `classifier_accuracy.py` print the split, this time across both corpora:
 
-| Group | Types | Held-out recall | Why it matters |
-|---|---|---|---|
-| Self-healing | `external_fault`, `timeout` | 12/14 — 86% | any retry recovers these; classification adds nothing |
-| Routing-sensitive | `wrong_tool_called`, `schema_mismatch` | 1/12 — 8% | only the matched hint recovers these; this is the value prop |
+| Group | Types | Corpus C pre-tuning | Corpus D post-tuning | Why it matters |
+|---|---|---|---|---|
+| Self-healing | `external_fault`, `timeout` | 12/14 — 86% | 6/7 — 86% | any retry recovers these; classification adds nothing |
+| Routing-sensitive | `wrong_tool_called`, `schema_mismatch` | 1/12 — 8% | 1/12 — 8% | only the matched hint recovers these; this is the value prop |
 
-The synthetic routing demo beats the no-recovery baseline on exactly the routing-sensitive
-types — the ones at 8% on held-out data. Both numbers are honest and they must be reported
-together. Raising routing-sensitive held-out recall is the next release's headline goal;
-feature work is deprioritised behind it.
+**The headline finding of the v1.1 cycle:** routing-sensitive recall on fresh data (corpus D)
+is unchanged from corpus C's pre-tuning number. v1.1 added ~15 patterns reverse-engineered from
+corpus C's exact 13 miss strings, closed all 13, and it did not generalize — Ollama, MCP,
+CrewAI, Semantic Kernel, HuggingFace, and OpenRouter each phrase "no such tool" and "bad
+request shape" differently, and none of them matched patterns tuned on azure-core/Mistral/
+Cohere/Groq/LiteLLM/Vertex/LlamaIndex wording. Self-healing recall held at 86% on both corpora
+for the mirror-image reason: that group clusters around HTTP codes and the words "timeout"/
+"rate limit", a small vocabulary that *is* shared across SDKs.
 
-Keep corpus C frozen. Tuning `rules.py` against C's misses turns it into training data and
-the measurement disappears — generate corpus D for the next improvement cycle instead. When
-quoting accuracy anywhere, quote the held-out number, split it by group, and label the
-training ones as training.
+One precision bug surfaced and was fixed during the corpus D pass, independent of the recall
+finding: a v1.1 exception-type fallback (`OutputParserError` → SCHEMA_MISMATCH, added for
+LlamaIndex) collided with CrewAI's unrelated reuse of the same class name for a wrong-tool
+failure. Fixed by replacing the exception-type match with a message pattern specific to
+LlamaIndex's actual wording — see `test_output_parser_error_exception_type_alone_does_not_
+fire_schema` in `tests/test_classifier_rules.py`. This was a bug fix (the class name was never
+a reliable signal on its own), not recall tuning, and it's why corpus D still shows 100%
+precision.
+
+**Implication for the next cycle:** literal string/regex pattern tuning against one corpus's
+misses has now been tried and shown not to transfer to a different corpus of the same failure
+types. Before spending a corpus E on another round of the same approach, prefer a structural
+change — deriving matches from field names or error-code enums SDKs actually share, rather
+than free-text message wording — or use corpus E to confirm this finding generalizes past
+corpus D's particular source mix. See `docs/known-limitations.md`'s "what this means for
+where effort goes next."
+
+Keep corpus D frozen. Tuning `rules.py` against D's misses turns it into training data and
+the measurement disappears — generate corpus E for the next improvement cycle instead. When
+quoting accuracy anywhere, quote the held-out number, split it by group, and label corpora
+A, B, and C as training.
