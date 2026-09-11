@@ -9,6 +9,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Corpus E, scored once — Step 2 of the "Corpus E scoping" plan.** Tests whether the
+  structured-error-code matching added below generalizes on fresh sources (MCP capturing
+  `json_rpc_code` this time, plus Together AI, Fireworks AI, Replicate, Cerebras, Perplexity,
+  DeepSeek, NVIDIA NIM, xAI — all disjoint from A-D). Result: routing-sensitive recall rose to
+  44% (4/9), up from corpus D's 8% (1/12) — but the gain is almost entirely the two MCP
+  `json_rpc_code` entries. Every fresh HTTP-only vendor's "wrong tool"/"bad schema" failure used
+  `404`/`400`/`422`, codes deliberately excluded from the HTTP tables as too ambiguous. The
+  structural signal generalizes where a protocol spec guarantees a code's meaning (JSON-RPC);
+  it buys nothing where the shared signal is only a coarse, dual-purpose HTTP status. See
+  `docs/known-limitations.md`'s "Corpus E scoping" for the full breakdown, `scripts/README.md`
+  for the corpus-discipline table update, and `scripts/gen_error_corpus_e.py` for sourcing.
+
+  Corpus E's design deliberately included an adversarial case that paid off: a real MCP server
+  (`langgenius/dify#22675`) reused `-32600` ("Invalid Request" per the JSON-RPC spec) for a
+  session/auth condition, not a malformed request. It misrouted to `SCHEMA_MISMATCH` on first
+  score — the same "generic code reused for an unrelated failure" pattern that dropped
+  `OutputParserError` from corpus D. Fixed by dropping `-32600` from `_JSON_RPC_SCHEMA_CODES`,
+  keeping only `-32700` (Parse error, which has no such ambiguity), before this floor was
+  frozen. 100% precision on corpus E as a result — see
+  `test_json_rpc_invalid_request_does_not_fire_schema_mismatch` in
+  `tests/test_classifier_rules.py` and `TestCorpusE` in `tests/test_classifier_accuracy.py`.
+
+  Both corpus D and corpus E are now frozen. A corpus F should test a different spec-guaranteed
+  signal (gRPC status codes are the next candidate) or confirm this finding isn't an artifact
+  of corpus E's particular vendor mix.
+
 - **`RulesClassifier` now checks structured error codes in `Step.metadata`, in addition to
   message-text patterns.** Step 1 of the 3-step plan in `docs/known-limitations.md`'s "Corpus E
   scoping" section — opt-in, additive, no behavior change for callers that never set
@@ -16,16 +42,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `EXTERNAL_FAULT` and `408/504` → `TIMEOUT` (the latter a net-new capability — no
   message-text or exception-type rule covered an HTTP timeout status anywhere before this);
   `metadata["json_rpc_code"]` (int) maps MCP's JSON-RPC `-32601` → `WRONG_TOOL_CALLED`,
-  `-32700`/`-32600` → `SCHEMA_MISMATCH`, `-32603` → `EXTERNAL_FAULT`. Only codes with an
+  `-32700` → `SCHEMA_MISMATCH`, `-32603` → `EXTERNAL_FAULT`. Only codes with an
   *unambiguous* single-`FailureType` mapping are matched — JSON-RPC `-32602` ("Invalid
   params", shared by both a bad tool name and a malformed argument shape) and HTTP `404`/`400`
   are deliberately excluded, preserving `RulesClassifier`'s 100%-precision-by-construction
   guarantee rather than turning an ambiguous code into a confident wrong guess. See
   `Step`'s docstring in `triage/taxonomy.py` and `docs/concepts/classifiers.md`'s "Structured
   error codes" section for the usage contract, and `triage/classifier/rules.py`'s module
-  docstring for the code tables. Tested with synthetic `Step` objects only — no corpus
-  dependency, and not yet scored against held-out data (that's Step 2 of the same plan, not
-  started).
+  docstring for the code tables. Tested with synthetic `Step` objects only when this shipped —
+  no corpus dependency. **Update, same [Unreleased] cycle:** `-32600` was originally included
+  here too, mapped to `SCHEMA_MISMATCH` per the JSON-RPC spec's "Invalid Request" meaning —
+  corpus E (see the entry above) found a real server reusing it for an unrelated condition, so
+  it was dropped before release. This entry reflects the corrected mapping, not what first
+  shipped.
 
 - **`scripts/hybrid_ambiguity_accuracy.py` + `tests/data/error_corpus_ambiguous.json`** —
   turns the `n=1` finding below (`HybridClassifier` overturning corpus D's one genuinely

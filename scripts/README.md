@@ -10,7 +10,7 @@ All are run from the repo root with `PYTHONPATH=.`.
 | Script | What it measures |
 |---|---|
 | `bench_synthetic.py` | Routing demo — triage vs. a no-recovery baseline across three failure modes |
-| `classifier_accuracy.py` | Nine-block precision/recall report for `RulesClassifier` — zero API calls |
+| `classifier_accuracy.py` | Ten-block precision/recall report for `RulesClassifier` — zero API calls |
 | `llm_classifier_accuracy.py` | Scores corpus D with `LLMClassifier`/`HybridClassifier` alongside `RulesClassifier` — **requires an LLM API key**, makes real calls |
 | `hybrid_ambiguity_accuracy.py` | Measures `HybridClassifier`'s override rate on genuinely-ambiguous inputs — **requires an LLM API key**, makes real calls |
 
@@ -64,10 +64,12 @@ not how often classification is right.
 
 ## Error corpora
 
-`gen_error_corpus{,_b,_c,_d}.py` regenerate `tests/data/error_corpus_{a,b,c,d}.json` by
+`gen_error_corpus{,_b,_c,_d,_e}.py` regenerate `tests/data/error_corpus_{a,b,c,d,e}.json` by
 provoking real exceptions from installed SDKs and transcribing published error strings. The
 JSON files are checked in, so scoring is reproducible without re-running the generators or
-installing every SDK. Re-run a generator only when adding cases.
+installing every SDK. Re-run a generator only when adding cases. `_e.py` additionally captures
+a `"metadata"` field per entry (a real `http_status` or `json_rpc_code`, not invented) — see
+`triage/taxonomy.py`'s `Step` docstring for the convention this tests.
 
 ### Corpus discipline
 
@@ -79,6 +81,7 @@ This is the part that's easy to destroy by accident:
 | B | boto3/botocore, google-genai/grpc, aiohttp, requests/urllib3 | **Training** — guided v0.26 + v1.1 fixes | 100% (20/20) |
 | C | azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, LlamaIndex | **Training** — guided v1.1 fixes | 100% (27/27) |
 | D | huggingface_hub, Ollama, OpenRouter, MCP, CrewAI, Semantic Kernel | **Held out — frozen** | 40% recall, 100% precision |
+| E | MCP (json_rpc_code), Together AI, Fireworks AI, Replicate, Cerebras, Perplexity, DeepSeek, NVIDIA NIM, xAI | **Held out — frozen** | 69% recall, 100% precision |
 
 Corpus C was held out through v1.0 (52% recall, 100% precision) and became training data in
 v1.1 the same way A and B did before it: `rules.py` was tuned directly against its 13 misses.
@@ -99,15 +102,37 @@ A corpus becomes training data the moment its misses inform a `rules.py` edit. A
 already have; their scores prove the patterns fit the data they were written against and say
 nothing about generalization.
 
-**Corpus D is frozen.** Do not tune `rules.py` against D's misses. If you do, the only
-held-out measurement in the repo is gone and there is no way to get it back — you cannot
-un-see the data. Before spending a corpus E on another pattern-tuning cycle, read the
-"what this means for where effort goes next" note in `docs/known-limitations.md` — corpus D's
-result suggests literal-pattern tuning has a ceiling that another round of it is unlikely to
-clear, and a structural change may be the better use of the next cycle. If tuning does
-proceed: generate corpus E from fresh, disjoint sources without consulting `rules.py`, tune
-against D's misses, then score E once. D then joins the training set and E becomes the new
-frozen benchmark.
+**Corpus E — what actually happened instead of another tuning cycle.** `docs/known-
+limitations.md`'s "Corpus E scoping" section proposed a *structural* change instead of another
+literal-pattern-tuning pass: `RulesClassifier` learned to check a caller-supplied structured
+code in `Step.metadata` (`"http_status"`, `"json_rpc_code"`) alongside its message-text
+patterns — built and unit-tested first, entirely without reading corpus D's misses, then
+corpus E was generated from fresh sources (disjoint from A-D) *with* real codes captured
+alongside message and exception type, to test whether the structural signal generalizes where
+message-text tuning didn't.
+
+It partly does. Routing-sensitive recall on corpus E is 44% (4/9), well above corpus D's 8% —
+but nearly all of that gain is the two MCP `json_rpc_code` entries (`-32601`/`-32700`), not
+HTTP status codes. Every fresh HTTP-only vendor's "wrong tool"/"bad schema" failure in corpus E
+(Together AI, Fireworks AI, Replicate, Cerebras, Perplexity) used `404`/`400`/`422` — codes
+deliberately excluded from the HTTP tables as too ambiguous to map safely (see
+`triage/classifier/rules.py`'s module docstring). The structural signal generalizes where a
+protocol *spec* guarantees a code's meaning (JSON-RPC); it buys nothing for vendors whose
+"wrong tool"/"bad schema" signal is just an HTTP status shared with a dozen unrelated failure
+causes. See `docs/known-limitations.md`'s "Corpus E scoping" for the full breakdown.
+
+One adversarial case earned its keep: a real MCP server (`langgenius/dify#22675`) reused
+`-32600` for a session/auth condition, not the malformed-request meaning the JSON-RPC spec
+assigns it — corpus E's one `unknown`-labeled entry was built specifically to test this, caught
+a genuine misroute, and `-32600` was dropped from the mapping before this floor was frozen. The
+same "generic code reused for an unrelated failure" pattern that dropped `OutputParserError`
+from corpus D — protocol-level codes are not immune to it either. 100% precision on corpus E as
+a result: every remaining miss returns `UNKNOWN`, zero misroutes.
+
+**Both D and E are frozen.** Do not tune `rules.py` against either corpus's remaining misses —
+same rule as before, applied twice now. If you want to test a further structural idea (a
+different protocol's error codes, a broader signal), generate a corpus F from sources disjoint
+from A-E.
 
 When quoting accuracy anywhere — README, docs, issues — quote the held-out number and label
 the training ones as training.

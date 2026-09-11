@@ -127,7 +127,7 @@ without a labeled corpus.
 
 1. LOOP_DETECTED — last `loop_window` steps (default 3, configurable): identical `tool_called` + canonical `tool_input`
 2. WRONG_TOOL_CALLED — error matches tool-not-found patterns across OpenAI/Anthropic/generic SDKs, OR `metadata["json_rpc_code"] == -32601`
-3. SCHEMA_MISMATCH — error matches `validation error|json.*parse|jsondecodeerror|invalid json|unexpected token`, OR `metadata["json_rpc_code"] in (-32700, -32600)`
+3. SCHEMA_MISMATCH — error matches `validation error|json.*parse|jsondecodeerror|invalid json|unexpected token`, OR `metadata["json_rpc_code"] == -32700`
 4. EXTERNAL_FAULT — error contains `\b(429|500|502|503)\b` (word-boundary, avoids false positives), OR `metadata["http_status"] in (429, 500, 502, 503)`, OR `metadata["json_rpc_code"] == -32603`
 5. TIMEOUT — error matches `timeout|timed out|deadline exceeded|time limit`, OR `metadata["http_status"] in (408, 504)`
 6. CONSTRAINT_IGNORED — `llm_output` contains any string from `self.constraints`
@@ -142,13 +142,24 @@ also check a caller-supplied structured code in `Step.metadata` — `"http_statu
 `"json_rpc_code"` (int) — when present. Opt-in: nothing populates `Step.metadata`
 automatically, so existing callers see no behavior change. Only codes with an *unambiguous*
 single-`FailureType` mapping are matched — JSON-RPC `-32602` ("Invalid params", shared by both
-a bad tool name and a malformed argument shape) and HTTP `404`/`400` are deliberately excluded,
-same 100%-precision-by-construction guarantee every message-text rule keeps. See
-`triage/classifier/rules.py`'s module docstring, `docs/concepts/classifiers.md`'s "Structured
-error codes" section, and `docs/known-limitations.md`'s "Corpus E scoping" for the full
-rationale. This is Step 1 of that section's 3-step plan — Step 2 (score it against a corpus E
-built with real codes) has not happened yet; nothing here has been measured against held-out
-data.
+a bad tool name and a malformed argument shape) and HTTP `404`/`400`/`422` are deliberately
+excluded, same 100%-precision-by-construction guarantee every message-text rule keeps. JSON-RPC
+`-32600` ("Invalid Request") is excluded too — the JSON-RPC spec calls it unambiguous, but
+corpus E found a real MCP server reusing it for a session/auth condition, not a malformed
+request, the same "generic code reused for an unrelated failure" pattern that dropped
+`OutputParserError` from `_SCHEMA_EXCEPTION_TYPES`. See `triage/classifier/rules.py`'s module
+docstring, `docs/concepts/classifiers.md`'s "Structured error codes" section, and
+`docs/known-limitations.md`'s "Corpus E scoping" for the full rationale.
+
+**Corpus E result (Step 2, scored once):** routing-sensitive recall on corpus E was 4/9 = 44%,
+up from corpus D's 1/12 = 8% — but nearly all of that gain came from the two MCP
+`json_rpc_code` entries (`-32601`/`-32700`), not from HTTP status codes: every fresh vendor's
+"wrong tool"/"bad schema" failure in corpus E used `404`/`400`/`422`, codes deliberately
+excluded from the HTTP tables for the same ambiguity reasons as the JSON-RPC exclusions above.
+The structural signal generalizes where a spec-mandated code exists (JSON-RPC); it does nothing
+for HTTP-only vendors, because the codes they actually return for these failure types are the
+ones excluded on purpose. See `docs/known-limitations.md`'s "Corpus E scoping" for the full
+breakdown and what it implies for Step 3.
 
 **`StepRiskScorer` contract:** `StepRiskScorer.__call__()` is synchronous and must not make
 API calls. It is invoked on the hot path inside `_record_step` on every recorded step; keep

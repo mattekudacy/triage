@@ -1,7 +1,7 @@
 """
 scripts/classifier_accuracy.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Nine-block precision / recall report for RulesClassifier.
+Ten-block precision / recall report for RulesClassifier.
 
   Block 1 — Regression
       In-corpus positive examples from test_classifier_rules.py.
@@ -61,6 +61,22 @@ Nine-block precision / recall report for RulesClassifier.
       (HTTP codes, "timeout", "rate limit") that routing-sensitive failures
       do not share.
 
+  Block 9 — Corpus E (Step 2 of the Corpus E scoping plan in
+      docs/known-limitations.md — tests whether Step.metadata-based
+      structured-error-code matching, added after corpus D, generalizes
+      better than the v1.1 message-text patterns did)
+      Sources disjoint from A-D: MCP (this time capturing json_rpc_code,
+      not just message text like corpus D's MCP entries), Together AI,
+      Fireworks AI, Replicate, Cerebras, Perplexity, DeepSeek, NVIDIA NIM,
+      xAI. Includes one deliberate adversarial case — see
+      scripts/gen_error_corpus_e.py's module docstring.
+
+  Block 10 — Corpus E recall by failure type
+      Split the same way as block 8. The number that answers whether the
+      structured-code mechanism (shipped, not yet measured, when it was
+      added) actually helps on fresh sources, versus corpus D's 8%
+      routing-sensitive baseline that had no structured codes to check.
+
 Run:
     PYTHONPATH=. .venv/bin/python scripts/classifier_accuracy.py
 """
@@ -76,9 +92,21 @@ from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
 
 
-def _classify(error: str | None, exception_type: str | None = None) -> FailureType:
+def _classify(
+    error: str | None,
+    exception_type: str | None = None,
+    metadata: dict | None = None,
+) -> FailureType:
     t = Trajectory()
-    t.append(Step(index=0, action="test", error=error, exception_type=exception_type))
+    t.append(
+        Step(
+            index=0,
+            action="test",
+            error=error,
+            exception_type=exception_type,
+            metadata=metadata or {},
+        )
+    )
     return RulesClassifier().classify(t, "task")
 
 
@@ -128,6 +156,7 @@ CORPUS_A_PATH = Path("tests/data/error_corpus_a.json")
 CORPUS_B_PATH = Path("tests/data/error_corpus_b.json")
 CORPUS_C_PATH = Path("tests/data/error_corpus_c.json")
 CORPUS_D_PATH = Path("tests/data/error_corpus_d.json")
+CORPUS_E_PATH = Path("tests/data/error_corpus_e.json")
 
 
 def _run_block(label: str, note: str) -> None:
@@ -167,7 +196,7 @@ def _score_corpus(path: Path, missing_msg: str) -> tuple[int, int, list[str]]:
     ok = 0
     fails = []
     for entry in entries:
-        got = _classify(entry["error"], entry.get("exception_type"))
+        got = _classify(entry["error"], entry.get("exception_type"), entry.get("metadata"))
         exp = entry["label"]
         if got.value == exp:
             ok += 1
@@ -195,7 +224,7 @@ def _score_by_type(path: Path) -> dict[str, tuple[int, int]]:
     total: collections.Counter[str] = collections.Counter()
     hits: collections.Counter[str] = collections.Counter()
     for entry in entries:
-        got = _classify(entry["error"], entry.get("exception_type"))
+        got = _classify(entry["error"], entry.get("exception_type"), entry.get("metadata"))
         label = entry["label"]
         total[label] += 1
         if got.value == label:
@@ -223,6 +252,9 @@ def main() -> None:
     )
     d_ok, d_total, d_fails = _score_corpus(
         CORPUS_D_PATH, "Corpus D not found — run scripts/gen_error_corpus_d.py"
+    )
+    e_ok, e_total, e_fails = _score_corpus(
+        CORPUS_E_PATH, "Corpus E not found — run scripts/gen_error_corpus_e.py"
     )
 
     print("RulesClassifier accuracy report")
@@ -350,6 +382,63 @@ def main() -> None:
         print("  Compare to corpus C pre-v1.1 (1/12 = 8% routing-sensitive):")
         print("  the v1.1 tuning pass did not generalize past corpus C's own")
         print("  wording. See CHANGELOG and known-limitations.md.")
+        print()
+
+    # Block 9 — Corpus E (structured-error-code signal, Step 2 of the Corpus
+    # E scoping plan; see docs/known-limitations.md)
+    if e_total > 0:
+        ratio = f"{e_ok}/{e_total} = {e_ok / e_total:.0%}"
+        print(f"Block 9 — Corpus E (structured error codes, fresh sources)  ({ratio})")
+        print("  Sources disjoint from A-D: MCP (json_rpc_code, not just")
+        print("  message text), Together AI, Fireworks AI, Replicate, Cerebras,")
+        print("  Perplexity, DeepSeek, NVIDIA NIM, xAI. Tests whether")
+        print("  Step.metadata-based structural matching (added after corpus D)")
+        print("  generalizes better than the v1.1 message-text patterns did.")
+        print("  Includes one deliberate adversarial case (a real MCP server")
+        print("  reusing -32600 for a non-schema condition) — see")
+        print("  scripts/gen_error_corpus_e.py's module docstring.")
+        if e_fails:
+            print("  Misses:")
+            print("\n".join(e_fails))
+    else:
+        print("Block 9 — Corpus E  [SKIPPED]")
+    print()
+
+    # Block 10 — per-type breakdown of corpus E
+    by_type_e = _score_by_type(CORPUS_E_PATH)
+    if by_type_e:
+        print("Block 10 — Corpus E recall by failure type")
+        print("  Same self-healing/routing-sensitive split as block 8, plus an")
+        print("  'unknown' row for the adversarial MCP -32600 case — a hit")
+        print("  there means the classifier correctly left it UNKNOWN; a miss")
+        print("  routing it to schema_mismatch means the code was misleading.")
+        print()
+        for label, (hits, total) in by_type_e.items():
+            group = ""
+            if label in SELF_HEALING:
+                group = "  (self-healing — any retry fixes it)"
+            elif label in ROUTING_SENSITIVE:
+                group = "  (routing-sensitive — needs the right hint)"
+            print(f"    {label:20} {hits}/{total} = {hits / total:3.0%}{group}")
+        print()
+
+        sh_hits_e, sh_total_e = _group_recall(by_type_e, SELF_HEALING)
+        rs_hits_e, rs_total_e = _group_recall(by_type_e, ROUTING_SENSITIVE)
+        if sh_total_e:
+            print(
+                f"    self-healing types    {sh_hits_e}/{sh_total_e} = "
+                f"{sh_hits_e / sh_total_e:3.0%}  — classification buys nothing here"
+            )
+        if rs_total_e:
+            print(
+                f"    routing-sensitive     {rs_hits_e}/{rs_total_e} = "
+                f"{rs_hits_e / rs_total_e:3.0%}  — classification is the whole value"
+            )
+        print()
+        print("  Compare to corpus D (1/12 = 8% routing-sensitive, no structured")
+        print("  codes available): does the structural signal move this number,")
+        print("  and does it move it evenly or only via the MCP/json_rpc_code")
+        print("  entries? See docs/known-limitations.md for the breakdown.")
         print()
 
     print("─" * 65)

@@ -697,12 +697,33 @@ def test_wrong_tool_json_rpc_code_fires_even_with_unrelated_message() -> None:
     assert RulesClassifier().classify(t, "task") == FailureType.WRONG_TOOL_CALLED
 
 
-@pytest.mark.parametrize("code", [-32700, -32600])
-def test_schema_mismatch_json_rpc_codes(code: int) -> None:
-    """Parse error (-32700) and Invalid Request (-32600) both indicate a
-    malformed request/response shape, JSON-RPC's schema-level failures."""
-    t = traj(make_step(error="", metadata={"json_rpc_code": code}))
+def test_schema_mismatch_json_rpc_parse_error() -> None:
+    """-32700 Parse error can only mean the request body failed to parse as
+    JSON at all — unambiguous."""
+    t = traj(make_step(error="", metadata={"json_rpc_code": -32700}))
     assert RulesClassifier().classify(t, "task") == FailureType.SCHEMA_MISMATCH
+
+
+def test_json_rpc_invalid_request_does_not_fire_schema_mismatch() -> None:
+    """-32600 Invalid Request is deliberately NOT mapped, despite the
+    JSON-RPC spec describing it as unambiguous "malformed request". Corpus E
+    found a real MCP server (langgenius/dify#22675) using -32600 for what its
+    own bug-report analysis could not rule out as a session/auth lifecycle
+    condition, not a malformed request — the same "generic code reused for
+    an unrelated failure" pattern that made corpus D drop OutputParserError
+    from _SCHEMA_EXCEPTION_TYPES (see
+    test_output_parser_error_exception_type_alone_does_not_fire_schema).
+    Falling through to UNKNOWN here is correct: never turn a code that real
+    servers reuse loosely into a confident wrong guess."""
+    t = traj(
+        make_step(
+            error="Failed to connect to MCP server: code=32600 message="
+            "'Session terminated by server'",
+            exception_type="McpError",
+            metadata={"json_rpc_code": -32600},
+        )
+    )
+    assert RulesClassifier().classify(t, "task") == FailureType.UNKNOWN
 
 
 def test_external_fault_json_rpc_internal_error() -> None:
