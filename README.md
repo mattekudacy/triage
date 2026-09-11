@@ -298,6 +298,25 @@ async def my_agent(task: str, **kwargs):
     ...
 ```
 
+**Already have OpenTelemetry spans?** If your framework emits its own spans for tool calls and
+errors (openllmetry/traceloop-style auto-instrumentation, or the OTel GenAI semantic
+conventions), you don't have to hand-write `Step`s at all — convert the spans instead:
+
+```python
+from triage.observability.otel_ingest import trajectory_from_spans
+
+async def my_agent(task: str, *, record_step, **kwargs):
+    try:
+        return await already_instrumented_framework.run(task)
+    finally:
+        for step in trajectory_from_spans(exporter.get_finished_spans()).steps:
+            record_step(step)
+```
+
+See `examples/otel_trajectory.py` for a full runnable version, including which fields this
+extracts reliably (error info, from OTel's stable exception-event convention) versus
+best-effort (tool name/input, from the still-Development-stability GenAI conventions).
+
 ### 2. Classify the failure
 
 When your agent raises an exception, `triage` runs the classifier over the recorded trajectory and returns one of 9 `FailureType` values:

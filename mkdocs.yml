@@ -97,6 +97,7 @@ nav:
     - Durable Checkpoints: examples/durable-checkpoints.md
     - LLM Classifier: examples/llm-classifier.md
     - Failure Distribution: examples/failure-distribution.md
+    - OTel Trajectory: examples/otel-trajectory.md
   - Known Limitations: known-limitations.md
   - API Reference:
     - Agent: api/agent.md
