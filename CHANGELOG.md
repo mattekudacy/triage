@@ -139,6 +139,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **MAST phase 2 investigated, negative result — no new `RulesClassifier` rule shipped.**
+  `docs/concepts/multi-agent-failures.md`'s phase 1 entry above had named MAST 3.3
+  (verification-claim mismatch) and 2.1 (conversation reset) "structurally-promising
+  candidates worth a real measured prototype." Designing them against real evidence instead of
+  synthetic examples found a reason each one fails, not a generic "too hard":
+
+  - **3.3** splits into two sub-cases. When a false verification claim is followed by a real
+    later error (MAST's own ChatDev `textBasedSpaceInvaders` example), every existing
+    `RulesClassifier` rule already finds it — each rule scans the *entire* trajectory
+    (`for step in steps: ...`), not just the latest step, so the "mismatch" detection would add
+    no coverage a fresh trajectory scan doesn't already have. When no error ever surfaces (MAST's
+    ChatDev TicTacToe/Sudoku examples: wrong output, clean exit), there is no structural signal
+    at all — telling "task actually done" from "agent wrongly claimed done" needs task-specific
+    semantic judgment no regex can reach.
+  - **2.1** has two independent problems. A `state_hash`-repetition rule would false-positive on
+    triage's own intentional `RecoveryAction.ROLLBACK`, which legitimately restores an earlier
+    checkpoint's `state_hash` — `Step` has no field distinguishing "reset because of a deliberate
+    triage rollback" from "reset because the framework silently restarted." And real-world
+    instances carry no error signature to match on at all: two cited, fetched-and-quoted GitHub
+    issues, [`microsoft/autogen#1942`](https://github.com/microsoft/autogen/issues/1942) and
+    [`langchain-ai/langgraph#6064`](https://github.com/langchain-ai/langgraph/issues/6064), show
+    purely behavioral conversation/handoff-loss failures — no exception, no log line, no status
+    code.
+
+  Both modes move into the semantic-only bucket (now twelve of fourteen MAST modes, not ten) and
+  wait for phase 3's `LLMClassifier` prompt extension. This is a complete, valid phase 2 outcome,
+  not a stalled one — shipping a weak or false-positive-prone rule just to have shipped
+  *something* would have broken the same 100%-precision-by-construction guarantee every
+  message-text and structured-error-code rule in `rules.py` already holds itself to. No `triage/`
+  code changed in this entry — see `docs/concepts/multi-agent-failures.md`'s "Investigated for
+  phase 2" section, `docs/known-limitations.md`'s "Multi-agent systems" section, and
+  `CLAUDE.md`'s design-decisions entry for the full writeup and citations.
+
 - **Marked `RedisSuspensionStore`, `RedisBreakerStore`, and `compensating_rollback()`
   (saga compensators) experimental.** Each is tested but has no known production users as of
   this writing — shipping them wasn't wrong, but presenting them with the same confidence as

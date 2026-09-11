@@ -441,7 +441,7 @@ The conditional-import fallback pattern (`Tracer = Any`, `_otel_trace = None`) d
 
 That's as far as multi-agent detection goes today. Failures that need semantic understanding of what multiple agents actually said to each other (a handoff losing context, one agent ignoring another's output, a verifier claiming success on a broken result) aren't detectable yet — RulesClassifier has no way to reach them, and LLMClassifier's prompt doesn't yet know to look for them.
 
-See [`docs/concepts/multi-agent-failures.md`](concepts/multi-agent-failures.md) for the full scoping against the published [MAST taxonomy](https://github.com/multi-agent-systems-failure-taxonomy/MAST) (14 failure modes, 3 categories): what's shipped (phase 1, above), what's a plausible new `RulesClassifier` rule worth measuring next, and what's semantic-only and would need an `LLMClassifier` prompt extension — deliberately not built yet.
+See [`docs/concepts/multi-agent-failures.md`](concepts/multi-agent-failures.md) for the full scoping against the published [MAST taxonomy](https://github.com/multi-agent-systems-failure-taxonomy/MAST) (14 failure modes, 3 categories). Phase 1 (above) shipped; phase 2 investigated the two modes that looked structurally promising (a verification-claim mismatch, an unexpected conversation reset) and found neither survives as a safe `RulesClassifier` rule — one is already covered by existing rules where it's structurally reachable at all, the other's real-world instances carry no error signature to match on. All twelve remaining modes are semantic-only and would need an `LLMClassifier` prompt extension — not built yet.
 
 ## Comparison with framework-native error handling
 
