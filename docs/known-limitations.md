@@ -155,6 +155,79 @@ tuning cycle. Corpus E should be generated either to test such a structural appr
 confirm this finding is not an artifact of corpus D's particular source mix before committing
 to that redesign.
 
+### Corpus E scoping: what a "structural signal" concretely looks like
+
+The paragraph above says the next `rules.py` cycle needs a structural change, not more
+pattern tuning. This section makes that concrete against corpus D's actual 11 routing-sensitive
+misses, rather than leaving "structural" as an abstract goal.
+
+**The precedent already in the codebase.** `rules.py`'s botocore handling
+(`_BOTOCORE_RE` / `_BOTOCORE_CODE_MAP`) is already this pattern: botocore wraps every AWS
+error in one uniform envelope — `"An error occurred (ErrorCode) when calling the
+OperationName operation: ..."` — so one regex extracts `ErrorCode` and a small code→type
+table (`Throttl` → `external_fault`, `NotFound` → `wrong_tool_called`, ...) covers every AWS
+service without a service-specific pattern. It generalizes *within* botocore because the
+envelope is stable across all of boto3's ~300 services. It says nothing about generalizing
+*across* SDKs, because no other SDK shares that envelope — that's the ceiling the corpus D
+result measured.
+
+**Worked example: MCP JSON-RPC codes are the strongest candidate.** Corpus D's two MCP
+entries were sourced from documented protocol codes — see the source comments in
+`scripts/gen_error_corpus_d.py`: `-32602` for `"Unknown tool: invalid_tool_name"`, `-32601`
+for `"Method not found"` — but only the message text was ever captured in the corpus; the
+code itself was discarded. That code is JSON-RPC 2.0 spec-mandated, not implementation
+wording: `-32601` ("Method not found") maps to `WRONG_TOOL_CALLED` for *every* MCP server
+regardless of phrasing, the same way `_BOTOCORE_RE` covers every botocore service. It isn't
+a clean win across the board, though — `-32602` ("Invalid params") is shared by both "unknown
+tool name" and "malformed tool arguments," so the code narrows the candidate set but still
+needs the message text (or a tool-name-shaped detail in `data`) to arbitrate between
+`WRONG_TOOL_CALLED` and `SCHEMA_MISMATCH`. Report that split honestly rather than claiming
+the code alone resolves it.
+
+**Worked example: HTTP status codes as exception *attributes*, not message text.**
+`anthropic.APIStatusError.status_code`, `openai.APIStatusError.status_code`,
+`httpx.HTTPStatusError.response.status_code`, and Ollama's `ResponseError.status_code` all
+carry the real HTTP status — but several of corpus D's misses never put that number *in the
+message string* (`RepositoryNotFoundError`'s `"Model repo 'x' does not exist"` almost
+certainly comes from a 404 that huggingface_hub's message text simply doesn't echo). The
+existing `_EXTERNAL_CODE_RE`/`_external_code_match()` machinery already proves the concept
+for codes that *do* appear in text (429/500/502/503) — this is the same idea applied to the
+attribute instead of the string, which is exactly where the current approach structurally
+cannot reach. Same caveat as MCP: a status code alone is coarser than the message — 404
+alone doesn't distinguish "tool not found" from "unrelated resource not found," so this
+narrows rather than replaces the existing message patterns. One concrete gap this surfaces
+independent of the whole proposal: neither `_TIMEOUT_RE` nor any exception-type fallback
+currently covers HTTP 408/504 at all — worth a small `_TIMEOUT_RE`/`_EXTERNAL_CODE_RE`-style
+addition on its own, structural signal aside.
+
+**Why this can't be tested against corpus D, or bolted on invisibly.** `Step` has no
+`status_code`/`error_code` field — the only place a caller could carry one through today is
+`Step.metadata: dict[str, Any]`, the same caller-supplied-signal mechanism `strict_idempotency`
+already uses (see `CLAUDE.md`'s "Informational flags are not enforced"). Corpora A–D only
+ever recorded `str(exc)` and `type(exc).__name__` (see every `gen_error_corpus*.py`), so none
+of them carry a code to test this against — corpus E can't just add new sources in D's format
+the way D did against C; it needs a **third field per entry** (an HTTP status or JSON-RPC code,
+sourced from the real exception object, not invented) that no existing corpus has. And unlike
+message text, nothing populates `Step.metadata` automatically: a wrapped agent callable would
+have to catch the exception and copy `exc.status_code` (or equivalent) into `metadata` itself
+before calling `record_step()`. Shipping the classifier-side matching logic alone would pass a
+corpus E built to exercise it and still change nothing in production until that extraction step
+is documented (or provided as an opt-in helper) for the frameworks people actually use — a gap
+in *adoption*, not in the classifier, and one a corpus score can't detect.
+
+**Recommended scoping, in order — not started yet, pending a decision on priority:**
+
+1. Add the `Step.metadata` convention (e.g. `metadata["http_status"]`, `metadata["json_rpc_code"]`)
+   and a new `RulesClassifier` matching stage for it, validated with synthetic `Step` objects in
+   unit tests — no corpus dependency, testable in isolation, no risk to existing behavior since
+   it only fires when the field is present.
+2. Build corpus E capturing the real code alongside message and exception type for each entry
+   (fresh sources, not corpus D's — D stays frozen), and score routing-sensitive recall with the
+   new stage active against corpus D's 8% baseline.
+3. Only after (2) shows the signal actually helps: document (or build) the per-framework
+   extraction step needed for it to fire on real traffic, since (1) and (2) alone don't get
+   any user's agent to populate `metadata` on their own.
+
 Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Reproduce both measurements with:
 
 ```bash
