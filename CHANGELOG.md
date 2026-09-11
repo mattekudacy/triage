@@ -9,6 +9,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Measured, for the first time, whether `LLMClassifier`/`HybridClassifier` actually close
+  the routing-sensitive gap `RulesClassifier` can't (see the v1.1 entry below).** The
+  recommendation to prefer them for routing-sensitive types on unfamiliar stacks had sat in
+  the docs as architectural reasoning, not data, all through the v1.1 cycle. Scored corpus D
+  with `HybridClassifier(llm=LLMClassifier(model="gpt-oss:120b-cloud"))` (Ollama Cloud, a
+  real reasoning model) via `scripts/llm_classifier_accuracy.py`:
+
+  | Classifier | Routing-sensitive recall | Misroutes (of 20) |
+  |---|---|---|
+  | `RulesClassifier` | 1/12 — 8% | 0 |
+  | `LLMClassifier` alone | 9–10/12 — 75–83% (two runs) | 4/20 — 20% |
+  | `HybridClassifier` | 10/12 — 83% | 3/20 — 15% |
+
+  The recall claim holds: 8% → 83%. It is not free. `RulesClassifier`'s 100%-precision
+  guarantee — every miss falls to safe `UNKNOWN`, never a confident wrong guess — does not
+  carry over. `HybridClassifier` misrouted 3 of 20 entries. One of those is a structural
+  mechanism, not just model noise: `HybridClassifier.classify()` escalates to the LLM on
+  *any* rules `UNKNOWN`, with no way to tell "rules doesn't recognize this wording but
+  there's a real answer" from "this genuinely has no answer." Corpus D's one entry with true
+  label `unknown` was correctly classified `UNKNOWN` by `RulesClassifier` — the safe, correct
+  call — and `HybridClassifier` overturned it into a confident wrong guess in every
+  LLM-involving run (`n=1` in corpus D: a confirmed mechanism, not yet a measured rate). The
+  remaining 2 misroutes were both in `wrong_tool_called`, at a consistent 6/8 across runs.
+
+  This is a measurement, not a new frozen benchmark: reasoning-model sampling means results
+  vary run to run (recall ranged 75–83% across two runs alone), so there is no CI-enforced
+  floor for it, unlike `RulesClassifier`'s corpus D floor. README's "Does
+  LLMClassifier/HybridClassifier actually close the gap?" and `docs/known-limitations.md`'s
+  "LLMClassifier/HybridClassifier close the recall gap, but not the precision gap" carry the
+  full table and writeup; `scripts/README.md` points at both.
+
 - **RulesClassifier: pattern pass against corpus C's held-out misses (v1.1) — did not
   generalize to fresh sources.** Full writeup in `docs/known-limitations.md` and
   `CLAUDE.md`; summary here.

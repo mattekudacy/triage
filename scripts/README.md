@@ -28,6 +28,18 @@ sanity check first and refuses to print a report if it fails, since `LLMClassifi
 silently returns `UNKNOWN` on any error (bad key, missing dependency, unreachable endpoint) —
 without that guard, a broken credential would look identical to "the LLM doesn't help either."
 
+**Now measured** (`gpt-oss:120b-cloud` via Ollama Cloud): routing-sensitive recall goes
+1/12 (8%, `RulesClassifier`) → 10/12 (83%, `HybridClassifier`) — the recall claim holds — but
+`HybridClassifier` misrouted 3/20 entries where `RulesClassifier` misroutes zero by
+construction. One misroute is structural: `HybridClassifier` cannot tell "rules doesn't
+recognize this wording" from "this genuinely has no answer," so it can overturn a correctly-
+conservative rules `UNKNOWN` into a confident wrong LLM guess — observed on corpus D's one
+`unknown`-labeled entry in every LLM-involving run. See `README.md`'s "Does
+LLMClassifier/HybridClassifier actually close the gap?" and `docs/known-limitations.md` for
+the full table and writeup. Results vary run to run (reasoning-model sampling) — this is a
+representative measurement, not a frozen, CI-enforced benchmark like `RulesClassifier`'s
+corpus D floor.
+
 `bench_synthetic.py` is a *mechanism* demo, not an accuracy measurement: the tasks are
 constructed so the correct recovery hint changes the outcome. It shows that routing works,
 not how often classification is right.

@@ -96,10 +96,54 @@ the gap, still not delivered on error formats `rules.py` hasn't specifically see
 LlamaIndex), routing works. If not — and corpus D suggests most stacks won't — expect most tool
 and schema failures to return `UNKNOWN` and fall through to `default`: safe, but no better than
 the retry loop you would have written yourself. `LLMClassifier`/`HybridClassifier` generalize
-across wording by construction (they read the meaning, not a literal string), so for
-routing-sensitive types on any stack not in the list above, prefer them over `RulesClassifier`
-alone rather than waiting on further pattern tuning. Other mitigations: pass `framework=` for
-the three SDKs it supports, or supply a custom classifier for your stack's specific wording.
+across wording by construction (they read the meaning, not a literal string) — measured against
+corpus D with a real model (below), not just asserted — so for routing-sensitive types on any
+stack not in the list above, prefer them over `RulesClassifier` alone rather than waiting on
+further pattern tuning. Other mitigations: pass `framework=` for the three SDKs it supports, or
+supply a custom classifier for your stack's specific wording.
+
+### LLMClassifier/HybridClassifier close the recall gap, but not the precision gap
+
+Corpus D scored with `HybridClassifier(llm=LLMClassifier(model="gpt-oss:120b-cloud"))`
+(Ollama Cloud, a real reasoning model; reproduce with `scripts/llm_classifier_accuracy.py`):
+
+| Classifier | Routing-sensitive recall | Misroutes (of 20) |
+|---|---|---|
+| `RulesClassifier` | 1/12 — 8% | 0 |
+| `LLMClassifier` alone | 9–10/12 — 75–83% (two runs) | 4/20 — 20% |
+| `HybridClassifier` | 10/12 — 83% | 3/20 — 15% |
+
+The recall claim above is now backed by data, not just architecture: 8% → 83%. It costs
+`RulesClassifier`'s 100%-precision guarantee, though — every rules miss falls to safe
+`UNKNOWN` by construction; `HybridClassifier` misrouted 3 of 20 entries in this run.
+
+One of those is a structural risk worth naming, not just LLM noise. `HybridClassifier.classify()`
+is exactly:
+
+```python
+result = self._rules.classify(trajectory, task)
+if result is not FailureType.UNKNOWN:
+    return result
+return self._llm.classify(trajectory, task)   # (simplified — see triage/classifier/hybrid.py)
+```
+
+It cannot distinguish *why* rules returned `UNKNOWN` — "this wording isn't recognized but
+there's a real answer" and "this genuinely has no answer" look identical to that `if`. Corpus
+D's one entry with true label `unknown` (a permission-denied string with no discriminating
+keyword) was correctly left as `UNKNOWN` by `RulesClassifier` — the safe, correct answer —
+and `HybridClassifier` overturned it into a confident wrong guess anyway, in every LLM-involving
+run in this measurement. `n=1` in corpus D, so this is a confirmed *mechanism*, not yet a
+measured rate: any rules-`UNKNOWN` gets escalated regardless of whether that `UNKNOWN` was
+already correct. The other 2 misroutes were both in `wrong_tool_called`, at a consistent 6/8
+across runs — not every tool-not-found phrasing reads unambiguously even to a model that
+understands meaning.
+
+Results vary run to run (reasoning-model sampling) — this is a representative measurement,
+not a frozen benchmark the way `RulesClassifier`'s corpus D floor is; there's no CI-enforced
+floor for it, and there shouldn't be one without a fixed model, fixed sampling, and a much
+larger `unknown`-labeled sample than corpus D's single entry. If you adopt `HybridClassifier`
+for routing-sensitive types, plan for occasional confident misroutes, not just occasional
+`UNKNOWN`s — especially wherever a genuinely-ambiguous failure is plausible in your traffic.
 
 **What this means for where effort goes next.** Another round of "generate corpus E, tune
 `rules.py` against D's misses, score E" would very likely repeat this exact result — the
