@@ -1,7 +1,7 @@
 """
 scripts/classifier_accuracy.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Four-block precision / recall report for RulesClassifier.
+Six-block precision / recall report for RulesClassifier.
 
   Block 1 — Regression
       In-corpus positive examples from test_classifier_rules.py.
@@ -32,12 +32,23 @@ Four-block precision / recall report for RulesClassifier.
       returned UNKNOWN, zero misroutes.  Do NOT tune on C's misses until
       corpus D is ready; tuning converts C to training data.
 
+  Block 6 — Corpus C recall by failure type
+      The aggregate in block 5 averages two groups with opposite value.
+      EXTERNAL_FAULT and TIMEOUT are self-healing: any retry fixes them, so
+      classifying them correctly buys nothing a bare retry loop wouldn't.
+      WRONG_TOOL_CALLED and SCHEMA_MISMATCH are routing-sensitive: recovery
+      only works if the strategy receives the matching hint, which is the
+      entire premise of the library.  Split that way, held-out recall is
+      86% on the types that don't need classification and 8% on the types
+      that do.  Report both numbers, never just the average.
+
 Run:
     PYTHONPATH=. .venv/bin/python scripts/classifier_accuracy.py
 """
 
 from __future__ import annotations
 
+import collections
 import json
 from pathlib import Path
 
@@ -148,6 +159,36 @@ def _score_corpus(path: Path, missing_msg: str) -> tuple[int, int, list[str]]:
     return ok, len(entries), fails
 
 
+# Types whose recovery works without knowing the failure type: a bare retry loop
+# heals them, so correct classification adds nothing over blind retry.
+SELF_HEALING = ("external_fault", "timeout")
+# Types whose recovery only works when the strategy receives the matching hint.
+# These are the types the library exists to get right.
+ROUTING_SENSITIVE = ("wrong_tool_called", "schema_mismatch")
+
+
+def _score_by_type(path: Path) -> dict[str, tuple[int, int]]:
+    """Return {label: (hits, total)} for one corpus."""
+    if not path.exists():
+        return {}
+    entries = json.loads(path.read_text())
+    total: collections.Counter[str] = collections.Counter()
+    hits: collections.Counter[str] = collections.Counter()
+    for entry in entries:
+        got = _classify(entry["error"], entry.get("exception_type"))
+        label = entry["label"]
+        total[label] += 1
+        if got.value == label:
+            hits[label] += 1
+    return {label: (hits[label], total[label]) for label in sorted(total)}
+
+
+def _group_recall(by_type: dict[str, tuple[int, int]], labels: tuple[str, ...]) -> tuple[int, int]:
+    hits = sum(by_type.get(label, (0, 0))[0] for label in labels)
+    total = sum(by_type.get(label, (0, 0))[1] for label in labels)
+    return hits, total
+
+
 def main() -> None:
     reg_ok, reg_total, reg_fails = _score_regression()
     fp_ok, fp_total, fp_fails = _score_fp_resistance()
@@ -222,6 +263,39 @@ def main() -> None:
     else:
         print("Block 5 — Corpus C  [SKIPPED]")
     print()
+
+    # Block 6 — per-type breakdown of the held-out corpus
+    by_type = _score_by_type(CORPUS_C_PATH)
+    if by_type:
+        print("Block 6 — Corpus C recall by failure type")
+        print("  The block 5 aggregate averages two groups with opposite value.")
+        print()
+        for label, (hits, total) in by_type.items():
+            group = ""
+            if label in SELF_HEALING:
+                group = "  (self-healing — any retry fixes it)"
+            elif label in ROUTING_SENSITIVE:
+                group = "  (routing-sensitive — needs the right hint)"
+            print(f"    {label:20} {hits}/{total} = {hits / total:3.0%}{group}")
+        print()
+
+        sh_hits, sh_total = _group_recall(by_type, SELF_HEALING)
+        rs_hits, rs_total = _group_recall(by_type, ROUTING_SENSITIVE)
+        if sh_total:
+            print(
+                f"    self-healing types    {sh_hits}/{sh_total} = {sh_hits / sh_total:3.0%}"
+                "  — classification buys nothing here"
+            )
+        if rs_total:
+            print(
+                f"    routing-sensitive     {rs_hits}/{rs_total} = {rs_hits / rs_total:3.0%}"
+                "  — classification is the whole value"
+            )
+        print()
+        print("  Read together with scripts/bench_synthetic.py, which shows triage")
+        print("  beating a no-recovery baseline *only* on the routing-sensitive")
+        print("  types. That is the gap this measurement says is not yet closed.")
+        print()
 
     print("─" * 65)
     print("Notes:")

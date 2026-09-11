@@ -44,11 +44,17 @@ The 50 % gap is attributable to the two types where classification changes the o
 `external_fault` heals on any retry — triage gives no advantage there, and this is
 intentional: conceding the transient case makes the comparison honest.
 
+**This demo assumes correct classification.** The error strings here are ones `rules.py`
+recognises, so it measures routing, not detection. On held-out error strings
+`RulesClassifier` currently detects these same two types at 1/12 — see
+[per-type recall](#read-the-recall-number-per-type-not-in-aggregate) below, and read the
+two sections together before drawing a conclusion.
+
 Reproduce: `PYTHONPATH=. python scripts/bench_synthetic.py`
 
 ### RulesClassifier accuracy
 
-Four-block measurement, `RulesClassifier` default configuration:
+Six-block measurement, `RulesClassifier` default configuration:
 
 | Block | What it measures | Score |
 |---|---|---|
@@ -59,18 +65,45 @@ Four-block measurement, `RulesClassifier` default configuration:
 | **Corpus C (held-out, v1.0)** | **Scored once, rules.py untouched** | **52% recall, 100% precision** |
 
 **100% precision on corpus C (held-out, scored once, rules.py never touched); 14/27 (52%) recall.**
-These two numbers have different evidentiary status. The precision result is genuine: corpus C
-(27 entries from azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, LlamaIndex, and novel
-phrasings) was scored once before any rules.py edits. All 13 misses returned `UNKNOWN` —
-zero misroutes on data the patterns had never seen. In a recovery library the two failure
-modes are not symmetric: `UNKNOWN` falls through to your default policy (safe, degrades to
-blind retry), whereas a misroute applies the wrong strategy. Adopters get conservative behavior
-on unrecognized errors; no adopter gets a silent misroute.
+The precision result is genuine: corpus C (27 entries from azure-core, Mistral, Cohere, Groq,
+LiteLLM, Vertex AI, LlamaIndex, and novel phrasings) was scored once before any rules.py edits.
+All 13 misses returned `UNKNOWN` — zero misroutes on data the patterns had never seen. In a
+recovery library the two failure modes are not symmetric: `UNKNOWN` falls through to your
+default policy (safe, degrades to blind retry), whereas a misroute applies the wrong strategy.
+Adopters get conservative behavior on unrecognized errors; no adopter gets a silent misroute.
 
-The 52% recall figure is the expected shape of an honest generalization curve. Corpora A and B
-are both training data (their misses guided the v0.25 and v0.26 fixes respectively). Corpus C
-stays frozen — the next improvement cycle generates corpus D, tunes against C's misses, then
-scores D. Otherwise every corpus becomes training data immediately and the measurement disappears.
+#### Read the recall number per type, not in aggregate
+
+The 52% aggregate averages two groups of failure types whose value to you is opposite:
+
+| Failure type | Held-out recall | Does classification change the outcome? |
+|---|---|---|
+| `external_fault` | 8/9 — **89%** | No — any retry heals it |
+| `timeout` | 4/5 — **80%** | No — any retry heals it |
+| `schema_mismatch` | 1/6 — **17%** | **Yes — recovery needs the schema hint** |
+| `wrong_tool_called` | 0/6 — **0%** | **Yes — recovery needs the manifest hint** |
+| | | |
+| **Self-healing types** | **12/14 — 86%** | classification buys nothing over blind retry |
+| **Routing-sensitive types** | **1/12 — 8%** | classification is the entire value proposition |
+
+Put plainly: on error strings it has never seen, `RulesClassifier` is accurate on the failures
+where being accurate doesn't matter, and close to blind on the failures where it does. The
+routing demo above shows triage beating a no-recovery baseline *only* on `wrong_tool_called`
+and `schema_mismatch` — the same two types scoring 1/12 here. Those two measurements are both
+honest and they have to be read together.
+
+**What this means if you are evaluating triage today.** On a stack whose error formats match
+the patterns in `rules.py` (OpenAI, Anthropic, LangChain, botocore — corpora A and B), routing
+works as demonstrated. On a stack the patterns have not seen, expect most tool and schema
+failures to land in `UNKNOWN` and fall through to your `default` policy — safe, but no better
+than the retry loop you would have written yourself. Supply `constraints=`, a `framework=`
+hint, or a `HybridClassifier` to close the gap on your own error formats, and please
+[open an issue](https://github.com/mattekudacy/triage/issues) with the strings that miss.
+
+Closing this gap on the routing-sensitive types is the next release's only headline goal.
+Corpus C stays frozen — the improvement cycle generates corpus D, tunes against C's misses,
+then scores D once. Otherwise every corpus becomes training data immediately and the
+measurement disappears.
 
 `PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are not scored — `RulesClassifier` returns
 `UNKNOWN` for them by design; use `LLMClassifier` or `HybridClassifier` for those.

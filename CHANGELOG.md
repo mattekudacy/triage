@@ -7,7 +7,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Held-out accuracy is now reported per failure type, not as one average.**
+  The corpus C headline (52% recall) averaged two groups whose value to an
+  adopter is opposite, and the aggregate overstated what triage delivers over a
+  plain retry loop. Split out:
+
+  | Group | Types | Held-out recall |
+  |---|---|---|
+  | Self-healing | `external_fault`, `timeout` | 12/14 — 86% |
+  | Routing-sensitive | `wrong_tool_called`, `schema_mismatch` | 1/12 — 8% |
+
+  Self-healing failures recover from any retry, so classifying them correctly
+  adds nothing over blind retry. Routing-sensitive failures recover only when
+  the matched hint reaches the strategy — they are the types
+  `scripts/bench_synthetic.py` shows triage winning on, and the only ones where
+  classification beats a retry loop. No classifier behaviour changed; this is a
+  disclosure fix. README, `docs/known-limitations.md`, `scripts/README.md` and
+  `CLAUDE.md` updated to report both numbers together.
+
 ### Added
+
+- **Block 6 in `scripts/classifier_accuracy.py`** — prints corpus C recall by
+  failure type and by group, so the split above is reproducible rather than
+  asserted.
+- **Per-group floor ratchets in `tests/test_classifier_accuracy.py`** —
+  `CORPUS_C_SELF_HEALING_FLOOR` (0.85) and
+  `CORPUS_C_ROUTING_SENSITIVE_FLOOR` (0.08) are guarded separately, so the
+  aggregate can no longer rise on the back of the group that doesn't matter.
+  A companion test fails if a future corpus entry carries a label in neither
+  group. Raising the routing-sensitive floor is the next release's headline
+  goal; neither floor may be lowered.
 
 - **`claude-plugin/` — Claude Code plugin (`triage-risk-gate`)** — wraps
   `RulesRiskScorer` as a `PreToolUse` hook for Claude Code sessions: a
