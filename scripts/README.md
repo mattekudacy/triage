@@ -11,13 +11,27 @@ All are run from the repo root with `PYTHONPATH=.`.
 |---|---|
 | `bench_synthetic.py` | Routing demo — triage vs. a no-recovery baseline across three failure modes |
 | `classifier_accuracy.py` | Ten-block precision/recall report for `RulesClassifier` — zero API calls |
-| `llm_classifier_accuracy.py` | Scores corpus D with `LLMClassifier`/`HybridClassifier` alongside `RulesClassifier` — **requires an LLM API key**, makes real calls |
-| `hybrid_ambiguity_accuracy.py` | Measures `HybridClassifier`'s override rate on genuinely-ambiguous inputs — **requires an LLM API key**, makes real calls |
-| `mast_mode_pilot_accuracy.py` | Pilot: can an LLM tell apart 3 of the 12 semantic-only MAST modes (2.5, 2.4, 1.4)? Separate experimental prompt, does not touch `LLMClassifier` — **requires an LLM API key**, makes real calls |
+| `llm_classifier_accuracy.py` | Scores corpus D with `LLMClassifier`/`HybridClassifier` alongside `RulesClassifier` — **requires an LLM backend**, makes real calls |
+| `hybrid_ambiguity_accuracy.py` | Measures `HybridClassifier`'s override rate on genuinely-ambiguous inputs — **requires an LLM backend**, makes real calls |
+| `mast_mode_pilot_accuracy.py` | Pilot: can an LLM tell apart 3 of the 12 semantic-only MAST modes (2.5, 2.4, 1.4)? Separate experimental prompt, does not touch `LLMClassifier` — **requires an LLM backend**, makes real calls |
+
+All three "requires an LLM backend" scripts are **open by default, no key needed**: with
+nothing configured they talk to a local Ollama server (`http://localhost:11434/v1`,
+`llama3.2`) via each script's own `_resolve_backend()` — set an Anthropic credential (or
+`TRIAGE_LLM_BASE_URL` for any other provider) to use something else instead. See
+`docs/concepts/classifiers.md`'s "Open by default" note.
 
 ```bash
 PYTHONPATH=. python scripts/bench_synthetic.py
 PYTHONPATH=. python scripts/classifier_accuracy.py
+
+# Local Ollama (default — no key)
+ollama pull llama3.2   # once
+PYTHONPATH=. python scripts/llm_classifier_accuracy.py
+PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py
+PYTHONPATH=. python scripts/mast_mode_pilot_accuracy.py
+
+# Or Anthropic, if you'd rather use a key
 ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/llm_classifier_accuracy.py
 ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py
 ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/mast_mode_pilot_accuracy.py

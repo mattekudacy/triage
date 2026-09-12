@@ -37,8 +37,14 @@ llm_classifier_accuracy.py. NOT a frozen benchmark: this corpus is designed
 to grow over time (see its module docstring), and LLM results are
 non-deterministic run to run. No CI-enforced floor.
 
-Requires an LLM backend — same env vars / --model / --max-tokens as
-llm_classifier_accuracy.py:
+Requires an LLM backend — open by default, no key needed. Same
+backend-resolution rules as llm_classifier_accuracy.py: with nothing
+configured this talks to a local Ollama server; set an Anthropic credential
+or TRIAGE_LLM_BASE_URL to use something else. See that script's module
+docstring and docs/concepts/classifiers.md's "Open by default" note.
+
+    ollama pull llama3.2   # once
+    PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py
 
     ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py
 
@@ -66,7 +72,25 @@ from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
 
 CORPUS_PATH = Path("tests/data/error_corpus_ambiguous.json")
-_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
+_DEFAULT_OLLAMA_MODEL = "llama3.2"
+_DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+
+
+def _resolve_backend(cli_model: str | None) -> tuple[str | None, str]:
+    """See llm_classifier_accuracy.py's version for the full rationale —
+    open-by-default: local Ollama unless the caller explicitly configured
+    an Anthropic credential or a TRIAGE_LLM_BASE_URL."""
+    base_url = os.environ.get("TRIAGE_LLM_BASE_URL")
+    env_model = os.environ.get("TRIAGE_LLM_MODEL")
+    has_anthropic_key = bool(
+        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("TRIAGE_LLM_API_KEY")
+    )
+    if base_url:
+        return base_url, cli_model or env_model or _DEFAULT_ANTHROPIC_MODEL
+    if has_anthropic_key:
+        return None, cli_model or env_model or _DEFAULT_ANTHROPIC_MODEL
+    return _DEFAULT_OLLAMA_BASE_URL, cli_model or env_model or _DEFAULT_OLLAMA_MODEL
 
 
 def _trajectory_for(entry: dict[str, Any]) -> Trajectory:
@@ -82,15 +106,14 @@ def _trajectory_for(entry: dict[str, Any]) -> Trajectory:
     return t
 
 
-def _check_backend_installed() -> None:
+def _check_backend_installed(base_url: str | None) -> None:
     """See llm_classifier_accuracy.py — same check, duplicated per this
     repo's convention of self-contained scripts."""
-    base_url = os.environ.get("TRIAGE_LLM_BASE_URL")
     pkg, extra = ("openai", "openai") if base_url else ("anthropic", "anthropic")
     try:
         __import__(pkg)
     except ImportError:
-        reason = "TRIAGE_LLM_BASE_URL is set" if base_url else "no base_url set — Anthropic backend"
+        reason = f"base_url={base_url!r}" if base_url else "no base_url — Anthropic backend"
         raise SystemExit(
             f"Missing dependency: '{pkg}' is not installed ({reason}).\n"
             f"  pip install triage-agent[{extra}]"
@@ -120,8 +143,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        default=os.environ.get("TRIAGE_LLM_MODEL") or _DEFAULT_MODEL,
-        help=f"Model name (default: TRIAGE_LLM_MODEL env var, else {_DEFAULT_MODEL!r})",
+        default=None,
+        help=(
+            "Model name (default: TRIAGE_LLM_MODEL env var, else "
+            f"{_DEFAULT_OLLAMA_MODEL!r} on local Ollama unless an Anthropic "
+            f"credential is set with no base_url, then {_DEFAULT_ANTHROPIC_MODEL!r} "
+            "— see _resolve_backend())"
+        ),
     )
     parser.add_argument(
         "--max-tokens",
@@ -139,18 +167,20 @@ def main() -> None:
         )
     entries = json.loads(CORPUS_PATH.read_text())
 
-    _check_backend_installed()
+    base_url, model = _resolve_backend(args.model)
+    _check_backend_installed(base_url)
 
-    llm = LLMClassifier(model=args.model, max_tokens=args.max_tokens)
-    print(f"Model: {args.model}")
+    llm = LLMClassifier(model=model, base_url=base_url, max_tokens=args.max_tokens)
+    print(f"Model: {model}")
     print(f"Max tokens: {llm._max_tokens}")
-    if os.environ.get("TRIAGE_LLM_BASE_URL"):
-        print(f"Base URL: {os.environ['TRIAGE_LLM_BASE_URL']}")
+    print(f"Base URL: {base_url or '(Anthropic default client)'}")
     print("Running sanity check...", end=" ", flush=True)
     _sanity_check(llm)
     print("ok\n")
 
-    hybrid = HybridClassifier(llm=LLMClassifier(model=args.model, max_tokens=args.max_tokens))
+    hybrid = HybridClassifier(
+        llm=LLMClassifier(model=model, base_url=base_url, max_tokens=args.max_tokens)
+    )
 
     print("=" * 65)
     print(f"{len(entries)} entries — RulesClassifier says UNKNOWN for all of")

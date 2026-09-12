@@ -29,8 +29,14 @@ also fire on a trajectory that isn't one. Do not quote this script's recall
 number as if it settled that question — a corpus_ambiguous.json-style
 negative set is necessary follow-up before any accuracy claim is complete.
 
-Requires an LLM backend — same env vars / --model / --max-tokens as
-llm_classifier_accuracy.py / hybrid_ambiguity_accuracy.py:
+Requires an LLM backend — open by default, no key needed. Same
+backend-resolution rules as llm_classifier_accuracy.py / hybrid_ambiguity_
+accuracy.py: with nothing configured this talks to a local Ollama server;
+set an Anthropic credential or TRIAGE_LLM_BASE_URL to use something else.
+See docs/concepts/classifiers.md's "Open by default" note.
+
+    ollama pull llama3.2   # once
+    PYTHONPATH=. python scripts/mast_mode_pilot_accuracy.py
 
     ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/mast_mode_pilot_accuracy.py
 
@@ -53,8 +59,27 @@ from pathlib import Path
 from typing import Any
 
 CORPUS_PATH = Path("tests/data/mast_pilot_corpus.json")
-_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
+_DEFAULT_OLLAMA_MODEL = "llama3.2"
+_DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 _DEFAULT_MAX_TOKENS = 32
+
+
+def _resolve_backend(cli_model: str | None) -> tuple[str | None, str]:
+    """See llm_classifier_accuracy.py's version for the full rationale —
+    open-by-default: local Ollama unless the caller explicitly configured
+    an Anthropic credential or a TRIAGE_LLM_BASE_URL."""
+    base_url = os.environ.get("TRIAGE_LLM_BASE_URL")
+    env_model = os.environ.get("TRIAGE_LLM_MODEL")
+    has_anthropic_key = bool(
+        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("TRIAGE_LLM_API_KEY")
+    )
+    if base_url:
+        return base_url, cli_model or env_model or _DEFAULT_ANTHROPIC_MODEL
+    if has_anthropic_key:
+        return None, cli_model or env_model or _DEFAULT_ANTHROPIC_MODEL
+    return _DEFAULT_OLLAMA_BASE_URL, cli_model or env_model or _DEFAULT_OLLAMA_MODEL
+
 
 # Verbatim definitions from docs/concepts/multi-agent-failures.md's taxonomy
 # table, restricted to the three piloted modes plus a "none" escape hatch —
@@ -103,15 +128,14 @@ def _build_prompt(entry: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _check_backend_installed() -> None:
+def _check_backend_installed(base_url: str | None) -> None:
     """See llm_classifier_accuracy.py — same check, duplicated per this
     repo's convention of self-contained scripts."""
-    base_url = os.environ.get("TRIAGE_LLM_BASE_URL")
     pkg, extra = ("openai", "openai") if base_url else ("anthropic", "anthropic")
     try:
         __import__(pkg)
     except ImportError:
-        reason = "TRIAGE_LLM_BASE_URL is set" if base_url else "no base_url set — Anthropic backend"
+        reason = f"base_url={base_url!r}" if base_url else "no base_url — Anthropic backend"
         raise SystemExit(
             f"Missing dependency: '{pkg}' is not installed ({reason}).\n"
             f"  pip install triage-agent[{extra}]"
@@ -130,10 +154,10 @@ class _MastModePilotClassifier:
     logic needed instead, same as _check_backend_installed() above.
     """
 
-    def __init__(self, model: str, max_tokens: int) -> None:
+    def __init__(self, model: str, max_tokens: int, base_url: str | None) -> None:
         self._model = model
         self._max_tokens = max_tokens
-        self._base_url = os.environ.get("TRIAGE_LLM_BASE_URL")
+        self._base_url = base_url
         self._api_key = os.environ.get("TRIAGE_LLM_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
         self._client = self._build_client()
 
@@ -210,8 +234,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        default=os.environ.get("TRIAGE_LLM_MODEL") or _DEFAULT_MODEL,
-        help=f"Model name (default: TRIAGE_LLM_MODEL env var, else {_DEFAULT_MODEL!r})",
+        default=None,
+        help=(
+            "Model name (default: TRIAGE_LLM_MODEL env var, else "
+            f"{_DEFAULT_OLLAMA_MODEL!r} on local Ollama unless an Anthropic "
+            f"credential is set with no base_url, then {_DEFAULT_ANTHROPIC_MODEL!r} "
+            "— see _resolve_backend())"
+        ),
     )
     parser.add_argument(
         "--max-tokens",
@@ -226,13 +255,13 @@ def main() -> None:
         raise SystemExit(f"Corpus not found: {CORPUS_PATH} — run scripts/gen_mast_pilot_corpus.py")
     entries = json.loads(CORPUS_PATH.read_text())
 
-    _check_backend_installed()
+    base_url, model = _resolve_backend(args.model)
+    _check_backend_installed(base_url)
 
-    clf = _MastModePilotClassifier(model=args.model, max_tokens=args.max_tokens)
-    print(f"Model: {args.model}")
+    clf = _MastModePilotClassifier(model=model, max_tokens=args.max_tokens, base_url=base_url)
+    print(f"Model: {model}")
     print(f"Max tokens: {args.max_tokens}")
-    if os.environ.get("TRIAGE_LLM_BASE_URL"):
-        print(f"Base URL: {os.environ['TRIAGE_LLM_BASE_URL']}")
+    print(f"Base URL: {base_url or '(Anthropic default client)'}")
     print("Running sanity check...", end=" ", flush=True)
     _sanity_check(clf)
     print("ok\n")

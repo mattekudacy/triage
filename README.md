@@ -212,7 +212,9 @@ pip install triage-agent
 pip install "triage-agent[langgraph]"
 pip install "triage-agent[langchain]"
 
-# With LLM-based classifier
+# With LLM-based classifier — Ollama/Groq/OpenAI (no vendor lock-in, Ollama needs no key)
+pip install openai
+# ...or Anthropic
 pip install "triage-agent[anthropic]"
 
 # With durable checkpoint storage
@@ -364,35 +366,35 @@ When your agent raises an exception, `triage` runs the classifier over the recor
 | `TIMEOUT` | `timeout` / `timed out` / `deadline exceeded` in error | Backoff and retry |
 | `UNKNOWN` | None of the above | Escalate to human |
 
-The default `RulesClassifier` is pattern-based and makes zero API calls. For semantic classification use `LLMClassifier`, or use `HybridClassifier` to get the best of both:
+The default `RulesClassifier` is pattern-based and makes zero API calls — no vendor, no key, nothing to configure. For semantic classification use `LLMClassifier`, or use `HybridClassifier` to get the best of both. `LLMClassifier` is just as open: Ollama (local, free, no account) works via the same mechanism as any paid provider — see "Open by default" in `docs/concepts/classifiers.md`.
 
 ```python
 from triage.classifier.llm import LLMClassifier
 from triage.classifier.hybrid import HybridClassifier
 
-# LLM only — every failure classified by Claude
+# LLM only — every failure classified by a local Ollama model
 agent = triage.Agent(
     my_agent,
     policy=policy,
-    classifier=LLMClassifier(model="claude-haiku-4-5-20251001"),
+    classifier=LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2"),
 )
 
 # Hybrid — rules first, LLM only when rules return UNKNOWN (~20% of failures)
 agent = triage.Agent(
     my_agent,
     policy=policy,
-    classifier=HybridClassifier(llm=LLMClassifier()),
+    classifier=HybridClassifier(llm=LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")),
 )
 ```
 
-`LLMClassifier` supports Anthropic and any OpenAI-compatible provider. Configure via constructor args or env vars:
+`LLMClassifier` supports any OpenAI-compatible provider (Ollama, Groq, OpenAI, ...) and Anthropic. Configure via constructor args or env vars:
 
 ```bash
-# Anthropic (default)
-ANTHROPIC_API_KEY=sk-ant-... python my_agent.py
-
 # Ollama (local, no key)
 TRIAGE_LLM_BASE_URL=http://localhost:11434/v1 TRIAGE_LLM_MODEL=llama3.2 python my_agent.py
+
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-... python my_agent.py
 
 # Groq
 TRIAGE_LLM_BASE_URL=https://api.groq.com/openai/v1 TRIAGE_LLM_API_KEY=gsk_... TRIAGE_LLM_MODEL=llama-3.1-8b-instant python my_agent.py
@@ -831,7 +833,7 @@ triage/
   classifier/
     base.py            Classifier protocol
     rules.py           RulesClassifier — 6 rules, sync, zero API calls
-    llm.py             LLMClassifier — Anthropic or OpenAI-compatible backend
+    llm.py             LLMClassifier — OpenAI-compatible (Ollama, Groq, ...) or Anthropic backend
     hybrid.py          HybridClassifier — rules first, LLM fallback on UNKNOWN
   strategies/
     retry.py           retry_with_tool_manifest(), backoff_and_retry()
