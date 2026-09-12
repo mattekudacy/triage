@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`LLMClassifier`'s prompt now includes `Step.agent_id` per step, when set** — Phase 3
+  scoping's one low-risk, shipped prerequisite (`docs/concepts/multi-agent-failures.md`'s new
+  "Phase 3 scoping" section). `_build_prompt()` previously never emitted agent identity, so a
+  multi-agent trajectory looked identical to a single-agent one to the LLM — a structural
+  blindness that would have made four of the twelve semantic-only MAST modes (1.2 Disobey Role
+  Specification, 2.4 Information Withholding, 2.5 Ignored Other Agent's Input, 2.6
+  Action-Reasoning Mismatch — all specifically about one agent relative to another) impossible
+  to judge regardless of prompt wording. `None` (the default) omits the line entirely — zero
+  prompt change for existing single-agent callers. This does **not** add MAST-mode detection by
+  itself: `_SYSTEM_PROMPT` and `_parse_response()` are unchanged, so `classify()` still only
+  ever returns one of the 9 stable `FailureType` members — see the scoping section for why
+  widening that return type is deliberately deferred behind a real measurement, not shipped
+  speculatively. See `docs/concepts/classifiers.md`'s "Multi-agent trajectories" section and
+  `tests/test_classifier_llm.py::test_prompt_includes_agent_id_when_set`/
+  `test_prompt_omits_agent_line_when_agent_id_unset`.
+
 - **`Step.agent_id: str | None = None`** — Phase 1 of the MAST multi-agent alignment scoped in
   `docs/concepts/multi-agent-failures.md`. Records which agent produced a step; optional,
   `None` by default, zero behavior change for existing single-agent callers.

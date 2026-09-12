@@ -485,6 +485,27 @@ def test_prompt_includes_task_and_step_info():
     assert "404" in user_content
 
 
+def test_prompt_includes_agent_id_when_set():
+    clf = LLMClassifier(model=_MODEL)
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = _anthropic_client("unknown")
+        MockAnthropic.return_value = client
+        step = Step(index=0, action="call tool", tool_called="search", agent_id="planner")
+        clf.classify(traj(step), "find the answer")
+    user_content = client.messages.create.call_args[1]["messages"][0]["content"]
+    assert "agent: planner" in user_content
+
+
+def test_prompt_omits_agent_line_when_agent_id_unset():
+    clf = LLMClassifier(model=_MODEL)
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = _anthropic_client("unknown")
+        MockAnthropic.return_value = client
+        clf.classify(traj(make_step(0, tool_called="search")), "find the answer")
+    user_content = client.messages.create.call_args[1]["messages"][0]["content"]
+    assert "agent:" not in user_content
+
+
 def test_max_trajectory_steps_limits_prompt():
     clf = LLMClassifier(model=_MODEL, max_trajectory_steps=3)
     with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:

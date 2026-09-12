@@ -218,10 +218,23 @@ class LLMClassifier:
         return _anthropic.AsyncAnthropic(api_key=self._api_key)
 
     def _build_prompt(self, trajectory: Trajectory, task: str) -> str:
+        """Serialize the trajectory into the user-turn prompt.
+
+        Includes ``Step.agent_id`` per step, when set, so a multi-agent
+        trajectory doesn't look identical to a single-agent one — a
+        prerequisite for any future MAST-mode prompt work (see
+        docs/concepts/multi-agent-failures.md's phase 3 scoping), not itself
+        a change to what ``classify()`` can return: ``_SYSTEM_PROMPT`` and
+        ``_parse_response()`` are untouched, so this still only ever yields
+        one of the 9 stable ``FailureType`` members. ``None`` (the default)
+        omits the line entirely — zero prompt change for single-agent callers.
+        """
         steps = trajectory.last_n_steps(self._max_trajectory_steps)
         lines = [f"Task: {task}", "", "Recent steps:"]
         for step in steps:
             lines.append(f"[{step.index}] {step.action}")
+            if step.agent_id:
+                lines.append(f"  agent: {step.agent_id}")
             if step.tool_called:
                 lines.append(f"  tool: {step.tool_called}")
             if step.error:
