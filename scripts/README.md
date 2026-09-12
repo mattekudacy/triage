@@ -66,7 +66,7 @@ not how often classification is right.
 
 | Script | What it produces |
 |---|---|
-| `gen_readme_charts.py` | The five SVG charts in `README.md` (`docs/assets/charts/`) — stdlib only, no API calls |
+| `gen_readme_charts.py` | The five matplotlib/seaborn PNG charts in `README.md` (`docs/assets/charts/`) — needs the `dev` extra, no API calls |
 
 ```bash
 PYTHONPATH=. python scripts/gen_readme_charts.py
@@ -78,11 +78,13 @@ It re-scores the corpora itself, through the same `RulesClassifier` path
 *can't* recompute are marked `HISTORICAL` in the module: corpus C's pre-tuning v1.0 score
 (re-scoring C today returns 100%, since it is training data now) and the `LLMClassifier` /
 `HybridClassifier` runs (they need a live model). Re-run it after any `rules.py` change that
-moves a held-out number, and commit the regenerated SVGs with it.
+moves a held-out number, and commit the regenerated PNGs with it.
 
-Each SVG carries its own `prefers-color-scheme` block, so one asset reads correctly in GitHub's
-light and dark themes; charts are written by hand (no matplotlib) to keep the repo's
-stdlib-only posture for tooling.
+`matplotlib`/`seaborn` aren't runtime dependencies of `triage` — they're only in the `dev`
+extra for this script, the same way `anthropic` is there for `llm_classifier_accuracy.py`.
+Rendered with a fixed seaborn theme (`whitegrid`, the `deep` palette) at 200 DPI on a plain
+white background, matching how a notebook or a paper would plot the same numbers — no
+light/dark theming, unlike an earlier hand-drawn-SVG version of this script.
 
 ## Error corpora
 

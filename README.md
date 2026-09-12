@@ -31,7 +31,7 @@ Routing correctness across three failure modes (`RulesClassifier`, zero API call
 
 ![Success rate per failure type, no-recovery baseline vs triage: both arms recover
 external_fault 3/3, the baseline recovers 0/2 wrong_tool and 0/1 schema_mismatch, triage
-recovers all six runs](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/routing-demo.svg)
+recovers all six runs](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/routing-demo.png)
 
 | Task | Failure type | No-recovery baseline | Triage |
 |---|---|---|---|
@@ -62,7 +62,7 @@ Ten-block measurement, `RulesClassifier` default configuration:
 
 ![Overall accuracy per corpus in scoring order: corpora A, B and C all score 100% as training
 data, while the held-out scores are corpus C 52% at v1.0, corpus D 40%, corpus E
-69%](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/corpus-scores.svg)
+69%](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/corpus-scores.png)
 
 | Block | What it measures | Score |
 |---|---|---|
@@ -106,7 +106,7 @@ is the finding:
 ![Recall on three successive held-out corpora: self-healing types hold at 86%, 86%, then 100%,
 while routing-sensitive types sit at 8% on corpus C, 8% on corpus D after a full regex-tuning
 cycle, and rise to 44% on corpus E only after structured error-code matching
-shipped](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/heldout-recall-by-group.svg)
+shipped](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/heldout-recall-by-group.png)
 
 **The headline finding of the v1.1 cycle:** routing-sensitive recall on corpus D (1/12 = 8%)
 is statistically unchanged from corpus C's *pre-tuning* number — also 1/12 = 8%. The v1.1 pass
@@ -143,7 +143,7 @@ model via Ollama Cloud (reproduce with `scripts/llm_classifier_accuracy.py`):
 
 ![Corpus D scored three ways: RulesClassifier reaches 8% routing-sensitive recall with 0
 misroutes, LLMClassifier 83% with 4 of 20 misroutes, HybridClassifier 83% with 3 of 20
-misroutes](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/classifier-comparison.svg)
+misroutes](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/classifier-comparison.png)
 
 | Classifier | Routing-sensitive recall | Misroutes (of 20) |
 |---|---|---|
@@ -185,7 +185,7 @@ Limitations' "Corpus E scoping" for the full breakdown.
 ![Corpus E's routing-sensitive failures by code family: all 3 entries carrying an MCP JSON-RPC
 code are caught, 2 of them by the structured code itself, while only 1 of the 6 HTTP-status
 entries is caught and 5 fall through to
-UNKNOWN](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/corpus-e-signal.svg)
+UNKNOWN](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/corpus-e-signal.png)
 
 `PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are not scored — `RulesClassifier` returns
 `UNKNOWN` for them by design; use `LLMClassifier` or `HybridClassifier` for those.
