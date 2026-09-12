@@ -13,12 +13,14 @@ All are run from the repo root with `PYTHONPATH=.`.
 | `classifier_accuracy.py` | Ten-block precision/recall report for `RulesClassifier` — zero API calls |
 | `llm_classifier_accuracy.py` | Scores corpus D with `LLMClassifier`/`HybridClassifier` alongside `RulesClassifier` — **requires an LLM API key**, makes real calls |
 | `hybrid_ambiguity_accuracy.py` | Measures `HybridClassifier`'s override rate on genuinely-ambiguous inputs — **requires an LLM API key**, makes real calls |
+| `mast_mode_pilot_accuracy.py` | Pilot: can an LLM tell apart 3 of the 12 semantic-only MAST modes (2.5, 2.4, 1.4)? Separate experimental prompt, does not touch `LLMClassifier` — **requires an LLM API key**, makes real calls |
 
 ```bash
 PYTHONPATH=. python scripts/bench_synthetic.py
 PYTHONPATH=. python scripts/classifier_accuracy.py
 ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/llm_classifier_accuracy.py
 ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py
+ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/mast_mode_pilot_accuracy.py
 ```
 
 `llm_classifier_accuracy.py` tests a claim the docs make but had never measured: that
@@ -61,6 +63,18 @@ or the escalation-to-LLM premise silently breaks.
 `bench_synthetic.py` is a *mechanism* demo, not an accuracy measurement: the tasks are
 constructed so the correct recovery hint changes the outcome. It shows that routing works,
 not how often classification is right.
+
+`mast_mode_pilot_accuracy.py` is a different kind of measurement from the four above: it scores
+`tests/data/mast_pilot_corpus.json` (6 entries, 2 each real-cited for 2.5 Ignored Other Agent's
+Input and 1.4 Loss of Conversation History, 1 for 2.4 Information Withholding plus 1 genuinely
+ambiguous between 2.4/2.5 — see `gen_mast_pilot_corpus.py`'s docstring) against an
+**experimental prompt and label set that live only in this script** — not `LLMClassifier`,
+which still only ever returns one of the 9 stable `FailureType`s. This is Step 1 of
+`docs/concepts/multi-agent-failures.md`'s "Phase 3 scoping": measure whether an LLM can tell
+MAST modes apart at all before considering any change to the stable classifier contract.
+Recall-only (no negative examples exist yet, so no false-positive rate) and not yet run against
+a real model in this environment — same API-key-blocked status as `hybrid_ambiguity_accuracy.py`.
+`tests/test_mast_pilot_corpus.py` guards the corpus's own shape with zero API calls.
 
 ## Charts
 
