@@ -190,6 +190,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Open by default: measurement scripts and docs no longer default to Anthropic.**
+  `RulesClassifier` — the actual default `classifier=` — already made zero API calls to any
+  vendor, and `LLMClassifier` was always backend-agnostic (Ollama/Groq/OpenAI via `base_url`, or
+  Anthropic without it). What wasn't open by default: every `scripts/*_accuracy.py` harness
+  (`llm_classifier_accuracy.py`, `hybrid_ambiguity_accuracy.py`, `mast_mode_pilot_accuracy.py`)
+  fell back to an Anthropic model and required `ANTHROPIC_API_KEY` when nothing else was
+  configured, and the README/`docs/concepts/classifiers.md`/`triage/classifier/llm.py`
+  docstrings all presented Anthropic first, labeled "(default)."
+
+  Each script now resolves its backend via a `_resolve_backend()` helper: an explicit
+  `TRIAGE_LLM_BASE_URL` always wins (unchanged), an explicit Anthropic credential with no
+  base_url still routes to Anthropic (unchanged — nothing breaks for an existing caller who set
+  one), and **with nothing configured at all, it now defaults to local Ollama**
+  (`http://localhost:11434/v1`, `llama3.2`) instead of Anthropic. `LLMClassifier.__init__`
+  itself is unchanged — it already raises `ValueError` naming all three backend options rather
+  than silently picking one, which is the more honest design than defaulting to either vendor;
+  only the message's ordering changed (Ollama listed first, with a note that it needs no
+  account or key). Docs reordered to match: `docs/concepts/classifiers.md` gained an "Open by
+  default" note, README's classifier examples and env-var block lead with Ollama, and
+  `CLAUDE.md`'s Optional Extras table adds the previously-missing `[openai]` row ahead of
+  `[anthropic]`. See `CLAUDE.md`'s new design-decision entry for the full rationale.
+
 - **MAST phase 2 investigated, negative result — no new `RulesClassifier` rule shipped.**
   `docs/concepts/multi-agent-failures.md`'s phase 1 entry above had named MAST 3.3
   (verification-claim mismatch) and 2.1 (conversation reset) "structurally-promising

@@ -229,7 +229,8 @@ the optional dep is missing.
 
 | Extra | Installs | Enables |
 |-------|----------|---------|
-| `triage-agent[anthropic]` | `anthropic>=0.25` | `LLMClassifier` |
+| `triage-agent[openai]` | `openai>=1.0` | `LLMClassifier` against any OpenAI-compatible backend — Ollama (local, no key), Groq, OpenAI itself |
+| `triage-agent[anthropic]` | `anthropic>=0.25` | `LLMClassifier` against Anthropic |
 | `triage-agent[sqlite]` | `aiosqlite>=0.19` | `SQLiteCheckpointStore` |
 | `triage-agent[redis]` | `redis[asyncio]>=5.0` | `RedisCheckpointStore` |
 | `triage-agent[langgraph]` | `langgraph>=0.2` | `wrap_langgraph` |
@@ -350,6 +351,26 @@ two real GitHub issues, not just reasoned about — real conversation-reset fail
 (`microsoft/autogen#1942`, `langchain-ai/langgraph#6064`) are purely behavioral with no error
 string or log line to match on at all. Both are semantic-only, same ceiling as
 `PLAN_INCOMPLETE`/`CONTEXT_OVERFLOW`; both now wait for phase 3's `LLMClassifier` extension.
+
+**Open by default — no Anthropic (or any vendor) dependency assumed anywhere.** `RulesClassifier`,
+the actual default `classifier=`, already makes zero API calls to any vendor — that's the
+strongest true "not dependent on Anthropic" claim and worth leading with. `LLMClassifier` is
+fully opt-in and was always backend-agnostic (Ollama/Groq/OpenAI via `base_url`, or Anthropic
+without it), but its docstrings, README, `docs/concepts/classifiers.md`, and every
+`scripts/*_accuracy.py` harness used to present Anthropic first and label it "(default)" —
+true only in the narrow sense that `base_url=None` selects the Anthropic client path, but it
+biased every quickstart toward needing a paid key. Fixed by reordering docs/examples to lead
+with Ollama (free, local, no account) and, more substantively, by changing the
+`scripts/*_accuracy.py` measurement harnesses' *zero-config* default: with nothing set at all
+they now resolve to local Ollama (`http://localhost:11434/v1`, `llama3.2`) via each script's own
+`_resolve_backend()`, not Anthropic — an explicit `ANTHROPIC_API_KEY`/`TRIAGE_LLM_API_KEY` (with
+no `TRIAGE_LLM_BASE_URL`) still routes to Anthropic, so nothing breaks for an existing caller who
+set one. `LLMClassifier.__init__` itself is unchanged on purpose — it already raises `ValueError`
+naming all three backends rather than silently picking one, which is the more honest design than
+either vendor being a hidden default; only the message's ordering changed (Ollama listed first).
+Regression guard: none needed — this is docs/example/script-default reordering plus a resolver
+function `scripts/*_accuracy.py` tests indirectly by construction (a broken resolver fails the
+in-script sanity check immediately), not a change to any stable-API behavior.
 
 ## Classifier accuracy measurement
 
