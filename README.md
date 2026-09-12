@@ -25,180 +25,51 @@ It works with any async agent callable — OpenAI, LangGraph, raw LLM loops — 
 
 ## Results
 
-### Routing demo (synthetic)
-
-Routing correctness across three failure modes (`RulesClassifier`, zero API calls):
-
-![Success rate per failure type, no-recovery baseline vs triage: both arms recover
-external_fault 3/3, the baseline recovers 0/2 wrong_tool and 0/1 schema_mismatch, triage
-recovers all six runs](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/routing-demo.png)
-
-| Task | Failure type | No-recovery baseline | Triage |
-|---|---|---|---|
-| fetch_weather, call_payments, send_email | `external_fault` (transient 503) | ✓ heals on any retry | ✓ |
-| lookup_user, create_ticket | `wrong_tool_called` | ✗ no hint → fails again | ✓ routes to manifest hint |
-| parse_response | `schema_mismatch` | ✗ no hint → fails again | ✓ routes to schema hint |
+**Does the routing mechanism work?** A synthetic demo confirms the core claim in principle:
+given correct classification, routing to the matching strategy beats blind retry on the two
+failure types where the hint actually changes the outcome. `external_fault` heals on any
+retry either way — conceding it keeps the comparison honest.
 
 | | no-recovery | triage |
 |---|---|---|
-| success rate | **50%** | **100%** |
+| success rate | 50% | 100% |
 | recoveries | — | 6 |
-
-The 50 % gap is attributable to the two types where classification changes the outcome.
-`external_fault` heals on any retry — triage gives no advantage there, and this is
-intentional: conceding the transient case makes the comparison honest.
-
-**This demo assumes correct classification.** The error strings here are ones `rules.py`
-recognises, so it measures routing, not detection. On held-out error strings
-`RulesClassifier` currently detects these same two types at 1/12 — see
-[per-type recall](#read-the-recall-number-per-type-not-in-aggregate) below, and read the
-two sections together before drawing a conclusion.
 
 Reproduce: `PYTHONPATH=. python scripts/bench_synthetic.py`
 
-### RulesClassifier accuracy
-
-Ten-block measurement, `RulesClassifier` default configuration:
-
-![Overall accuracy per corpus in scoring order: corpora A, B and C all score 100% as training
-data, while the held-out scores are corpus C 52% at v1.0, corpus D 40%, corpus E
-69%](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/corpus-scores.png)
-
-| Block | What it measures | Score |
-|---|---|---|
-| Regression | In-corpus positives from `test_classifier_rules.py` | 100% (17/17) |
-| False-positive resistance | Near-miss strings that must NOT fire a rule | 100% (12/12) |
-| Corpus A (training, v0.25) | SDK exceptions used to guide v0.25 fixes | 100% (30/30) |
-| Corpus B (training, v0.26 + v1.1) | Guided v0.26 fixes; last 2 misses closed in v1.1 | 100% (20/20) |
-| Corpus C (training, v1.1) | Held-out through v1.0 (52%); v1.1 tuned against its misses | 100% (27/27) |
-| **Corpus D (held-out, v1.1)** | **Scored once, right after tuning against C** | **40% recall, 100% precision** |
-| **Corpus E (held-out, v1.2)** | **Scored once, after structured error codes shipped** | **69% recall, 100% precision** |
-
-**Corpus C is no longer held-out.** It was genuinely held-out through v1.0 — scored once,
-100% precision, 52% recall. The v1.1 release tuned `rules.py` directly against its 13 misses,
-which is the exact act that converts a corpus to training data (the same thing that happened
-to corpus A in v0.25 and corpus B in v0.26). Its 100% here reflects tuning, not generalization.
-**Corpus D is the current held-out measurement**, built from sources disjoint from A, B, and C
-(`huggingface_hub`, Ollama, OpenRouter, MCP, CrewAI, Semantic Kernel, novel phrasings) and
-scored exactly once, immediately after the v1.1 tuning pass, before any further edit to
-`rules.py`. 100% precision — the one misroute this pass found (a name collision between two
-unrelated SDKs' same-named exception class) was fixed as a precision bug before freezing this
-number, not used to chase recall.
-
-#### Read the recall number per type, not in aggregate — and read across corpora
-
-The 40% aggregate on corpus D averages two groups of failure types whose value to you is
-opposite:
-
-| Failure type | Corpus D held-out recall | Does classification change the outcome? |
-|---|---|---|
-| `timeout` | 3/3 — **100%** | No — any retry heals it |
-| `external_fault` | 3/4 — **75%** | No — any retry heals it |
-| `schema_mismatch` | 1/4 — **25%** | **Yes — recovery needs the schema hint** |
-| `wrong_tool_called` | 0/8 — **0%** | **Yes — recovery needs the manifest hint** |
-| | | |
-| **Self-healing types** | **6/7 — 86%** | classification buys nothing over blind retry |
-| **Routing-sensitive types** | **1/12 — 8%** | classification is the entire value proposition |
-
-The same split, tracked across every corpus that was ever scored held-out — the flat blue line
-is the finding:
+**Does classification actually detect those types on error strings it hasn't seen?** That's
+the harder, more important question — the demo above assumes correct classification, so it
+measures routing, not detection. Scored once against each of three held-out corpora, never
+tuned against:
 
 ![Recall on three successive held-out corpora: self-healing types hold at 86%, 86%, then 100%,
 while routing-sensitive types sit at 8% on corpus C, 8% on corpus D after a full regex-tuning
 cycle, and rise to 44% on corpus E only after structured error-code matching
 shipped](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/heldout-recall-by-group.png)
 
-**The headline finding of the v1.1 cycle:** routing-sensitive recall on corpus D (1/12 = 8%)
-is statistically unchanged from corpus C's *pre-tuning* number — also 1/12 = 8%. The v1.1 pass
-added ~15 new patterns, closed all 13 of corpus C's misses, and it did not move the needle on
-fresh data at all. Those patterns were narrow string literals keyed close to corpus C's exact
-wording (e.g. `"tool with name 'x' was not found"`, an Azure resource-path shape) and simply
-didn't overlap with how Ollama, MCP, CrewAI, Semantic Kernel, HuggingFace, and OpenRouter phrase
-the same failures. Self-healing recall held at 86% both before and after, for the same reason
-it's easy to get right: that group clusters around a small, largely SDK-independent vocabulary
-(HTTP status codes, the words "timeout" and "rate limit") that routing-sensitive failures do
-not share — every SDK invents its own wording for "no such tool" and "bad request shape."
+Self-healing types (`external_fault`, `timeout`) hold at 86–100% because any retry recovers
+them regardless of classification. Routing-sensitive types (`wrong_tool_called`,
+`schema_mismatch`) — the ones classification actually has to get right — sat flat at 8%
+through an entire tuning cycle (~15 new regex patterns, every one of corpus C's misses closed,
+zero movement on the next held-out corpus), then rose to 44% only once matching moved from
+message text to a caller-supplied structured error code. Read that as evidence about
+regex-based pattern matching as an approach, not just this pattern set: it generalizes only as
+far as vendors share a literal vocabulary, which they don't for "no such tool" or "bad schema"
+the way they share HTTP status codes.
 
-Put plainly: **pattern-tuning against one held-out corpus's specific misses does not
-generalize to a different corpus of the same failure types.** This is evidence about the
-regex-pattern-matching approach itself, not just this particular pattern set — see
-[Known Limitations](docs/known-limitations.md) for the full writeup and what it implies for
-where classifier effort goes next.
+`LLMClassifier`/`HybridClassifier` close most of that gap — 8% → 83% recall on the same
+held-out corpus — but not for free: `RulesClassifier`'s 100%-precision guarantee (every miss
+falls safely to `UNKNOWN`) doesn't carry over, and `HybridClassifier` misrouted 3 of 20 entries
+in the same measurement.
 
-**What this means if you are evaluating triage today.** On a stack whose error formats
-happen to match the specific strings in `rules.py` (OpenAI, Anthropic, LangChain, botocore,
-azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, LlamaIndex — corpora A, B, and C),
-routing works as demonstrated in the synthetic benchmark above. On any other stack — which,
-per corpus D, is most of them — expect most tool and schema failures to land in `UNKNOWN`
-and fall through to your `default` policy: safe, but no better than the retry loop you would
-have written yourself.
+**Full corpus-by-corpus numbers, four more charts, and what all of this implies for where
+classifier effort goes next: see [Known Limitations](docs/known-limitations.md).** Reproduce
+everything yourself:
 
-#### Does LLMClassifier/HybridClassifier actually close the gap? Measured, not assumed.
-
-`LLMClassifier`/`HybridClassifier` don't have `RulesClassifier`'s wording ceiling by
-construction — semantic classification reads the meaning, not a literal string. That claim
-sat in this README untested for most of the v1.1 cycle. It's now measured: corpus D scored
-with `HybridClassifier(llm=LLMClassifier(model="gpt-oss:120b-cloud"))`, a real reasoning
-model via Ollama Cloud (reproduce with `scripts/llm_classifier_accuracy.py`):
-
-![Corpus D scored three ways: RulesClassifier reaches 8% routing-sensitive recall with 0
-misroutes, LLMClassifier 83% with 4 of 20 misroutes, HybridClassifier 83% with 3 of 20
-misroutes](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/classifier-comparison.png)
-
-| Classifier | Routing-sensitive recall | Misroutes (of 20) |
-|---|---|---|
-| `RulesClassifier` | 1/12 — 8% | 0 |
-| `LLMClassifier` alone | 9–10/12 — 75–83% (two runs) | 4/20 — 20% |
-| `HybridClassifier` (recommended) | 10/12 — 83% | 3/20 — 15% |
-
-The recall claim holds: 8% → 83%. But it's not free — `RulesClassifier`'s 100%-precision
-guarantee (every miss falls to safe `UNKNOWN`, never a wrong guess) does not carry over.
-`HybridClassifier` still misrouted 3 of 20 entries. One misroute is structural, not just LLM
-noise: corpus D's one genuinely unclassifiable entry (true label `unknown`) was correctly
-left as `UNKNOWN` by `RulesClassifier` — and `HybridClassifier` overturned that correct,
-conservative answer into a confident wrong guess anyway, because its fallback rule is
-`if rules_result is UNKNOWN: ask the LLM`, with no way to distinguish "rules doesn't
-recognize this wording but there's a real answer" from "this genuinely has no answer." Every
-LLM-involving run in this measurement misrouted that same entry. (n=1 in corpus D — a
-real, reproducible mechanism, not yet a measured rate.) The remaining 2 misroutes were both
-in `wrong_tool_called`, at a consistent 6/8 across runs — some tool-not-found phrasings
-apparently read as ambiguous to this model even semantically.
-
-Results vary run to run (reasoning-model sampling, not a bug) — these are representative
-runs, not a frozen benchmark the way `RulesClassifier`'s corpus D floor is. If you adopt
-`HybridClassifier` for routing-sensitive types, budget for occasional confident misroutes,
-not just occasional `UNKNOWN`s — a stronger or more expensive model, or a stricter
-classification prompt, may trade some recall back for precision if that matters more for
-your recovery strategies.
-
-Supply `constraints=`, a `framework=` hint, or please
-[open an issue](https://github.com/mattekudacy/triage/issues) with strings that miss.
-
-Corpus D stays frozen. The structural fix that finding pointed at — matching a caller-supplied
-structured code in `Step.metadata` (`"http_status"`, `"json_rpc_code"`) rather than message
-text — shipped and was scored against a fresh corpus E: routing-sensitive recall rose to 44%
-(4/9), but almost entirely via MCP's spec-guaranteed JSON-RPC codes, not HTTP status. Every
-fresh HTTP-only vendor's "wrong tool"/"bad schema" failure used a code (`404`/`400`/`422`)
-deliberately excluded from the mapping as too ambiguous to resolve safely. See Known
-Limitations' "Corpus E scoping" for the full breakdown.
-
-![Corpus E's routing-sensitive failures by code family: all 3 entries carrying an MCP JSON-RPC
-code are caught, 2 of them by the structured code itself, while only 1 of the 6 HTTP-status
-entries is caught and 5 fall through to
-UNKNOWN](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/corpus-e-signal.png)
-
-`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are not scored — `RulesClassifier` returns
-`UNKNOWN` for them by design; use `LLMClassifier` or `HybridClassifier` for those.
-
-Reproduce:
 ```
 PYTHONPATH=. python scripts/classifier_accuracy.py    # the numbers
-PYTHONPATH=. python scripts/gen_readme_charts.py      # the charts above, redrawn from them
+PYTHONPATH=. python scripts/gen_readme_charts.py      # this chart and 4 more, redrawn from them
 ```
-
-Every chart on this page is generated by that second script, which scores the corpora itself
-rather than transcribing the tables — so a `rules.py` change that moves a held-out number moves
-the charts too, and the two cannot silently disagree.
 
 ---
 
@@ -317,36 +188,11 @@ async def my_agent(task: str, *, record_step, **kwargs):
     ))
 ```
 
-Alternatively, avoid signature changes entirely using context-var injection:
-
-```python
-from triage.agent import get_recorder, get_state_updater, get_usage_recorder
-
-async def my_agent(task: str, **kwargs):
-    record_step = get_recorder()
-    update_state = get_state_updater()
-    record_usage = get_usage_recorder()
-    ...
-```
-
-**Already have OpenTelemetry spans?** If your framework emits its own spans for tool calls and
-errors (openllmetry/traceloop-style auto-instrumentation, or the OTel GenAI semantic
-conventions), you don't have to hand-write `Step`s at all — convert the spans instead:
-
-```python
-from triage.observability.otel_ingest import trajectory_from_spans
-
-async def my_agent(task: str, *, record_step, **kwargs):
-    try:
-        return await already_instrumented_framework.run(task)
-    finally:
-        for step in trajectory_from_spans(exporter.get_finished_spans()).steps:
-            record_step(step)
-```
-
-See `examples/otel_trajectory.py` for a full runnable version, including which fields this
-extracts reliably (error info, from OTel's stable exception-event convention) versus
-best-effort (tool name/input, from the still-Development-stability GenAI conventions).
+Prefer not to change your agent's signature? `get_recorder()`/`get_state_updater()`/
+`get_usage_recorder()` give you the same callbacks via `contextvars` instead. Already have
+OpenTelemetry spans for your tool calls (openllmetry/traceloop, or the OTel GenAI semantic
+conventions)? `trajectory_from_spans()` converts them straight into `Step`s instead of you
+hand-writing any — see the [OTel Trajectory example](docs/examples/otel-trajectory.md).
 
 ### 2. Classify the failure
 
@@ -364,39 +210,16 @@ When your agent raises an exception, `triage` runs the classifier over the recor
 | `TIMEOUT` | `timeout` / `timed out` / `deadline exceeded` in error | Backoff and retry |
 | `UNKNOWN` | None of the above | Escalate to human |
 
-The default `RulesClassifier` is pattern-based and makes zero API calls. For semantic classification use `LLMClassifier`, or use `HybridClassifier` to get the best of both:
+The default `RulesClassifier` is pattern-based and makes zero API calls. For semantic classification use `LLMClassifier`, or `HybridClassifier` to get the best of both — rules first, LLM only when rules return `UNKNOWN` (see [Results](#results) above for what that trades off):
 
 ```python
-from triage.classifier.llm import LLMClassifier
 from triage.classifier.hybrid import HybridClassifier
+from triage.classifier.llm import LLMClassifier
 
-# LLM only — every failure classified by Claude
-agent = triage.Agent(
-    my_agent,
-    policy=policy,
-    classifier=LLMClassifier(model="claude-haiku-4-5-20251001"),
-)
-
-# Hybrid — rules first, LLM only when rules return UNKNOWN (~20% of failures)
-agent = triage.Agent(
-    my_agent,
-    policy=policy,
-    classifier=HybridClassifier(llm=LLMClassifier()),
-)
+agent = triage.Agent(my_agent, policy=policy, classifier=HybridClassifier(llm=LLMClassifier()))
 ```
 
-`LLMClassifier` supports Anthropic and any OpenAI-compatible provider. Configure via constructor args or env vars:
-
-```bash
-# Anthropic (default)
-ANTHROPIC_API_KEY=sk-ant-... python my_agent.py
-
-# Ollama (local, no key)
-TRIAGE_LLM_BASE_URL=http://localhost:11434/v1 TRIAGE_LLM_MODEL=llama3.2 python my_agent.py
-
-# Groq
-TRIAGE_LLM_BASE_URL=https://api.groq.com/openai/v1 TRIAGE_LLM_API_KEY=gsk_... TRIAGE_LLM_MODEL=llama-3.1-8b-instant python my_agent.py
-```
+`LLMClassifier` supports Anthropic and any OpenAI-compatible provider (Ollama, Groq, OpenAI, HuggingFace) via constructor args or env vars — see [Concepts → Classifiers](docs/concepts/classifiers.md) for the full configuration reference and [Custom classifiers](#custom-classifier) below to bring your own.
 
 ### 3. Dispatch to a strategy
 
@@ -434,119 +257,35 @@ policy = triage.FailurePolicy(
 )
 ```
 
-Any `FailureType` not explicitly listed falls through to `default`. If `default` is also unset, triage escalates automatically.
-
-### Sequencing strategies
-
-Step through strategies in order across successive failures of the same type:
-
-```python
-policy = triage.FailurePolicy(
-    EXTERNAL_FAULT=triage.FailurePolicy.sequence(
-        backoff_and_retry(max_attempts=2),
-        replan(hint="External service may be down. Try a different approach."),
-    ),
-)
-```
-
-### Loading from config
-
-```python
-policy = triage.FailurePolicy.from_yaml("policy.yaml")
-policy = triage.FailurePolicy.from_yaml("policy.toml")
-```
+Any `FailureType` not explicitly listed falls through to `default`. If `default` is also unset, triage escalates automatically. Two composition helpers step through multiple strategies for the same type — `FailurePolicy.chain()` falls through to a fallback within one attempt, `FailurePolicy.sequence()` advances one step per failure across attempts (see the [Policy Chain](docs/examples/policy-chain.md) and [Policy Sequence](docs/examples/policy-sequence.md) examples) — and `FailurePolicy.from_yaml("policy.yaml")` loads a policy from YAML/TOML (needs `triage-agent[yaml]`). Full reference: [Concepts → Policies & Actions](docs/concepts/policies.md).
 
 ---
 
 ## Built-in strategies
 
-### `triage.strategies.retry`
+| Module | Provides |
+|---|---|
+| `triage.strategies.retry` | `retry_with_tool_manifest()`, `backoff_and_retry()` (exponential backoff) |
+| `triage.strategies.replan` | `replan(hint=...)`, `resume_from_subgoal()` |
+| `triage.strategies.rollback` | `rollback_to_checkpoint(checkpoint_id=None)` |
+| `triage.strategies.circuit_breaker` | `circuit_breaker(breaker, strategy)` — wraps any strategy with a cross-run failure-rate guard (`CLOSED → OPEN → HALF_OPEN → CLOSED`); pass `circuit_breakers=[breaker]` to `Agent` so a clean run can close it |
 
-```python
-from triage.strategies.retry import retry_with_tool_manifest, backoff_and_retry
-
-retry_with_tool_manifest(max_attempts=3)   # retry with hint to use correct manifest
-backoff_and_retry(max_attempts=5)          # exponential backoff (2^attempt seconds)
-```
-
-### `triage.strategies.replan`
-
-```python
-from triage.strategies.replan import replan, resume_from_subgoal
-
-replan(hint="The previous approach used the wrong API endpoint.")
-resume_from_subgoal()
-```
-
-### `triage.strategies.rollback`
-
-```python
-from triage.strategies.rollback import rollback_to_checkpoint
-
-rollback_to_checkpoint()                            # latest checkpoint
-rollback_to_checkpoint(checkpoint_id="before-api-call")
-```
-
-### `triage.strategies.circuit_breaker`
-
-Wrap any strategy with a cross-run failure-rate guard:
-
-```python
-from triage.breaker import CircuitBreaker
-from triage.strategies.circuit_breaker import circuit_breaker
-
-breaker = CircuitBreaker(failure_threshold=5, window_seconds=60, cooldown_seconds=30)
-
-policy = triage.FailurePolicy(
-    EXTERNAL_FAULT=circuit_breaker(breaker, backoff_and_retry(max_attempts=3)),
-)
-
-# Notify the breaker when a run completes cleanly (closes HALF_OPEN state)
-agent = triage.Agent(my_agent, policy=policy, circuit_breakers=[breaker])
-```
-
-States: `CLOSED` → `OPEN` (threshold reached) → `HALF_OPEN` (cooldown elapsed) → `CLOSED` (probe succeeds). When `OPEN`, recovery is skipped and `TriageEscalationError` is raised immediately.
+Full signatures and examples: [API Reference → Strategies](docs/api/strategies.md).
 
 ---
 
 ## Checkpoints
 
-Save agent state at key points so triage can roll back to them on failure.
-
-### In-memory (default)
-
-```python
-store = triage.InMemoryCheckpointStore()
-agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store)
-```
-
-### SQLite (persistent, single-process)
+Save agent state at key points so triage can roll back to them on failure. `InMemoryCheckpointStore` is the default; swap in `SQLiteCheckpointStore` (persistent, single-process, `triage-agent[sqlite]`) or `RedisCheckpointStore` (distributed, `triage-agent[redis]`) via `checkpoint_store=`, and pass `auto_checkpoint=True` to checkpoint after every successful step automatically instead of calling a checkpoint API yourself.
 
 ```python
 from triage.checkpoint.sqlite import SQLiteCheckpointStore
 
 store = SQLiteCheckpointStore("runs/checkpoints.db")
-agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store)
-```
-
-### Redis (distributed)
-
-```python
-import redis.asyncio as aioredis
-from triage.checkpoint.redis import RedisCheckpointStore
-
-client = aioredis.Redis.from_url("redis://localhost:6379")
-store = RedisCheckpointStore(client)
-agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store)
-```
-
-### Auto-checkpoint
-
-Enable automatic checkpointing after every successful step:
-
-```python
 agent = triage.Agent(my_agent, policy=policy, checkpoint_store=store, auto_checkpoint=True)
 ```
+
+Full backend reference and a custom-store protocol: [Concepts → Checkpoints](docs/concepts/checkpoints.md).
 
 ---
 
@@ -587,78 +326,19 @@ The core stores and reloads state; routing the token to Slack, an HTTP callback,
 
 ## Recovery context in your agent
 
-Three callbacks are always injected, plus recovery context on retry:
+`record_step`, `update_state`, and `record_usage` are always injected; recovery actions add `_triage_hint` (`RETRY`/`REPLAN`/`ROLLBACK`), `_triage_subgoal` (`RESUME`), `_triage_state` (`ROLLBACK`, when the checkpoint has state), or the canonical typed `_triage_context: TriageContext` on any action:
 
 ```python
-async def my_agent(
-    task: str,
-    *,
-    record_step,
-    update_state,
-    record_usage,          # report token/cost usage for budget tracking
-    _triage_hint=None,
-    _triage_subgoal=None,
-    _triage_state=None,
-    **kwargs,
-):
-    if _triage_state:
-        data = _triage_state["data"]   # restored from checkpoint on rollback
-    else:
-        data = fetch_data(task)
-
+async def my_agent(task: str, *, record_step, update_state, _triage_state=None, **kwargs):
+    data = _triage_state["data"] if _triage_state else fetch_data(task)   # restored on rollback
     record_step(Step(index=0, action="fetch", tool_output=data))
     update_state({"data": data})
-
-    response = await call_llm(prompt)
-    record_usage(triage.Usage(
-        input_tokens=response.usage.input_tokens,
-        output_tokens=response.usage.output_tokens,
-        cost_usd=0.0001,
-    ))
+    ...
 ```
 
-| Key | Set when |
-|---|---|
-| `record_step` | Always |
-| `update_state` | Always |
-| `record_usage` | Always |
-| `_triage_hint` | `RETRY`, `REPLAN`, or `ROLLBACK` action |
-| `_triage_subgoal` | `RESUME` action |
-| `_triage_state` | `ROLLBACK` action, when checkpoint has non-empty state |
-| `_triage_context` | All recovery actions — typed `TriageContext` object |
+Full contract, including the `contextvars` alternative for agents that shouldn't take new kwargs: [API Reference → Agent](docs/api/agent.md).
 
----
-
-## Token and cost budgets
-
-Cap the total tokens or dollars spent per `run()` call. The check fires at each failure point — if the budget is already exceeded when the agent raises, triage escalates instead of attempting recovery.
-
-```python
-agent = triage.Agent(
-    my_agent,
-    policy=policy,
-    max_tokens=50_000,      # escalate after 50k tokens total
-    max_cost_usd=0.10,      # escalate after $0.10 total
-)
-```
-
-`LLMClassifier` automatically reports its own token usage to the meter. For agent LLM calls, report via `record_usage(triage.Usage(...))` in the agent body or via `get_usage_recorder()`.
-
----
-
-## Attempt history
-
-Strategies can inspect everything that was tried before they were called:
-
-```python
-async def smart_strategy(ctx: triage.FailureContext) -> triage.RecoveryAction:
-    replan_count = sum(1 for _, kind in ctx.attempt_history if kind == "replan")
-    if replan_count >= 2:
-        return triage.RecoveryAction.ESCALATE(message="Replanned twice, still failing.")
-    return triage.RecoveryAction.REPLAN(hint="Try a different approach.")
-```
-
-`attempt_history` is empty on the first failure and grows by one entry per recovery attempt. Each entry is `(failure_type, action_kind)` where `action_kind` is one of `"retry"`, `"replan"`, `"rollback"`, `"resume"`, `"suspend"`, `"escalate"`, `"abort"`.
+Strategies can also inspect everything already tried, via `ctx.attempt_history` — a list of `(failure_type, action_kind)` pairs, empty on the first failure. See [Concepts → Attempt History](docs/concepts/attempt-history.md) for patterns like escalating after N failures or detecting oscillation between two strategies.
 
 ---
 
@@ -713,48 +393,13 @@ Hook exceptions are swallowed with a warning so they never interrupt a run.
 
 ## Observability
 
-### OpenTelemetry spans
+Install `triage-agent[otel]` and configure a `TracerProvider`/`MeterProvider` — triage auto-detects them, no code change needed. Three spans per `run()` (`triage.run`, `triage.classify`, `triage.dispatch`) and five metric instruments (`triage.runs`, `triage.failures`, `triage.recoveries`, `triage.run.duration`, `triage.recovery.attempts`) are emitted automatically; pass `Agent(tracer=..., meter=...)` to override the auto-detected ones. Every decision also emits a structured log record via the `"triage"` logger regardless of whether OTel is configured — `logging.getLogger("triage").setLevel(logging.INFO)` to see them.
 
-```python
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry import trace
-
-trace.set_tracer_provider(TracerProvider(...))
-
-# triage auto-detects the configured provider — no explicit tracer needed
-agent = triage.Agent(my_agent, policy=policy)
-```
-
-Three spans per `run()` call: `triage.run` (root), `triage.classify` (per failure), `triage.dispatch` (per recovery). Pass `Agent(tracer=my_tracer)` to override. Install: `pip install "triage-agent[otel]"`.
-
-### OpenTelemetry metrics
-
-Five instruments emitted automatically when a `MeterProvider` is configured:
-
-| Instrument | Type | Attributes |
-|---|---|---|
-| `triage.runs` | Counter | `outcome` |
-| `triage.failures` | Counter | `failure_type` |
-| `triage.recoveries` | Counter | `failure_type`, `action_kind` |
-| `triage.run.duration` | Histogram | `outcome` |
-| `triage.recovery.attempts` | UpDownCounter | `failure_type` |
-
-Pass `Agent(meter=my_meter)` to override the auto-detected meter.
-
-### Structured log events
-
-All triage decisions emit structured log records via the `"triage"` logger:
-
-```python
-import logging
-logging.getLogger("triage").setLevel(logging.INFO)
-```
-
-Events: `failure_classified`, `action_dispatched`, `retry_backoff`, `attempt_start`, `run_suspended`, `hook_error`. Each includes `extra={"triage_event": ..., ...}`.
+Full span/metric/event reference: [API Reference → Agent](docs/api/agent.md#observability). Runnable demos: [OTel Tracing](docs/examples/otel-tracing.md), [OTel Trajectory](docs/examples/otel-trajectory.md) (the inverse direction — building a `Trajectory` from spans a framework already emits).
 
 ---
 
-## Recovery caps
+## Recovery caps and budgets
 
 ```python
 agent = triage.Agent(
@@ -763,17 +408,19 @@ agent = triage.Agent(
     max_recovery_attempts=3,       # per-run attempt cap (default 3)
     max_total_attempts=10,         # cross-type global cap
     max_recovery_seconds=30.0,     # wall-clock budget for recovery
-    max_tokens=50_000,             # token budget
-    max_cost_usd=0.10,             # cost budget
+    max_tokens=50_000,             # escalate instead of recovering past 50k tokens
+    max_cost_usd=0.10,             # ...or past $0.10 — report usage via record_usage()
     strict_idempotency=True,       # escalate instead of retrying non-idempotent steps
 )
 ```
+
+Every cap is checked at the failure boundary, not preemptively — an agent that burns budget but never raises runs to completion regardless. `LLMClassifier` reports its own token usage automatically; for agent LLM calls, report via `record_usage(triage.Usage(...))` or `get_usage_recorder()`.
 
 ---
 
 ## Concurrent runs
 
-A single `Agent` instance is safe for concurrent `run()` calls — per-run state (trajectory, checkpoints, usage meter) is isolated via `contextvars.ContextVar`. Use `agent.clone()` when you need independent lifecycle hooks or a dedicated checkpoint store per task:
+A single `Agent` instance is safe for concurrent `run()` calls — per-run state is isolated via `contextvars.ContextVar`. Use `agent.clone()` when you need independent lifecycle hooks or a dedicated checkpoint store per task:
 
 ```python
 agents = [agent.clone() for _ in tasks]
@@ -784,29 +431,31 @@ results = await asyncio.gather(*[ag.run(t) for ag, t in zip(agents, tasks)])
 
 ## Custom classifier
 
-Any class implementing `classify(trajectory, task) -> FailureType` satisfies the protocol:
+Any class implementing `classify(trajectory, task) -> FailureType` satisfies the `Classifier` protocol — no base class to inherit:
 
 ```python
-from triage.classifier.base import Classifier
-from triage.taxonomy import FailureType
-from triage.trajectory import Trajectory
-
 class MyClassifier:
-    def classify(self, trajectory: Trajectory, task: str) -> FailureType:
-        ...
+    def classify(self, trajectory: Trajectory, task: str) -> FailureType: ...
 
 agent = triage.Agent(my_agent, policy=policy, classifier=MyClassifier())
 ```
 
+See [Concepts → Classifiers](docs/concepts/classifiers.md#writing-a-custom-classifier) for the full protocol, including the optional async `aclassify()`.
+
 ---
 
-## Example: OpenAI tool-calling loop
+## Learn more
 
-See [`examples/raw_openai.py`](examples/raw_openai.py) for a full working example that deliberately triggers a `WRONG_TOOL_CALLED` failure on the first attempt:
+The full documentation site covers everything above in more depth, plus what's not repeated here:
 
-```bash
-OPENAI_API_KEY=sk-... python examples/raw_openai.py
-```
+| | |
+|---|---|
+| [Getting Started](https://mattekudacy.github.io/triage/getting-started/installation/) | Installation, quick start, how it works |
+| [Concepts](https://mattekudacy.github.io/triage/concepts/failure-types/) | Failure types, classifiers, policies, checkpoints, attempt history, multi-agent failures |
+| [Adapters](https://mattekudacy.github.io/triage/adapters/) | LangGraph, LangChain |
+| [Examples](https://mattekudacy.github.io/triage/examples/openai/) | 14 runnable demos — OpenAI, Anthropic, Ollama, Groq, HuggingFace, LangGraph, multi-agent, policy composition, checkpoints, OTel |
+| [Known Limitations](docs/known-limitations.md) | Every honest caveat, corpus-by-corpus |
+| [API Reference](https://mattekudacy.github.io/triage/api/agent/) | Full signatures for every public class and function |
 
 ---
 

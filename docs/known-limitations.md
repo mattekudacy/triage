@@ -26,17 +26,24 @@ As of v0.10, `LLMClassifier` (and `HybridClassifier`, when wrapping one) also de
 
 ### Accuracy is corpus-dependent
 
-`RulesClassifier` scores 100% on the in-corpus synthetic suite in `examples/benchmark.py` (see `docs/concepts/classifiers.md` for the full table) — but that suite is training data, so the number says nothing about generalization.
+`RulesClassifier` scores 100% on its own regression suite (`tests/test_classifier_rules.py`) — but those are the exact strings the patterns were written against, so the number says nothing about generalization.
 
-The honest figure is the held-out one, and it currently comes from corpus D, not corpus C.
-Corpus C (27 entries from azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI, and
-LlamaIndex) was genuinely held-out through v1.0 — scored once, **52% recall at 100%
-precision**. The v1.1 release then tuned `rules.py` directly against corpus C's 13 misses,
-which converts a corpus to training data (the same thing that happened to corpus A in v0.25
-and corpus B in v0.26) — corpus C now scores 100% and that number is no longer evidence of
-generalization. Corpus D (20 entries from `huggingface_hub`, Ollama, OpenRouter, the Model
-Context Protocol, CrewAI, Semantic Kernel, and novel phrasings) replaced it, scored once
-immediately after the v1.1 tuning pass: **40% recall at 100% precision**.
+![Overall accuracy per corpus in scoring order: corpora A, B and C all score 100% as training
+data, while the held-out scores are corpus C 52% at v1.0, corpus D 40%, corpus E
+69%](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/corpus-scores.png)
+
+The honest figures are the held-out ones. Corpus C (27 entries from azure-core, Mistral,
+Cohere, Groq, LiteLLM, Vertex AI, and LlamaIndex) was genuinely held-out through v1.0 —
+scored once, **52% recall at 100% precision**. The v1.1 release then tuned `rules.py`
+directly against corpus C's 13 misses, which converts a corpus to training data (the same
+thing that happened to corpus A in v0.25 and corpus B in v0.26) — corpus C now scores 100%
+and that number is no longer evidence of generalization. Corpus D (20 entries from
+`huggingface_hub`, Ollama, OpenRouter, the Model Context Protocol, CrewAI, Semantic Kernel,
+and novel phrasings) replaced it, scored once immediately after the v1.1 tuning pass: **40%
+recall at 100% precision**. Corpus E (16 entries, see "Corpus E scoping" below) is the
+current held-out measurement, scored once after the structured-error-code mechanism shipped:
+**69% recall at 100% precision** — read past the aggregate, though; the per-type split below
+is what it actually means.
 
 ### The v1.1 tuning pass did not generalize — read recall per type, and across corpora
 
@@ -52,6 +59,14 @@ what actually happened:
 | `wrong_tool_called` | 0/6 — 0% | 0/8 — 0% | Yes — recovery needs the manifest hint |
 | **Self-healing types** | **12/14 — 86%** | **6/7 — 86%** | classification buys nothing over blind retry |
 | **Routing-sensitive types** | **1/12 — 8%** | **1/12 — 8%** | classification is the entire value proposition |
+
+The same split, tracked across every corpus scored held-out so far — corpus E (see "Corpus E
+scoping" below) is the point where the routing-sensitive line finally moves:
+
+![Recall on three successive held-out corpora: self-healing types hold at 86%, 86%, then 100%,
+while routing-sensitive types sit at 8% on corpus C, 8% on corpus D after a full regex-tuning
+cycle, and rise to 44% on corpus E only after structured error-code matching
+shipped](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/heldout-recall-by-group.png)
 
 `external_fault` and `timeout` are self-healing: a bare `for attempt in range(3)` loop recovers
 them without knowing anything about the failure. triage classifying them correctly is real, but
@@ -87,9 +102,15 @@ as fragile as the string patterns above, just less visible until a second framew
 name for something else.
 
 The synthetic routing demo in the README shows triage beating a no-recovery baseline only on
-the routing-sensitive types. Both that number and this one are honest; together they say the
-core claim is demonstrated in principle and, after one tuning cycle aimed squarely at closing
-the gap, still not delivered on error formats `rules.py` hasn't specifically seen.
+the routing-sensitive types:
+
+![Success rate per failure type, no-recovery baseline vs triage: both arms recover
+external_fault 3/3, the baseline recovers 0/2 wrong_tool and 0/1 schema_mismatch, triage
+recovers all six runs](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/routing-demo.png)
+
+Both that number and this one are honest; together they say the core claim is demonstrated in
+principle and, after one tuning cycle aimed squarely at closing the gap, still not delivered on
+error formats `rules.py` hasn't specifically seen.
 
 **Practical implication.** If your stack's error strings resemble the ones in `rules.py`
 (OpenAI, Anthropic, LangChain, botocore, azure-core, Mistral, Cohere, Groq, LiteLLM, Vertex AI,
@@ -112,6 +133,10 @@ Corpus D scored with `HybridClassifier(llm=LLMClassifier(model="gpt-oss:120b-clo
 | `RulesClassifier` | 1/12 — 8% | 0 |
 | `LLMClassifier` alone | 9–10/12 — 75–83% (two runs) | 4/20 — 20% |
 | `HybridClassifier` | 10/12 — 83% | 3/20 — 15% |
+
+![Corpus D scored three ways: RulesClassifier reaches 8% routing-sensitive recall with 0
+misroutes, LLMClassifier 83% with 4 of 20 misroutes, HybridClassifier 83% with 3 of 20
+misroutes](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/classifier-comparison.png)
 
 The recall claim above is now backed by data, not just architecture: 8% → 83%. It costs
 `RulesClassifier`'s 100%-precision guarantee, though — every rules miss falls to safe
@@ -255,6 +280,15 @@ would recover some of this gap, at the direct cost of `RulesClassifier`'s 100%-p
 guarantee this whole design was built to protect — not a free improvement, a different tradeoff
 that would need its own corpus to justify.
 
+The 4/9 aggregate splits further than "structural code vs. nothing" — one entry per family was
+already catchable by message text alone, so the structural code's own marginal contribution is
+narrower than the headline number suggests:
+
+![Corpus E's routing-sensitive failures by code family: all 3 entries carrying an MCP JSON-RPC
+code are caught, 2 of them by the structured code itself, while only 1 of the 6 HTTP-status
+entries is caught and 5 fall through to
+UNKNOWN](https://raw.githubusercontent.com/mattekudacy/triage/main/docs/assets/charts/corpus-e-signal.png)
+
 One more finding earned its own fix. Corpus E's design deliberately included an adversarial
 case: a real MCP server (`langgenius/dify#22675`) returned `-32600` ("Invalid Request" per the
 JSON-RPC spec) for what its own bug-report analysis could not rule out as a session/auth
@@ -273,14 +307,13 @@ different spec-guaranteed signal (gRPC status codes are the next obvious candida
 "protocol spec, not vendor convention" property that made JSON-RPC work) or confirm the
 HTTP-code finding isn't an artifact of this particular vendor mix.
 
-Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Reproduce both measurements with:
+Real-world accuracy depends on the frameworks, models, and error message formats your agents produce — particularly SDK version and language. Reproduce the measurement with:
 
 ```bash
 PYTHONPATH=. python scripts/classifier_accuracy.py   # ten-block corpus measurement
-python examples/benchmark.py                         # synthetic suite
 ```
 
-Add your own cases to `examples/benchmark.py`'s `CASES` list to measure coverage for your specific stack.
+Add your own cases to a `tests/data/error_corpus_*.json`-shaped file to measure coverage for your specific stack — see `scripts/README.md`'s "Corpus discipline" section for the format and the held-out rules that make the measurement mean something.
 
 ### Error messages are framework- and locale-dependent
 

@@ -1,11 +1,17 @@
 """
 scripts/gen_readme_charts.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Regenerate the PNG charts embedded in README.md, using matplotlib/seaborn.
+Regenerate the five PNG charts under docs/assets/charts/, using matplotlib/seaborn.
+
+One (``heldout-recall-by-group.png``) is embedded in README.md as the headline
+result; the other four (``corpus-scores.png``, ``classifier-comparison.png``,
+``corpus-e-signal.png``, ``routing-demo.png``) live in docs/known-limitations.md,
+next to the prose that unpacks the full corpus-by-corpus story — the README links
+there rather than repeating it.
 
 Where the numbers come from
 ---------------------------
-Nothing here is hand-typed from the README. Each figure is either
+Nothing here is hand-typed from either doc. Each figure is either
 
   * **scored live** against the frozen corpora in ``tests/data/`` through the
     same ``RulesClassifier`` path ``scripts/classifier_accuracy.py`` uses
@@ -18,7 +24,7 @@ Nothing here is hand-typed from the README. Each figure is either
     are marked HISTORICAL below, with the source that recorded them.
 
 So a ``rules.py`` change that moves a held-out number moves these charts on the
-next run; they cannot silently drift from the README's tables.
+next run; they cannot silently drift from what the docs say.
 
 Requires the ``dev`` extra (``matplotlib``, ``seaborn`` — not runtime deps of
 ``triage`` itself, see pyproject.toml's comment on why they live there).

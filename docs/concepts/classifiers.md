@@ -110,23 +110,30 @@ Only codes with an **unambiguous** single-`FailureType` mapping are matched. `40
 
 This exists to test whether a structural signal — a stable field or protocol code, rather than free-text SDK wording — generalizes across SDKs better than pattern tuning does. See `docs/known-limitations.md`'s "Corpus E scoping" section for the full rationale and what would still need to happen (a corpus built with real codes, and a per-framework extraction helper) before this changes measured accuracy on unfamiliar stacks.
 
-### Accuracy on the synthetic suite
+### Accuracy
 
-The benchmark in `examples/benchmark.py` runs trajectories covering all structurally-detectable failure types plus known negative cases (inputs that should **not** match). Results as of v0.14:
+`RulesClassifier` scores 100% on its own regression suite and on corpora A–C (`tests/`,
+`tests/data/error_corpus_{a,b,c}.json`) — expected, since those cases guided the patterns
+`rules.py` matches on. That number is training data, not evidence of generalization.
 
-| Failure type | Cases | Pass | Notes |
-|---|---|---|---|
-| `LOOP_DETECTED` | 2 | 2 | Exact-match window = 3 |
-| `WRONG_TOOL_CALLED` | 4 | 4 | OpenAI, Anthropic, generic patterns |
-| `SCHEMA_MISMATCH` | 4 | 4 | JSONDecodeError, pydantic, invalid json |
-| `EXTERNAL_FAULT` | 4 | 4 | 429, 500, 502, 503 |
-| `CONSTRAINT_IGNORED` | 2 | 2 | With `constraints=` set |
-| `UNKNOWN` (negatives) | 10 | 10 | No false positives |
-| **Total** | **26** | **26** | **100%** |
+The number that means something is the held-out one, scored once against sources the
+patterns were never tuned against: **69% recall, 100% precision on corpus E** (corpus D,
+its predecessor, sits at 40%). It splits sharply by failure type — self-healing types
+(`external_fault`, `timeout`) are easy because any retry recovers them regardless of
+classification; routing-sensitive types (`wrong_tool_called`, `schema_mismatch`) are the
+ones classification actually has to get right, and that recall is far lower. Reproduce it:
 
-These numbers reflect the synthetic test cases, not production data. Real-world accuracy depends on your framework's error message format, language, and SDK version. Run `python examples/benchmark.py` to test against the same suite locally, or add your own cases to the `CASES` list.
+```bash
+PYTHONPATH=. python scripts/classifier_accuracy.py
+```
 
-`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are intentionally absent from the table — they require semantic understanding and are never detected by `RulesClassifier` regardless of trajectory content.
+See the README's "RulesClassifier accuracy" section for the headline chart, and
+[Known Limitations](../known-limitations.md#accuracy-is-corpus-dependent) for the full
+per-corpus, per-type breakdown and what it implies about pattern-matching as an approach.
+
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are intentionally absent from any of this — they
+require semantic understanding and are never detected by `RulesClassifier` regardless of
+trajectory content.
 
 ### What RulesClassifier cannot detect
 
@@ -264,33 +271,23 @@ Keep this budget small — classification runs on the failure path, and every re
 
 `LLMClassifier` defines `async def aclassify(trajectory, task) -> FailureType`, backed by `AsyncAnthropic`/`AsyncOpenAI` instead of the sync client. `agent.py` detects and awaits this directly, avoiding the `anyio.to_thread.run_sync()` hop that `classify()` still needs. The sync and async clients are built and cached independently — calling both `classify()` and `aclassify()` on the same `LLMClassifier` instance creates one of each, not a shared client.
 
-### Accuracy on the synthetic suite
+### Accuracy
 
-`LLMClassifier` is tested against two case sets in `examples/benchmark.py`:
+On the seven structural types corpora A–E cover, `LLMClassifier` closes the recall gap
+`RulesClassifier`'s pattern-tuning couldn't (8% → 83% routing-sensitive recall on corpus D
+with a real model) at the cost of `RulesClassifier`'s 100%-precision guarantee — every rules
+miss falls safely to `UNKNOWN`; the LLM sometimes guesses wrong instead. See the README's
+"Does LLMClassifier/HybridClassifier actually close the gap?" section for the measured
+numbers (`scripts/llm_classifier_accuracy.py`), and
+[Known Limitations](../known-limitations.md#llmclassifierhybridclassifier-close-the-recall-gap-but-not-the-precision-gap)
+for the misroute breakdown.
 
-- `CASES` (26 cases) — the same structural suite as `RulesClassifier`
-- `SEMANTIC_CASES` (5 cases) — `PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` trajectories that rules cannot detect
-
-Run both at once:
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-... python examples/benchmark.py --llm
-```
-
-Expected results on `claude-haiku-4-5-20251001` (structural + semantic, 31 cases total):
-
-| Failure type | Cases | Notes |
-|---|---|---|
-| `LOOP_DETECTED` | 2 | Structural — LLM matches rules |
-| `WRONG_TOOL_CALLED` | 4 | Structural — LLM matches rules |
-| `SCHEMA_MISMATCH` | 4 | Structural — LLM matches rules |
-| `EXTERNAL_FAULT` | 4 | Structural — LLM matches rules |
-| `CONSTRAINT_IGNORED` | 2 | Semantic — LLM reads llm_output |
-| `PLAN_INCOMPLETE` | 3 | Semantic — LLM detects missing sub-goals |
-| `CONTEXT_OVERFLOW` | 2 | Semantic — LLM detects forgotten context |
-| `UNKNOWN` (negatives) | 10 | No false positives expected |
-
-`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are the two types that meaningfully differentiate `LLMClassifier` from `RulesClassifier`. These cases are intentionally designed with clear semantic signals (task stated two goals, agent reported only one; constraint stated at step 0, violated at the last step) to reflect the category accurately. The LLM may still return `UNKNOWN` on edge cases — use `HybridClassifier` in production to bound API cost while covering these types.
+`PLAN_INCOMPLETE` and `CONTEXT_OVERFLOW` are the two types `RulesClassifier` cannot detect at
+all — `LLMClassifier`/`HybridClassifier` are the only options for them. There is no held-out
+corpus for these two yet (corpora A–E only cover the seven structural types), so — consistent
+with this project's own rule against claiming a number without held-out evidence — no
+accuracy figure is claimed for them here. `tests/test_classifier_llm.py` covers the parsing
+and dispatch mechanism with mocked responses; it does not measure real-model recall.
 
 ---
 
@@ -333,21 +330,17 @@ agent = triage.Agent(
 )
 ```
 
-### Accuracy on the synthetic suite
+### Accuracy
 
-`HybridClassifier` is tested against the same `CASES + SEMANTIC_CASES` (31 cases) as `LLMClassifier`:
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-... python examples/benchmark.py --hybrid
-```
-
-Because `HybridClassifier` runs `RulesClassifier` first and only calls the LLM on `UNKNOWN`, it should match `RulesClassifier` exactly on the 26 structural cases (zero API calls) and match `LLMClassifier` on the 5 semantic cases (one LLM call each). The LLM call budget for the benchmark is unlimited by default — pass `max_llm_calls_per_run=N` to `HybridClassifier` if you want to measure the effect of capping it.
-
-Run both classifiers together to compare side by side:
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-... python examples/benchmark.py --llm --hybrid
-```
+`HybridClassifier` matches `RulesClassifier` exactly wherever rules don't return `UNKNOWN`
+(zero API calls), and falls to the LLM path everywhere else — so its accuracy is the LLM
+section above wherever rules are `UNKNOWN`, and `RulesClassifier`'s 100%-precision floor
+everywhere else. Measured on corpus D: 83% routing-sensitive recall, 3/20 misroutes — one of
+them a structural risk worth knowing about, not just noise: `HybridClassifier` can't tell
+"rules doesn't recognize this wording" from "this genuinely has no answer," so it can
+overturn a correctly-conservative rules `UNKNOWN` into a confident wrong guess. See
+[Known Limitations](../known-limitations.md#llmclassifierhybridclassifier-close-the-recall-gap-but-not-the-precision-gap)
+for the full mechanism and reproduce with `scripts/llm_classifier_accuracy.py`.
 
 ---
 
@@ -359,7 +352,7 @@ ANTHROPIC_API_KEY=sk-ant-... python examples/benchmark.py --llm --hybrid
 | `LLMClassifier` | API call on every failure | All 9 | Agents with complex reasoning failures |
 | `HybridClassifier` | API call only for `UNKNOWN` | All 9 | Most production agents — best cost/coverage tradeoff |
 
-`RulesClassifier` cannot detect `PLAN_INCOMPLETE` or `CONTEXT_OVERFLOW` — these always return `UNKNOWN`. If your agents produce these failure types, use `LLMClassifier` or `HybridClassifier`. Run `python examples/benchmark.py --hybrid` to measure accuracy on the synthetic suite (including semantic cases) before deploying.
+`RulesClassifier` cannot detect `PLAN_INCOMPLETE` or `CONTEXT_OVERFLOW` — these always return `UNKNOWN`. If your agents produce these failure types, use `LLMClassifier` or `HybridClassifier`, and test against your own trajectories before deploying — there is no held-out corpus for these two types yet (see the "Accuracy" section above).
 
 ---
 

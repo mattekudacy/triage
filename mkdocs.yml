@@ -50,12 +50,6 @@ markdown_extensions:
   - toc:
       permalink: true
 
-# Internal implementation plans live under docs/plans/ for convenience but are not
-# part of the published site — they reference internal tooling and describe work
-# that has already shipped.
-exclude_docs: |
-  plans/
-
 plugins:
   - search
   - mkdocstrings:
@@ -95,9 +89,14 @@ nav:
     - Ollama: examples/ollama.md
     - Groq: examples/groq.md
     - HuggingFace: examples/huggingface.md
+    - LangGraph: examples/langgraph-agent.md
+    - Multi-Agent Pipeline: examples/multi-agent.md
     - Durable Checkpoints: examples/durable-checkpoints.md
     - LLM Classifier: examples/llm-classifier.md
+    - Policy Chain: examples/policy-chain.md
+    - Policy Sequence: examples/policy-sequence.md
     - Failure Distribution: examples/failure-distribution.md
+    - OTel Tracing: examples/otel-tracing.md
     - OTel Trajectory: examples/otel-trajectory.md
   - Known Limitations: known-limitations.md
   - API Reference:

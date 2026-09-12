@@ -80,7 +80,7 @@ a real model in this environment — same API-key-blocked status as `hybrid_ambi
 
 | Script | What it produces |
 |---|---|
-| `gen_readme_charts.py` | The five matplotlib/seaborn PNG charts in `README.md` (`docs/assets/charts/`) — needs the `dev` extra, no API calls |
+| `gen_readme_charts.py` | The five matplotlib/seaborn PNG charts under `docs/assets/charts/` — one in `README.md`, four in `docs/known-limitations.md` — needs the `dev` extra, no API calls |
 
 ```bash
 PYTHONPATH=. python scripts/gen_readme_charts.py
