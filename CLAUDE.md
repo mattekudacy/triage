@@ -336,6 +336,21 @@ tag steps with an agent id, and the whole point of MAST phase 1 is that a loop s
 handoff is still a loop. Regression guard:
 `tests/test_classifier_rules.py::test_loop_detected_across_different_agent_ids`.
 
+**MAST phase 2 (verification-mismatch and conversation-reset rules) was investigated and
+deliberately NOT built — don't re-propose these as `RulesClassifier` rules without reading
+`docs/concepts/multi-agent-failures.md`'s "Investigated for phase 2" section first.** Both
+looked structurally promising in the phase 1 doc; designing them against real evidence found a
+reason each one fails. A verification-claim-vs-outcome mismatch (MAST 3.3) either produces a
+real later error — which every existing rule already finds by scanning the whole trajectory,
+so the "mismatch" detection adds nothing — or produces no error at all (MAST's own TicTacToe/
+Sudoku examples: wrong output, clean exit), which needs task-specific semantic judgment no
+regex can reach. A conversation-reset rule built on `state_hash` repetition (MAST 2.1) would
+false-positive on triage's own intentional `RecoveryAction.ROLLBACK`, and — confirmed against
+two real GitHub issues, not just reasoned about — real conversation-reset failures
+(`microsoft/autogen#1942`, `langchain-ai/langgraph#6064`) are purely behavioral with no error
+string or log line to match on at all. Both are semantic-only, same ceiling as
+`PLAN_INCOMPLETE`/`CONTEXT_OVERFLOW`; both now wait for phase 3's `LLMClassifier` extension.
+
 ## Classifier accuracy measurement
 
 Corpora live in `tests/data/error_corpus_{a,b,c,d}.json`; `scripts/classifier_accuracy.py`

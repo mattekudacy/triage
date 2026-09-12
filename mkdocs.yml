@@ -82,7 +82,7 @@ nav:
     - Policies & Actions: concepts/policies.md
     - Checkpoints: concepts/checkpoints.md
     - Attempt History: concepts/attempt-history.md
-    - "Multi-Agent Failures (proposal)": concepts/multi-agent-failures.md
+    - Multi-Agent Failures: concepts/multi-agent-failures.md
   - Adapters:
     - Overview: adapters/index.md
     - LangGraph: adapters/langgraph.md
