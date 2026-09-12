@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="327" viewBox="0 0 880 327" role="img" aria-label="The structural signal works where a protocol spec mandates the code"><style>
+  :root {
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --s1: #2a78d6;
+    --s2: #eb6834;
+    --demph: #898781;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --s1: #3987e5;
+      --s2: #d95926;
+      --demph: #898781;
+    }
+  }
+  .bg { fill: var(--surface); }
+  text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .title { fill: var(--ink); font-size: 16px; font-weight: 600; }
+  .subtitle { fill: var(--ink-2); font-size: 12.5px; }
+  .note { fill: var(--muted); font-size: 11px; }
+  .axis-label { fill: var(--ink-2); font-size: 12px; }
+  .axis-sub { fill: var(--muted); font-size: 10.5px; }
+  .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .value { fill: var(--ink); font-size: 12px; font-weight: 600; }
+  .value-2 { fill: var(--ink-2); font-size: 11px; }
+  .in-bar { fill: #ffffff; font-size: 12px; font-weight: 600; }
+  .grid { stroke: var(--grid); stroke-width: 1; }
+  .axis { stroke: var(--axis); stroke-width: 1; }
+  .s1-fill { fill: var(--s1); }
+  .s2-fill { fill: var(--s2); }
+  .demph-fill { fill: var(--demph); }
+  .s1-stroke { stroke: var(--s1); fill: none; stroke-width: 2;
+               stroke-linejoin: round; stroke-linecap: round; }
+  .demph-stroke { stroke: var(--demph); fill: none; stroke-width: 2;
+                  stroke-linejoin: round; stroke-linecap: round; }
+  .ring { stroke: var(--surface); stroke-width: 2; }
+  .ann { stroke: var(--muted); stroke-width: 1; fill: none; }
+</style><rect class="bg" width="880" height="327"/><text x="60.0" y="30.0" class="title" text-anchor="start">The structural signal works where a protocol spec mandates the code</text><text x="60.0" y="50.0" class="subtitle" text-anchor="start">Corpus E's routing-sensitive failures, split by the error code the vendor actually returns</text><line x1="330.0" y1="85.0" x2="330.0" y2="221.0" class="axis"/><text x="330.0" y="239.0" class="tick" text-anchor="middle">0</text><line x1="400.0" y1="85.0" x2="400.0" y2="221.0" class="grid"/><text x="400.0" y="239.0" class="tick" text-anchor="middle">1</text><line x1="470.0" y1="85.0" x2="470.0" y2="221.0" class="grid"/><text x="470.0" y="239.0" class="tick" text-anchor="middle">2</text><line x1="540.0" y1="85.0" x2="540.0" y2="221.0" class="grid"/><text x="540.0" y="239.0" class="tick" text-anchor="middle">3</text><line x1="610.0" y1="85.0" x2="610.0" y2="221.0" class="grid"/><text x="610.0" y="239.0" class="tick" text-anchor="middle">4</text><line x1="680.0" y1="85.0" x2="680.0" y2="221.0" class="grid"/><text x="680.0" y="239.0" class="tick" text-anchor="middle">5</text><line x1="750.0" y1="85.0" x2="750.0" y2="221.0" class="grid"/><text x="750.0" y="239.0" class="tick" text-anchor="middle">6</text><text x="540.0" y="257.0" class="axis-sub" text-anchor="middle">corpus E entries</text><text x="60.0" y="105.0" class="axis-label" text-anchor="start">JSON-RPC code (MCP)</text><text x="60.0" y="120.0" class="axis-sub" text-anchor="start">−32601 / −32700 — mandated by the</text><text x="60.0" y="133.0" class="axis-sub" text-anchor="start">spec, so every server returns them</text><rect class="s1-fill" x="330.0" y="101.0" width="138.0" height="24.0"/><text x="400.0" y="117.0" class="in-bar" text-anchor="middle">2</text><path class="s2-fill" d="M470.0,101.0 L536.0,101.0 Q540.0,101.0 540.0,105.0 L540.0,121.0 Q540.0,125.0 536.0,125.0 L470.0,125.0 Z"/><text x="505.0" y="117.0" class="in-bar" text-anchor="middle">1</text><text x="552.0" y="117.0" class="value" text-anchor="start">3 of 3 caught</text><text x="60.0" y="173.0" class="axis-label" text-anchor="start">HTTP status only</text><text x="60.0" y="188.0" class="axis-sub" text-anchor="start">Together AI, Fireworks, Replicate ×2,</text><text x="60.0" y="201.0" class="axis-sub" text-anchor="start">Cerebras, Perplexity — all 404 / 400 / 422</text><rect class="s2-fill" x="330.0" y="169.0" width="68.0" height="24.0"/><text x="365.0" y="185.0" class="in-bar" text-anchor="middle">1</text><path class="demph-fill" d="M400.0,169.0 L746.0,169.0 Q750.0,169.0 750.0,173.0 L750.0,189.0 Q750.0,193.0 746.0,193.0 L400.0,193.0 Z"/><text x="575.0" y="185.0" class="in-bar" text-anchor="middle">5</text><text x="762.0" y="185.0" class="value" text-anchor="start">1 of 6 caught</text><rect class="s1-fill" x="60.0" y="64.0" width="10" height="10" rx="2"/><text x="76.0" y="73.0" class="value-2" text-anchor="start">caught by the structured code</text><rect class="s2-fill" x="261.9" y="64.0" width="10" height="10" rx="2"/><text x="277.9" y="73.0" class="value-2" text-anchor="start">caught by message text</text><rect class="demph-fill" x="433.7" y="64.0" width="10" height="10" rx="2"/><text x="449.7" y="73.0" class="value-2" text-anchor="start">missed — falls through to UNKNOWN</text><text x="60.0" y="283.0" class="note" text-anchor="start">Source: scripts/classifier_accuracy.py block 10, scored live · an entry counts as caught by the code only when removing Step.metadata</text><text x="60.0" y="297.0" class="note" text-anchor="start">changes the answer · HTTP 404 / 400 / 422 are left out of the mapping on purpose: one code, several unrelated failures, so routing on it would</text><text x="60.0" y="311.0" class="note" text-anchor="start">misroute.</text></svg>

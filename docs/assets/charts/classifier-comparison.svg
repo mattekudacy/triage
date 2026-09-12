@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" role="img" aria-label="Semantic classification buys recall and spends precision"><style>
+  :root {
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --s1: #2a78d6;
+    --s2: #eb6834;
+    --demph: #898781;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --s1: #3987e5;
+      --s2: #d95926;
+      --demph: #898781;
+    }
+  }
+  .bg { fill: var(--surface); }
+  text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .title { fill: var(--ink); font-size: 16px; font-weight: 600; }
+  .subtitle { fill: var(--ink-2); font-size: 12.5px; }
+  .note { fill: var(--muted); font-size: 11px; }
+  .axis-label { fill: var(--ink-2); font-size: 12px; }
+  .axis-sub { fill: var(--muted); font-size: 10.5px; }
+  .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .value { fill: var(--ink); font-size: 12px; font-weight: 600; }
+  .value-2 { fill: var(--ink-2); font-size: 11px; }
+  .in-bar { fill: #ffffff; font-size: 12px; font-weight: 600; }
+  .grid { stroke: var(--grid); stroke-width: 1; }
+  .axis { stroke: var(--axis); stroke-width: 1; }
+  .s1-fill { fill: var(--s1); }
+  .s2-fill { fill: var(--s2); }
+  .demph-fill { fill: var(--demph); }
+  .s1-stroke { stroke: var(--s1); fill: none; stroke-width: 2;
+               stroke-linejoin: round; stroke-linecap: round; }
+  .demph-stroke { stroke: var(--demph); fill: none; stroke-width: 2;
+                  stroke-linejoin: round; stroke-linecap: round; }
+  .ring { stroke: var(--surface); stroke-width: 2; }
+  .ann { stroke: var(--muted); stroke-width: 1; fill: none; }
+</style><rect class="bg" width="880" height="400"/><text x="60.0" y="30.0" class="title" text-anchor="start">Semantic classification buys recall and spends precision</text><text x="60.0" y="50.0" class="subtitle" text-anchor="start">Corpus D scored three ways. RulesClassifier misses safely — every miss is UNKNOWN — while the LLM paths answer</text><text x="60.0" y="67.0" class="subtitle" text-anchor="start">confidently and are sometimes wrong</text><line x1="250.0" y1="96.0" x2="250.0" y2="312.0" class="axis"/><text x="250.0" y="330.0" class="tick" text-anchor="middle">0%</text><line x1="377.0" y1="96.0" x2="377.0" y2="312.0" class="grid"/><text x="377.0" y="330.0" class="tick" text-anchor="middle">25%</text><line x1="504.0" y1="96.0" x2="504.0" y2="312.0" class="grid"/><text x="504.0" y="330.0" class="tick" text-anchor="middle">50%</text><line x1="631.0" y1="96.0" x2="631.0" y2="312.0" class="grid"/><text x="631.0" y="330.0" class="tick" text-anchor="middle">75%</text><line x1="758.0" y1="96.0" x2="758.0" y2="312.0" class="grid"/><text x="758.0" y="330.0" class="tick" text-anchor="middle">100%</text><text x="60.0" y="126.0" class="axis-label" text-anchor="start">RulesClassifier</text><text x="60.0" y="142.0" class="axis-sub" text-anchor="start">zero API calls</text><path class="s1-fill" d="M250.0,112.0 L288.3,112.0 Q292.3,112.0 292.3,116.0 L292.3,132.0 Q292.3,136.0 288.3,136.0 L250.0,136.0 Z"/><text x="302.3" y="128.0" class="value" text-anchor="start">8%</text><text x="327.2" y="128.0" class="value-2" text-anchor="start">1/12</text><text x="260.0" y="154.0" class="value" text-anchor="start">0%</text><text x="284.9" y="154.0" class="value-2" text-anchor="start">0/20</text><text x="60.0" y="196.0" class="axis-label" text-anchor="start">LLMClassifier</text><text x="60.0" y="212.0" class="axis-sub" text-anchor="start">every failure asked</text><path class="s1-fill" d="M250.0,182.0 L669.3,182.0 Q673.3,182.0 673.3,186.0 L673.3,202.0 Q673.3,206.0 669.3,206.0 L250.0,206.0 Z"/><line x1="631.0" y1="194.0" x2="673.3" y2="194.0" class="ann"/><line x1="631.0" y1="189.0" x2="631.0" y2="199.0" class="ann"/><line x1="673.3" y1="189.0" x2="673.3" y2="199.0" class="ann"/><text x="683.3" y="198.0" class="value" text-anchor="start">83%</text><text x="717.3" y="198.0" class="value-2" text-anchor="start">9–10/12</text><path class="s2-fill" d="M250.0,208.0 L347.6,208.0 Q351.6,208.0 351.6,212.0 L351.6,228.0 Q351.6,232.0 347.6,232.0 L250.0,232.0 Z"/><text x="361.6" y="224.0" class="value" text-anchor="start">20%</text><text x="395.6" y="224.0" class="value-2" text-anchor="start">4/20</text><text x="60.0" y="266.0" class="axis-label" text-anchor="start">HybridClassifier</text><text x="60.0" y="282.0" class="axis-sub" text-anchor="start">rules first, LLM on UNKNOWN</text><path class="s1-fill" d="M250.0,252.0 L669.3,252.0 Q673.3,252.0 673.3,256.0 L673.3,272.0 Q673.3,276.0 669.3,276.0 L250.0,276.0 Z"/><text x="683.3" y="268.0" class="value" text-anchor="start">83%</text><text x="717.3" y="268.0" class="value-2" text-anchor="start">10/12</text><path class="s2-fill" d="M250.0,278.0 L322.2,278.0 Q326.2,278.0 326.2,282.0 L326.2,298.0 Q326.2,302.0 322.2,302.0 L250.0,302.0 Z"/><text x="336.2" y="294.0" class="value" text-anchor="start">15%</text><text x="370.2" y="294.0" class="value-2" text-anchor="start">3/20</text><rect class="s1-fill" x="60.0" y="81.0" width="10" height="10" rx="2"/><text x="76.0" y="90.0" class="value-2" text-anchor="start">routing-sensitive recall (higher is better)</text><rect class="s2-fill" x="320.0" y="81.0" width="10" height="10" rx="2"/><text x="336.0" y="90.0" class="value-2" text-anchor="start">misroutes — a confident wrong answer (lower is better)</text><text x="60.0" y="370.0" class="note" text-anchor="start">Source: RulesClassifier scored live · LLM and Hybrid rows from scripts/llm_classifier_accuracy.py with gpt-oss:120b-cloud — representative</text><text x="60.0" y="384.0" class="note" text-anchor="start">runs, not a frozen benchmark: reasoning-model sampling varies run to run, which is why the LLM recall bar carries a range.</text></svg>

@@ -62,6 +62,28 @@ or the escalation-to-LLM premise silently breaks.
 constructed so the correct recovery hint changes the outcome. It shows that routing works,
 not how often classification is right.
 
+## Charts
+
+| Script | What it produces |
+|---|---|
+| `gen_readme_charts.py` | The five SVG charts in `README.md` (`docs/assets/charts/`) — stdlib only, no API calls |
+
+```bash
+PYTHONPATH=. python scripts/gen_readme_charts.py
+```
+
+It re-scores the corpora itself, through the same `RulesClassifier` path
+`classifier_accuracy.py` uses, and derives the routing demo from `bench_synthetic.py`'s own
+`_task_body` — so the charts cannot drift from the numbers they illustrate. The two figures it
+*can't* recompute are marked `HISTORICAL` in the module: corpus C's pre-tuning v1.0 score
+(re-scoring C today returns 100%, since it is training data now) and the `LLMClassifier` /
+`HybridClassifier` runs (they need a live model). Re-run it after any `rules.py` change that
+moves a held-out number, and commit the regenerated SVGs with it.
+
+Each SVG carries its own `prefers-color-scheme` block, so one asset reads correctly in GitHub's
+light and dark themes; charts are written by hand (no matplotlib) to keep the repo's
+stdlib-only posture for tooling.
+
 ## Error corpora
 
 `gen_error_corpus{,_b,_c,_d,_e}.py` regenerate `tests/data/error_corpus_{a,b,c,d,e}.json` by

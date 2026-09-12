@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="496" viewBox="0 0 880 496" role="img" aria-label="One tuning cycle moved nothing; a structural change moved the number"><style>
+  :root {
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --s1: #2a78d6;
+    --s2: #eb6834;
+    --demph: #898781;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --s1: #3987e5;
+      --s2: #d95926;
+      --demph: #898781;
+    }
+  }
+  .bg { fill: var(--surface); }
+  text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .title { fill: var(--ink); font-size: 16px; font-weight: 600; }
+  .subtitle { fill: var(--ink-2); font-size: 12.5px; }
+  .note { fill: var(--muted); font-size: 11px; }
+  .axis-label { fill: var(--ink-2); font-size: 12px; }
+  .axis-sub { fill: var(--muted); font-size: 10.5px; }
+  .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .value { fill: var(--ink); font-size: 12px; font-weight: 600; }
+  .value-2 { fill: var(--ink-2); font-size: 11px; }
+  .in-bar { fill: #ffffff; font-size: 12px; font-weight: 600; }
+  .grid { stroke: var(--grid); stroke-width: 1; }
+  .axis { stroke: var(--axis); stroke-width: 1; }
+  .s1-fill { fill: var(--s1); }
+  .s2-fill { fill: var(--s2); }
+  .demph-fill { fill: var(--demph); }
+  .s1-stroke { stroke: var(--s1); fill: none; stroke-width: 2;
+               stroke-linejoin: round; stroke-linecap: round; }
+  .demph-stroke { stroke: var(--demph); fill: none; stroke-width: 2;
+                  stroke-linejoin: round; stroke-linecap: round; }
+  .ring { stroke: var(--surface); stroke-width: 2; }
+  .ann { stroke: var(--muted); stroke-width: 1; fill: none; }
+</style><rect class="bg" width="880" height="496"/><text x="60.0" y="30.0" class="title" text-anchor="start">One tuning cycle moved nothing; a structural change moved the number</text><text x="60.0" y="50.0" class="subtitle" text-anchor="start">RulesClassifier recall on three successive held-out corpora, each scored once, split by whether classification changes the</text><text x="60.0" y="67.0" class="subtitle" text-anchor="start">recovery outcome</text><line x1="60.0" y1="336.0" x2="854.0" y2="336.0" class="axis"/><text x="50.0" y="340.0" class="tick" text-anchor="end">0%</text><line x1="60.0" y1="283.5" x2="854.0" y2="283.5" class="grid"/><text x="50.0" y="287.5" class="tick" text-anchor="end">25%</text><line x1="60.0" y1="231.0" x2="854.0" y2="231.0" class="grid"/><text x="50.0" y="235.0" class="tick" text-anchor="end">50%</text><line x1="60.0" y1="178.5" x2="854.0" y2="178.5" class="grid"/><text x="50.0" y="182.5" class="tick" text-anchor="end">75%</text><line x1="60.0" y1="126.0" x2="854.0" y2="126.0" class="grid"/><text x="50.0" y="130.0" class="tick" text-anchor="end">100%</text><polyline class="s1-stroke" points="192.3,318.5 457.0,318.5 721.7,242.7"/><circle cx="192.3" cy="318.5" r="4.5" class="s1-fill ring"/><text x="192.3" y="305.5" class="value" text-anchor="middle">8%  (1/12)</text><circle cx="457.0" cy="318.5" r="4.5" class="s1-fill ring"/><text x="457.0" y="305.5" class="value" text-anchor="middle">8%  (1/12)</text><circle cx="721.7" cy="242.7" r="4.5" class="s1-fill ring"/><text x="721.7" y="229.7" class="value" text-anchor="middle">44%  (4/9)</text><polyline class="demph-stroke" points="192.3,156.0 457.0,156.0 721.7,126.0"/><circle cx="192.3" cy="156.0" r="4.5" class="demph-fill ring"/><text x="192.3" y="143.0" class="value" text-anchor="middle">86%  (12/14)</text><circle cx="457.0" cy="156.0" r="4.5" class="demph-fill ring"/><text x="457.0" y="143.0" class="value" text-anchor="middle">86%  (6/7)</text><circle cx="721.7" cy="126.0" r="4.5" class="demph-fill ring"/><text x="721.7" y="148.0" class="value" text-anchor="middle">100%  (6/6)</text><text x="192.3" y="358.0" class="axis-label" text-anchor="middle">Corpus C</text><text x="192.3" y="374.0" class="axis-sub" text-anchor="middle">v1.0 — scored before tuning</text><text x="457.0" y="358.0" class="axis-label" text-anchor="middle">Corpus D</text><text x="457.0" y="374.0" class="axis-sub" text-anchor="middle">v1.1 — after pattern tuning</text><text x="721.7" y="358.0" class="axis-label" text-anchor="middle">Corpus E</text><text x="721.7" y="374.0" class="axis-sub" text-anchor="middle">v1.2 — after structured codes</text><line x1="264.7" y1="396.0" x2="384.7" y2="396.0" class="ann"/><text x="324.7" y="414.0" class="axis-sub" text-anchor="middle">v1.1: ~15 new regex patterns,</text><text x="324.7" y="428.0" class="axis-sub" text-anchor="middle">reverse-engineered from corpus C's misses</text><line x1="529.3" y1="396.0" x2="649.3" y2="396.0" class="ann"/><text x="589.3" y="414.0" class="axis-sub" text-anchor="middle">v1.2: Step.metadata</text><text x="589.3" y="428.0" class="axis-sub" text-anchor="middle">structured error-code matching</text><line x1="60.0" y1="86.0" x2="76.0" y2="86.0" class="s1-stroke"/><circle cx="68.0" cy="86.0" r="4" class="s1-fill ring"/><text x="82.0" y="90.0" class="value-2" text-anchor="start">routing-sensitive types — recovery needs the right hint</text><line x1="406.6" y1="86.0" x2="422.6" y2="86.0" class="demph-stroke"/><circle cx="414.6" cy="86.0" r="4" class="demph-fill ring"/><text x="428.6" y="90.0" class="value-2" text-anchor="start">self-healing types — any retry heals these</text><text x="60.0" y="466.0" class="note" text-anchor="start">Source: scripts/classifier_accuracy.py blocks 8 and 10, corpora D and E scored live · corpus C is its pre-tuning v1.0 measurement, recorded in</text><text x="60.0" y="480.0" class="note" text-anchor="start">docs/known-limitations.md · three different corpora scored once each, not one benchmark tracked over time.</text></svg>
