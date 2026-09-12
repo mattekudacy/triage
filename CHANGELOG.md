@@ -9,6 +9,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **MAST phase 3 pilot corpus + experimental scoring script for 3 of the 12 semantic-only
+  modes.** Following `docs/concepts/multi-agent-failures.md`'s "Phase 3 scoping" recommendation
+  to pilot a small subset before sourcing all twelve, `scripts/gen_mast_pilot_corpus.py`
+  generates `tests/data/mast_pilot_corpus.json` (6 entries, real GitHub issues only, same
+  discipline as `tests/data/error_corpus_*.json`) for 2.5 Ignored Other Agent's Input, 2.4
+  Information Withholding, and 1.4 Loss of Conversation History, and
+  `scripts/mast_mode_pilot_accuracy.py` scores an experimental prompt against it —
+  **deliberately outside `LLMClassifier`'s stable contract**: its prompt and label set live
+  only in the script, `_SYSTEM_PROMPT`/`_parse_response()` are untouched, and `classify()` still
+  only ever returns one of the 9 stable `FailureType` members.
+
+  2.5 and 1.4 each got two clean, independently-sourced entries
+  ([FlowiseAI/Flowise#3512](https://github.com/FlowiseAI/Flowise/issues/3512),
+  [microsoft/autogen#6891](https://github.com/microsoft/autogen/issues/6891) for 2.5;
+  [langchain-ai/langgraph#2395](https://github.com/langchain-ai/langgraph/issues/2395),
+  [github/copilot-cli#1180](https://github.com/github/copilot-cli/issues/1180) for 1.4). 2.4 got
+  only one clean entry
+  ([danny-avila/LibreChat#10569](https://github.com/danny-avila/LibreChat/issues/10569)) — its
+  second real candidate,
+  [openai/openai-agents-python#348](https://github.com/openai/openai-agents-python/issues/348),
+  turned out genuinely ambiguous between 2.4 and 2.5 on inspection (the reporter's own account
+  doesn't establish which side dropped the information), and is recorded as such rather than
+  forced into either label. This is a real finding, not a corpus-building shortfall: it suggests
+  2.4/2.5 can be hard to tell apart even from a complete, real trace, which bears on whether
+  either could ever be a reliable stable `FailureType` regardless of prompt quality. See
+  `docs/concepts/multi-agent-failures.md`'s "Pilot corpus sourced" subsection for the full
+  writeup.
+
+  Neither script has been run against a real model — same
+  API-key-blocked status as `hybrid_ambiguity_accuracy.py`; no accuracy number is claimed here.
+  `tests/test_mast_pilot_corpus.py` adds 8 zero-API-call structural guards on the corpus itself
+  (every entry cites a real source, every scored entry uses a piloted mode code, the 2/2/1
+  source-count split is pinned so it can't silently drift). `scripts/README.md`'s Benchmarks
+  table and corpus-discipline section updated.
+
 - **`LLMClassifier`'s prompt now includes `Step.agent_id` per step, when set** — Phase 3
   scoping's one low-risk, shipped prerequisite (`docs/concepts/multi-agent-failures.md`'s new
   "Phase 3 scoping" section). `_build_prompt()` previously never emitted agent identity, so a
