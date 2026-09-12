@@ -6,6 +6,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "web/**"
   workflow_dispatch:
 
 permissions:
@@ -34,6 +35,9 @@ jobs:
 
       - name: Build docs
         run: mkdocs build --strict
+
+      - name: Overlay landing page
+        run: cp -r web/. site/
 
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v3

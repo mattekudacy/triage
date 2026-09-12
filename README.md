@@ -9,6 +9,8 @@ pip install triage-agent
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+**[mattekudacy.github.io/triage](https://mattekudacy.github.io/triage/)** — site, docs, and quick start.
+
 ---
 
 ## The problem

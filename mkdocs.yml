@@ -71,8 +71,8 @@ plugins:
             members_order: source
 
 nav:
-  - Home: index.md
   - Getting Started:
+    - Overview: getting-started/overview.md
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
     - How It Works: getting-started/how-it-works.md

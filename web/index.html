@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>triage</title>
+<meta name="description" content="Classify why your agent failed. Recover intelligently. A framework-agnostic Python library that wraps any async agent callable, classifies the failure by type, and routes each type to a recovery strategy.">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="triage — classify why your agent failed">
+<meta property="og:description" content="Wraps any async agent callable, classifies the failure by type, and routes each type to a recovery strategy that fits it.">
+<meta property="og:url" content="https://mattekudacy.github.io/triage/">
+<meta name="twitter:card" content="summary">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0e0d'/%3E%3Crect x='12' y='6' width='8' height='20' rx='2' fill='%23ff6b5e'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<link rel="stylesheet" href="landing.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/triage/">
+      <span class="wordmark-tag" aria-hidden="true"></span>
+      triage
+    </a>
+    <div class="nav-links">
+      <a href="getting-started/quickstart/">Docs</a>
+      <a href="known-limitations/">Limitations</a>
+      <a href="https://github.com/mattekudacy/triage">GitHub</a>
+      <a href="https://pypi.org/project/triage-agent/">PyPI</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+
+<!-- ============ HERO ============ -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <h1>
+        Classify why your agent failed.
+        <span class="dim">Recover intelligently.</span>
+      </h1>
+
+      <p class="hero-sub">
+        Your framework knows <strong>that</strong> the agent failed. It doesn't know
+        <strong>why</strong> — so every failure gets the same blunt response. <code>triage</code>
+        wraps any async agent callable, classifies the failure, and routes each type to the
+        recovery that actually fits it.
+      </p>
+
+      <div class="install">
+        <code id="install-cmd">pip install triage-agent</code>
+        <button class="copy" type="button" data-copy="pip install triage-agent">Copy</button>
+      </div>
+
+      <div class="cta-row">
+        <a class="btn btn-primary" href="getting-started/quickstart/">Quick start</a>
+        <a class="btn btn-ghost" href="https://github.com/mattekudacy/triage">View source</a>
+      </div>
+
+      <div class="meta-row">
+        <span>MIT</span>
+        <span>Python 3.10+</span>
+        <span>3 runtime deps</span>
+        <span>No framework lock-in</span>
+      </div>
+    </div>
+
+    <!-- The product in one figure: a trajectory, the step that failed,
+         the tag it earns, and the strategy that tag routes to. -->
+    <figure class="readout" style="margin:0">
+      <div class="readout-head">
+        <span>Trajectory</span>
+        <span>run 1 &middot; 3 steps</span>
+      </div>
+      <div class="readout-body">
+        <div class="step">
+          <span class="step-i">0</span>
+          <span class="step-name">fetch_user(id=4192)</span>
+          <span class="step-ok">ok</span>
+        </div>
+        <div class="step">
+          <span class="step-i">1</span>
+          <span class="step-name">lookup_orders(user=4192)</span>
+          <span class="step-ok">ok</span>
+        </div>
+        <div class="step is-failed">
+          <span class="step-i">2</span>
+          <span class="step-name">send_summary(to=&hellip;)</span>
+          <span class="step-bad">fail</span>
+          <span class="step-err">ToolNotFoundError: no tool named 'send_summary'</span>
+        </div>
+      </div>
+      <div class="flow">
+        <div class="flow-step">
+          <span class="flow-label">Classify</span>
+          <span class="tag tag-red">WRONG_TOOL_CALLED</span>
+        </div>
+        <div class="flow-step">
+          <span class="flow-label">Route</span>
+          <span class="flow-value"><code>retry_with_tool_manifest(max_attempts=3)</code></span>
+        </div>
+        <div class="flow-step">
+          <span class="flow-label">Retry</span>
+          <span class="flow-value">attempt 2 &mdash; agent receives the tool manifest</span>
+        </div>
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ PROBLEM ============ -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">The problem</p>
+      <h2>A retry that carries no new information repeats the same mistake.</h2>
+      <p class="lead">
+        Agent failures don't come with clean discriminators. The same <code>RuntimeError</code>
+        can mean nine different things depending on what the agent was doing before it failed —
+        and the signal lives in the trajectory, not the exception string.
+      </p>
+    </div>
+
+    <div class="contrast">
+      <div>
+        <p class="eyebrow">Without classification</p>
+        <h3>One response for every failure</h3>
+        <p>
+          Retry from scratch, or give up. The agent that called a tool which doesn't exist
+          calls it again. The agent that blew its context window gets handed the same
+          oversized context. Recovery is a coin flip that costs a full run.
+        </p>
+      </div>
+      <div>
+        <p class="eyebrow">With triage</p>
+        <h3>The failure type selects the recovery</h3>
+        <p>
+          A wrong tool call gets the tool manifest. A transient 503 gets exponential backoff.
+          A detected loop gets a new plan, not another lap. A blown context gets replanned
+          against a compressed one.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TAXONOMY ============ -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Taxonomy</p>
+      <h2>Nine failure types, grouped by the recovery they need.</h2>
+      <p class="lead">
+        The grouping is the point. Some failures heal on any retry, so classifying them buys
+        you nothing. Others only recover if the retry carries the right hint — that group is
+        the entire reason this library exists.
+      </p>
+    </div>
+
+    <div class="triage-group">
+      <div class="group-head">
+        <p class="eyebrow">Immediate &nbsp;&middot;&nbsp; routing-sensitive</p>
+        <p class="group-note">Only the matched hint recovers these.</p>
+      </div>
+      <div class="types">
+        <div class="type">
+          <span class="tag tag-red">WRONG_TOOL_CALLED</span>
+          <p>The agent called a tool that doesn't exist. Retry with the correct tool manifest injected.</p>
+        </div>
+        <div class="type">
+          <span class="tag tag-red">SCHEMA_MISMATCH</span>
+          <p>Output didn't parse, or arguments didn't validate. Retry with the schema hint.</p>
+        </div>
+        <div class="type">
+          <span class="tag tag-red">CONSTRAINT_IGNORED</span>
+          <p>The agent violated a constraint it was given. Replan with the constraint restated.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="triage-group">
+      <div class="group-head">
+        <p class="eyebrow">Delayed &nbsp;&middot;&nbsp; structural</p>
+        <p class="group-note">A retry repeats the mistake; the plan has to change.</p>
+      </div>
+      <div class="types">
+        <div class="type">
+          <span class="tag tag-amber">LOOP_DETECTED</span>
+          <p>The same tool and input repeated across recent steps — including across an agent handoff. Replan, or roll back.</p>
+        </div>
+        <div class="type">
+          <span class="tag tag-amber">PLAN_INCOMPLETE</span>
+          <p>The agent stopped with subgoals outstanding. Resume from the subgoal it abandoned.</p>
+        </div>
+        <div class="type">
+          <span class="tag tag-amber">CONTEXT_OVERFLOW</span>
+          <p>The window filled. Replan against a compressed context rather than the same one.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="triage-group">
+      <div class="group-head">
+        <p class="eyebrow">Minor &nbsp;&middot;&nbsp; self-healing</p>
+        <p class="group-note">Any retry recovers these. Classification adds nothing — which is worth saying out loud.</p>
+      </div>
+      <div class="types">
+        <div class="type">
+          <span class="tag tag-green">EXTERNAL_FAULT</span>
+          <p>A 429 or 5xx from something you don't control. Back off and retry.</p>
+        </div>
+        <div class="type">
+          <span class="tag tag-green">TIMEOUT</span>
+          <p>A deadline passed. Back off and retry, or replan if it keeps happening.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="triage-group">
+      <div class="group-head">
+        <p class="eyebrow">Untriaged</p>
+        <p class="group-note">The safe default when the classifier doesn't recognise the failure.</p>
+      </div>
+      <div class="types">
+        <div class="type">
+          <span class="tag tag-grey">UNKNOWN</span>
+          <p>Falls through to your <code>default</code> policy. Escalates rather than guessing.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CODE ============ -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Usage</p>
+      <h2>A policy is a mapping from failure type to strategy.</h2>
+      <p class="lead">
+        You write the policy once. <code>triage</code> classifies each failure, looks up the
+        matching strategy, and executes what that strategy asks for — retry, replan, roll back
+        to a checkpoint, resume from a subgoal, suspend, or escalate.
+      </p>
+    </div>
+
+    <div class="code-grid">
+      <div class="code-card">
+        <div class="code-head"><span>Any async callable</span></div>
+<pre><code><span class="k">import</span> <span class="f">triage</span>
+<span class="k">from</span> triage.strategies.retry <span class="k">import</span> retry_with_tool_manifest, backoff_and_retry
+<span class="k">from</span> triage.strategies.replan <span class="k">import</span> replan
+<span class="k">from</span> triage.taxonomy <span class="k">import</span> Step
+
+<span class="k">async def</span> <span class="f">my_agent</span>(task: <span class="f">str</span>, *, <span class="a">record_step</span>, <span class="a">update_state</span>, **kwargs):
+    data = fetch_data(task)
+    record_step(<span class="f">Step</span>(<span class="a">index</span>=<span class="t">0</span>, <span class="a">action</span>=<span class="s">"fetch"</span>, <span class="a">tool_output</span>=data))
+    update_state({<span class="s">"data"</span>: data})
+    <span class="k">return</span> process(data)
+
+policy = triage.<span class="f">FailurePolicy</span>(
+    <span class="t">WRONG_TOOL_CALLED</span> = retry_with_tool_manifest(<span class="a">max_attempts</span>=<span class="t">3</span>),
+    <span class="t">EXTERNAL_FAULT</span>    = backoff_and_retry(<span class="a">max_attempts</span>=<span class="t">5</span>),
+    <span class="t">LOOP_DETECTED</span>     = replan(<span class="a">hint</span>=<span class="s">"Try a different approach."</span>),
+    <span class="t">default</span>           = triage.FailurePolicy.escalate_by_default(),
+)
+
+agent = triage.<span class="f">Agent</span>(my_agent, <span class="a">policy</span>=policy)
+result = <span class="k">await</span> agent.run(<span class="s">"your task"</span>)</code></pre>
+      </div>
+
+      <div class="code-card">
+        <div class="code-head"><span>Or wrap a framework</span></div>
+<pre><code><span class="k">import</span> <span class="f">triage</span>
+<span class="k">from</span> triage.adapters.langgraph <span class="k">import</span> wrap_langgraph
+<span class="k">from</span> triage.strategies.retry <span class="k">import</span> backoff_and_retry
+<span class="k">from</span> triage.strategies.replan <span class="k">import</span> replan
+
+<span class="k">from</span> my_graph <span class="k">import</span> graph  <span class="c"># a compiled StateGraph</span>
+
+agent = <span class="f">wrap_langgraph</span>(graph, <span class="a">policy</span>=triage.<span class="f">FailurePolicy</span>(
+    <span class="t">EXTERNAL_FAULT</span> = backoff_and_retry(<span class="a">max_attempts</span>=<span class="t">3</span>),
+    <span class="t">LOOP_DETECTED</span>  = replan(<span class="a">hint</span>=<span class="s">"Try a different approach."</span>),
+    <span class="t">default</span>        = triage.FailurePolicy.escalate_by_default(),
+))
+
+<span class="c"># The adapter reads graph.astream_events() and records each</span>
+<span class="c"># tool call and model turn as a Step for you.</span>
+result = <span class="k">await</span> agent.run(<span class="s">"Summarize the latest earnings report."</span>)</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MEASUREMENT ============ -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Measurement</p>
+      <h2>What it detects, and what it misses.</h2>
+    </div>
+
+    <p class="measure-lead">
+      Routing only helps if the classifier gets the type right. So here is the held-out
+      number, split by group — because the aggregate averages two groups whose value to you is
+      <em>opposite</em>, and quoting it alone would flatter the result.
+    </p>
+
+    <div class="scorecard">
+      <div class="scorecard-head">
+        <p class="eyebrow">RulesClassifier &nbsp;&middot;&nbsp; corpus D</p>
+        <span class="sub">Held out, scored once. Zero API calls.</span>
+      </div>
+
+      <div class="score-row">
+        <div class="score-label">
+          <span class="what"><span class="tag tag-green">Self-healing</span> &nbsp;<code>external_fault</code>, <code>timeout</code></span>
+          <span class="why">Recall is good here — and classification buys nothing over a blind retry.</span>
+        </div>
+        <div class="score-value v-green">86%<span class="frac">6 / 7</span></div>
+      </div>
+
+      <div class="score-row">
+        <div class="score-label">
+          <span class="what"><span class="tag tag-red">Routing-sensitive</span> &nbsp;<code>wrong_tool_called</code>, <code>schema_mismatch</code></span>
+          <span class="why">Only the matched hint recovers these. This is the value proposition, and this is the number.</span>
+        </div>
+        <div class="score-value v-red">8%<span class="frac">1 / 12</span></div>
+      </div>
+
+      <div class="score-row">
+        <div class="score-label">
+          <span class="what">Precision</span>
+          <span class="why">Every miss falls through to <code>UNKNOWN</code> and your default policy — never a confident wrong guess.</span>
+        </div>
+        <div class="score-value v-green">100%<span class="frac">0 misroutes</span></div>
+      </div>
+    </div>
+
+    <div class="finding">
+      <strong>The finding that produced those numbers:</strong> a tuning pass added roughly
+      fifteen patterns reverse-engineered from an earlier corpus's exact misses, closed all
+      thirteen of them, and moved routing-sensitive recall on a fresh corpus by nothing at all.
+      Ollama, MCP, CrewAI, Semantic Kernel, HuggingFace and OpenRouter each phrase
+      &ldquo;no such tool&rdquo; differently. Self-healing recall held at 86% for the mirror-image
+      reason: that group clusters around HTTP status codes and the words
+      &ldquo;timeout&rdquo; and &ldquo;rate limit&rdquo; — a small vocabulary SDKs happen to share.
+    </div>
+
+    <div class="scorecard">
+      <div class="scorecard-head">
+        <p class="eyebrow">HybridClassifier &nbsp;&middot;&nbsp; same corpus</p>
+        <span class="sub">Rules first, LLM only on <code>UNKNOWN</code>. Closes the recall gap — at a price.</span>
+      </div>
+
+      <div class="score-row">
+        <div class="score-label">
+          <span class="what"><span class="tag tag-red">Routing-sensitive</span> recall</span>
+          <span class="why">Semantic classification reads the meaning rather than matching a literal string.</span>
+        </div>
+        <div class="score-value v-green">83%<span class="frac">10 / 12</span></div>
+      </div>
+
+      <div class="score-row">
+        <div class="score-label">
+          <span class="what">Misroutes</span>
+          <span class="why">The 100%-precision guarantee does not carry over. One entry that genuinely has no answer was correctly left <code>UNKNOWN</code> by the rules and overturned into a confident wrong guess.</span>
+        </div>
+        <div class="score-value v-red">15%<span class="frac">3 of 20</span></div>
+      </div>
+    </div>
+
+    <p class="after-note">
+      <strong>If you are evaluating triage today:</strong> on a stack whose error strings match
+      the patterns in <code>rules.py</code> — OpenAI, Anthropic, LangChain, botocore, azure-core,
+      Mistral, Cohere, Groq, LiteLLM, Vertex AI, LlamaIndex — routing works as shown. On any
+      other stack, expect most tool and schema failures to land in <code>UNKNOWN</code> and fall
+      through to your default policy: safe, but no better than the retry loop you'd have written
+      yourself. Reach for <code>HybridClassifier</code> and budget for occasional confident
+      misroutes instead of occasional <code>UNKNOWN</code>s.
+      <a href="known-limitations/">Read the full limitations &rarr;</a>
+    </p>
+  </div>
+</section>
+
+<!-- ============ INSTALL ============ -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Install</p>
+      <h2>Core is three dependencies. Everything else is opt-in.</h2>
+      <p class="lead">
+        <code>anyio</code>, <code>pydantic</code>, and the standard library. No framework imports
+        anywhere in the core — adapters are extras, and they fail at import time if the optional
+        dependency is missing rather than at runtime.
+      </p>
+    </div>
+
+    <div class="install-grid">
+      <div>
+        <div class="install">
+          <code>pip install triage-agent</code>
+          <button class="copy" type="button" data-copy="pip install triage-agent">Copy</button>
+        </div>
+        <p class="lead" style="margin-top:18px; font-size:0.9375rem;">
+          That gets you <code>RulesClassifier</code>, all nine failure types, every recovery
+          strategy, in-memory checkpoints, and both adapters' source. Add an extra when you
+          need the dependency behind it.
+        </p>
+      </div>
+
+      <div class="extras">
+        <div class="extra"><code>triage-agent[anthropic]</code> <span>LLMClassifier via Claude</span></div>
+        <div class="extra"><code>triage-agent[sqlite]</code> <span>SQLiteCheckpointStore</span></div>
+        <div class="extra"><code>triage-agent[redis]</code> <span>RedisCheckpointStore, cross-worker breaker state</span></div>
+        <div class="extra"><code>triage-agent[langgraph]</code> <span>wrap_langgraph()</span></div>
+        <div class="extra"><code>triage-agent[langchain]</code> <span>wrap_langchain()</span></div>
+        <div class="extra"><code>triage-agent[otel]</code> <span>Span emission, metrics, trajectory_from_spans()</span></div>
+        <div class="extra"><code>triage-agent[yaml]</code> <span>FailurePolicy.from_yaml()</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap footer-inner">
+    <span>MIT licensed &middot; built by <a href="https://github.com/mattekudacy" style="color:var(--text-dim)">mattekudacy</a></span>
+    <div class="footer-links">
+      <a href="getting-started/quickstart/">Quick start</a>
+      <a href="concepts/failure-types/">Failure types</a>
+      <a href="api/agent/">API reference</a>
+      <a href="known-limitations/">Limitations</a>
+      <a href="https://github.com/mattekudacy/triage">GitHub</a>
+      <a href="https://pypi.org/project/triage-agent/">PyPI</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll(".copy").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var text = btn.getAttribute("data-copy");
+    var done = function () {
+      var original = btn.textContent;
+      btn.textContent = "Copied";
+      setTimeout(function () { btn.textContent = original; }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, done);
+    } else {
+      done();
+    }
+  });
+});
+</script>
+
+</body>
+</html>
