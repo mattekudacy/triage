@@ -230,6 +230,10 @@ Explicit constructor arguments take precedence over environment variables.
 | `retry_backoff_base` | `0.5` | Backoff seconds; doubles each retry (`0.5s`, `1s`, ...) |
 | `max_tokens` | `32` (or `TRIAGE_LLM_MAX_TOKENS`) | Output token budget for the classification call |
 
+### Multi-agent trajectories: `agent_id` in the prompt
+
+Each step's prompt line includes `agent: <id>` when `Step.agent_id` is set, so a trajectory that interleaves steps from more than one agent doesn't look identical to a single-agent one. `None` (the default) omits the line — zero prompt change for existing single-agent callers. This is a prerequisite for, not itself an instance of, MAST-mode detection: `LLMClassifier` still only ever returns one of the 9 stable `FailureType` members — see `docs/concepts/multi-agent-failures.md`'s phase 3 scoping section for what a real MAST-mode classification prompt would need beyond this.
+
 ### Output budget and reasoning models
 
 As of v1.2, `max_tokens` is configurable — previously hardcoded to `32`. That default is enough for a plain instruct model to emit one category word (`"external_fault"`), but a *reasoning* model (gpt-oss, o1/o3-style, DeepSeek-R1, Qwen3 "thinking" mode, ...) can spend the entire budget on hidden reasoning tokens before ever emitting the answer. The failure is silent and easy to misdiagnose: the API call succeeds, `finish_reason` comes back `"length"`, content is `""`, and `classify()` returns `UNKNOWN` — indistinguishable from a real auth or network failure unless you inspect the raw response yourself.
