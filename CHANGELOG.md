@@ -419,6 +419,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`mypy triage/ --strict` failed in CI with a hard parse error, unrelated to any code
+  change.** A `numpy` release (pulled in transitively via `langchain_core`, itself a real
+  dependency of `triage/adapters/langchain.py` that `mypy` follows into) ships a
+  `__init__.pyi` stub using a PEP 695 `type` statement — valid only on Python 3.12+, while
+  this project's `[tool.mypy] python_version = "3.10"` target makes that a hard syntax
+  error (`Type statement is only supported in Python 3.12 and greater`) that aborts the
+  entire run before any real file gets checked. `ignore_missing_imports` (already set for
+  `langchain_core`/etc.) only suppresses "stub not found" errors — it doesn't stop mypy
+  from parsing a stub it does find. Root-caused by reproducing exactly (Python 3.13 venv,
+  `numpy==2.5.3`, matching CI) and tracing the import chain with `mypy --verbose`:
+  `langchain_core/embeddings/fake.py` (real, non-stub source) does `import numpy`, and mypy
+  parses whatever that reaches regardless of the numpy-specific override tried first (which
+  didn't work — the parse happens before mypy consults it). Fixed by adding
+  `follow_imports = "skip"` to the override covering `anthropic`/`openai`/`aiosqlite`/
+  `redis`/`langgraph`/`langchain`/`langchain_core`: triage/ only calls these libraries'
+  public APIs, so treating each as opaque `Any` without mypy recursing into its internal
+  source is both safe and sidesteps whatever transitive import chain a future dependency
+  bump reaches next. `opentelemetry` deliberately kept out of that override (separate
+  block, `ignore_missing_imports` only) — `triage/observability/otel_ingest.py` relies on
+  mypy actually resolving `opentelemetry.trace.StatusCode`'s real type, and `skip` there
+  would turn a real strict-mode check into a silent `Any` and trip `warn_return_any`
+  instead (found while testing this fix, fixed before landing it — not a hypothetical).
+  Triggered by a separate, unrelated PR that added `matplotlib`/`seaborn` to the `dev`
+  extra for `scripts/gen_readme_charts.py`; `triage/` itself was never at fault. Verified
+  against a Python 3.13 venv with the exact CI dependency versions, both before (reproduces
+  the failure) and after (clean) this fix.
+
 - **`LLMClassifier` hardcoded `max_tokens=32` for the classification call —
   silently wrong against reasoning models.** `max_tokens` is now a
   constructor parameter (default `32`, unchanged) and reads
