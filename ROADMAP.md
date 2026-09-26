@@ -81,15 +81,23 @@ Items are grouped by urgency. Within each group, order is rough priority.
   parsing bug before it shipped (a missing `-` in the confidence regex silently turned
   `-0.3` into `0.3` instead of clamping it to `0.0` — fixed). `mypy --strict` clean, no
   regressions in the full suite (824 passed, 2 skipped — unrelated missing
-  `langchain`/`langgraph` extras). **Not done yet: picking and
-  calibrating an actual `confidence_threshold` value against real data** —
-  `scripts/hybrid_ambiguity_accuracy.py --confidence-threshold FLOAT` scores the
-  override-rate/recall tradeoff at a given value against the ambiguous corpus, but no
-  run has been done yet (needs a real LLM backend this environment can't reach — see
-  Codespace/Ollama Cloud workflow used elsewhere in this doc's history). Until a
-  threshold is chosen and measured, `known-limitations.md`'s "guilty until proven
-  innocent" guidance for `HybridClassifier`'s *default* (ungated) behavior still stands
-  — the mechanism existing doesn't help until someone turns it on with a real number.
+  `langchain`/`langgraph` extras).
+
+  ~~**Calibration run: 0.5/0.7/0.9 scored against `gpt-oss:120b`**~~ — done, one run each,
+  and the result is a second, quieter negative finding rather than a clean win. Override rate:
+  100% → 100% → 92% → 92% (baseline/0.5/0.7/0.9) — **barely moves even at a 0.9 bar**, meaning
+  this model reports high self-confidence on a wrong guess almost as often as on a correct one
+  for this failure mode. Recall: 100% → 75% → 100% → 50%, non-monotonic — a real cost at the
+  extremes, but n=4 and one run per threshold is too small/noisy to read as a calibration
+  curve (see `docs/known-limitations.md`'s full writeup, including why the non-monotonicity
+  itself is expected — independent LLM calls, not one shared score filtered three ways).
+  **The mechanism works exactly as built; this model's raw self-reported confidence isn't
+  calibrated enough on this data to fix the override-rate problem by itself.** Until either
+  more runs establish a stable number or the confidence source is post-hoc calibrated (Platt
+  scaling / isotonic regression, per the SystemOneClassifier section below), `known-
+  limitations.md`'s "guilty until proven innocent" guidance for `HybridClassifier`'s default
+  (ungated) behavior still stands — this measurement doesn't license recommending a specific
+  `confidence_threshold` value to adopters yet.
 - **MCP JSON-RPC error-code extraction helper** — corpus E scoping step 3 (MCP half
   only): a small opt-in helper that reads `McpError.error.code` and populates
   `Step.metadata["json_rpc_code"]`, so `RulesClassifier`'s structured-code matching
@@ -118,11 +126,16 @@ API shape and needs no waitlist or key — same relationship Ollama has to Anthr
   for free once built, by defining that same method. No separate gating mechanism needed
   here anymore; `SystemOneClassifier`'s job is a (hopefully better-calibrated) confidence
   *source*, not a new consumer.
-- **Calibrate the threshold against our own corpora** — set it using corpora A/B/C +
-  `error_corpus_ambiguous.json` (training data), then score held-out D and E exactly
-  once. Scoring against D/E to *pick* the threshold burns them as held-out data — don't.
-  Applies equally to `LLMClassifier`'s confidence (available now) and any future
-  `SystemOneClassifier` confidence — neither has been calibrated yet.
+- **Calibrate the threshold against our own corpora** — a first, informal pass (0.5/0.7/0.9
+  against the ambiguous corpus, one run each) found `LLMClassifier`'s raw self-reported
+  confidence doesn't cleanly separate right from wrong at any tested value — see "Feature
+  completeness" above. Real calibration still needs: repeated runs per threshold (not one),
+  and likely a post-hoc step (Platt scaling / isotonic regression against corpora A/B/C +
+  `error_corpus_ambiguous.json` as training data) rather than trusting the raw score, before
+  scoring held-out D and E exactly once. Scoring against D/E to *pick* the threshold or the
+  calibration itself burns them as held-out data — don't. Applies equally to any future
+  `SystemOneClassifier` confidence, which is unlikely to be calibrated for this exact traffic
+  out of the box either — see the "Jev can't be calibrated" finding this doc already cites.
 - **A CI-enforceable accuracy floor for the semantic classifier** — not possible today
   because LLM answers vary run to run. If Laya's answers are stable enough, this
   becomes possible for the first time, pinned to a specific Laya model version.

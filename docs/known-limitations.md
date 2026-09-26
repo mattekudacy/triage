@@ -191,6 +191,54 @@ is plausible in your traffic. At a 100% override rate on this run, "occasional" 
 treat any `HybridClassifier` answer on a trajectory that might be genuinely out-of-taxonomy as
 guilty until proven innocent, not as a safe default.
 
+**Tried confidence-gating (`HybridClassifier(confidence_threshold=...)`), measured — the
+mechanism works as built, but doesn't clear the bar for this model.** `classify_with_
+confidence()` and `confidence_threshold` (see `CHANGELOG.md`) were built specifically because
+the prompt-only fix above did nothing — a confidence score gives the caller something to act
+on instead of a bare category. `scripts/hybrid_ambiguity_accuracy.py --confidence-threshold`
+scored three values against `gpt-oss:120b` (Ollama Cloud), one run each:
+
+| Threshold | `unknown_labeled` override rate | `tricky_but_classifiable` recall |
+|---|---|---|
+| (none — baseline) | 12/12 = 100% | 4/4 = 100% |
+| 0.5 | 12/12 = 100% | 3/4 = 75% |
+| 0.7 | 11/12 = 92% | 4/4 = 100% |
+| 0.9 | 11/12 = 92% | 2/4 = 50% |
+
+Two things stand out, and neither is the clean "raise the threshold, override rate drops"
+story a calibrated confidence score would produce:
+
+1. **The override rate barely moves even at 0.9 — a very demanding bar.** 11 of 12 genuinely
+   out-of-taxonomy entries still got a confident, specific wrong answer at the highest
+   threshold tested. That means this model reports high self-confidence on a wrong guess
+   almost as often as it reports it on a correct one, for this specific failure mode (account
+   suspended / quota exceeded / policy-blocked wording it reflexively reads as
+   `external_fault`). This is exactly what independent skepticism about self-reported
+   LLM/System-One-model confidence predicts — see e.g. the "Jev can't be calibrated" finding
+   cited in this project's own Jev/Laya research: a model's confidence can be well-formed and
+   still not be calibrated for a specific failure distribution.
+2. **The results are not monotonic across thresholds, and that itself is informative, not a
+   bug.** Each threshold was one independent LLM call per entry — not one shared confidence
+   score filtered three ways — so which *specific* entry clears a given bar varies run to run
+   (e.g. the "Invalid prompt..." entry cleared 0.7 but not 0.9; "policy engine..." cleared 0.9
+   but not 0.7). Recall dipping from 75% → 100% → 50% across 0.5 → 0.7 → 0.9 the same way
+   confirms this: n=4 is small enough that one flipped entry swings the number by 25 points.
+   **Do not read a single run at three thresholds as a calibration curve** — it's a first
+   look, not a validated tradeoff.
+
+**What this means for `confidence_threshold`, concretely.** The mechanism (`ClassificationResult`,
+`confidence_threshold`, the `getattr` duck-typing) is sound — it does what it was built to do,
+and it's reusable by any future confidence source, `SystemOneClassifier` included. But picking
+a `confidence_threshold` from this model's raw self-report, on this data, doesn't look like it
+will get the override rate meaningfully below ~90% without giving up real recall. Two honest
+paths forward, neither of which is "pick 0.7 and ship it": (1) run each threshold multiple
+times to see whether the override rate is stably ~90%+ or whether three single runs happened
+to land unluckily, before concluding anything quantitative; (2) treat this as evidence that raw
+self-reported confidence needs post-hoc calibration against real labeled data (Platt scaling or
+isotonic regression, the same techniques independent Jev-calibration work already uses) rather
+than being trusted as-is — which was already `ROADMAP.md`'s stated plan for any confidence
+source here, not a new requirement this measurement invented.
+
 **What this means for where effort goes next.** Another round of "generate corpus E, tune
 `rules.py` against D's misses, score E" would very likely repeat this exact result — the
 approach, not the pattern set, is the ceiling. Closing the routing-sensitive gap for
