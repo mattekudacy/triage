@@ -98,12 +98,26 @@ except ImportError:
 
 _FAILURE_TYPE_VALUES = [ft.value for ft in FailureType]
 
+# The explicit "unknown is correct, not a fallback to avoid" guidance below is
+# a direct response to a measured failure, not a guess: scripts/hybrid_ambiguity_
+# accuracy.py scored a 100% override rate on genuinely out-of-taxonomy entries
+# before this change — the model treated "unknown" as one option among nine
+# with no signal about when to prefer it, and defaulted to a specific-sounding
+# guess (overwhelmingly "external_fault") instead. See docs/known-limitations.md's
+# "LLMClassifier/HybridClassifier close the recall gap, but not the precision
+# gap" section for the measurement this responds to, and re-run that script
+# against any future prompt change here — this is a real production prompt,
+# not a one-off tuning target.
 _SYSTEM_PROMPT = (
     "You are a failure classifier for AI agents. "
     "Given a trajectory of steps and a task description, classify the failure "
     "into exactly one of these categories: "
     + ", ".join(_FAILURE_TYPE_VALUES)
-    + '. Respond with only the category name (e.g. "wrong_tool_called"), nothing else.'
+    + ". If the trajectory does not clearly support one of the other categories, "
+    'respond "unknown" — this is the correct answer when the cause is genuinely '
+    "unclear or not covered by the other categories, not a fallback to avoid. "
+    'Do not guess a specific category just to avoid answering "unknown". '
+    'Respond with only the category name (e.g. "wrong_tool_called"), nothing else.'
 )
 
 
