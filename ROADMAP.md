@@ -58,12 +58,38 @@ Items are grouped by urgency. Within each group, order is rough priority.
   clustering hard on `external_fault` as a catch-all. `tricky_but_classifiable` recall was
   100% (4/4) — the recall-gap side of the story holds up. See `docs/known-limitations.md`'s
   updated "close the recall gap, but not the precision gap" section.
-- **Fix `HybridClassifier` overriding a correct rules-`UNKNOWN` with a confident wrong
-  guess** — raised in priority by the measurement above: 100% override rate on this run
-  is not an edge case, it's the default behavior. Needs a confidence signal the fallback
-  can decline on; see the SystemOneClassifier section below for the most direct path to
-  one. Until that ships, `known-limitations.md` now says explicitly: treat any
-  `HybridClassifier` answer as guilty until proven innocent, not a safe default.
+- ~~**Try a prompt-only fix: tell `LLMClassifier` explicitly that `unknown` is a correct
+  answer**~~ — tried, shipped, re-measured, negative result. `_SYSTEM_PROMPT` already
+  listed `unknown` as one of nine categories; the fix added explicit guidance that it's
+  the correct answer when the trajectory doesn't clearly support another category. The
+  override rate did not move (12/12 = 100%, before and after — one wrong guess shifted
+  label, none moved to `unknown`), and corpus D's routing-sensitive recall held steady
+  too (no regression, but no gain). Kept in the prompt — harmless — but do not read it
+  as a fix. See `docs/known-limitations.md`'s updated section for the full before/after.
+  Conclusion: this needs a confidence signal the caller can act on programmatically, not
+  more prompt wording — prompt-only nudging doesn't move this model off its bias toward
+  a specific-sounding guess.
+- ~~**Fix `HybridClassifier` overriding a correct rules-`UNKNOWN` with a confident wrong
+  guess (Option B: LLM self-reported confidence)**~~ — built. `ClassificationResult`,
+  `LLMClassifier.classify_with_confidence()` / `aclassify_with_confidence()`, and
+  `HybridClassifier(confidence_threshold=...)` ship the mechanism: a rules-`UNKNOWN`
+  now only escalates to a trusted LLM answer when its self-reported confidence clears
+  the threshold, otherwise it returns `UNKNOWN` instead of a guess. `confidence_threshold`
+  defaults to `None` — zero behavior change for every existing caller unless explicitly
+  set. 22 new test cases added (18 new test functions, one parametrized ×5) across
+  `test_classifier_llm.py` and `test_classifier_hybrid.py`, one of which caught a real
+  parsing bug before it shipped (a missing `-` in the confidence regex silently turned
+  `-0.3` into `0.3` instead of clamping it to `0.0` — fixed). `mypy --strict` clean, no
+  regressions in the full suite (824 passed, 2 skipped — unrelated missing
+  `langchain`/`langgraph` extras). **Not done yet: picking and
+  calibrating an actual `confidence_threshold` value against real data** —
+  `scripts/hybrid_ambiguity_accuracy.py --confidence-threshold FLOAT` scores the
+  override-rate/recall tradeoff at a given value against the ambiguous corpus, but no
+  run has been done yet (needs a real LLM backend this environment can't reach — see
+  Codespace/Ollama Cloud workflow used elsewhere in this doc's history). Until a
+  threshold is chosen and measured, `known-limitations.md`'s "guilty until proven
+  innocent" guidance for `HybridClassifier`'s *default* (ungated) behavior still stands
+  — the mechanism existing doesn't help until someone turns it on with a real number.
 - **MCP JSON-RPC error-code extraction helper** — corpus E scoping step 3 (MCP half
   only): a small opt-in helper that reads `McpError.error.code` and populates
   `Step.metadata["json_rpc_code"]`, so `RulesClassifier`'s structured-code matching
@@ -84,14 +110,19 @@ API shape and needs no waitlist or key — same relationship Ollama has to Anthr
   Defaults to hosted Jev; `base_url=` points it at local `laya-serve` instead. Lazy
   import, new optional extra. Blocked on Jev's waitlist for the *default* path — the
   `base_url=` (Laya) path can be built and tested now.
-- **Confidence-gated `HybridClassifier` fallback** — direct fix for the item above, and
-  the highest-priority item in this section now that it's backed by data: a measured
-  100% override rate (see "Feature completeness" above), not the `n=1` this section was
-  originally scoped against. When `SystemOneClassifier`'s confidence for its top answer
-  is below a threshold, return `UNKNOWN` instead of guessing.
+- ~~**Confidence-gated `HybridClassifier` fallback**~~ — the mechanism shipped already
+  (see "Feature completeness" above), built against `LLMClassifier`'s own self-reported
+  confidence (Option B) rather than waiting on `SystemOneClassifier`. `HybridClassifier(
+  confidence_threshold=...)` is classifier-agnostic — it checks for `classify_with_
+  confidence()` via `getattr`, so `SystemOneClassifier` plugs into the exact same gate
+  for free once built, by defining that same method. No separate gating mechanism needed
+  here anymore; `SystemOneClassifier`'s job is a (hopefully better-calibrated) confidence
+  *source*, not a new consumer.
 - **Calibrate the threshold against our own corpora** — set it using corpora A/B/C +
   `error_corpus_ambiguous.json` (training data), then score held-out D and E exactly
   once. Scoring against D/E to *pick* the threshold burns them as held-out data — don't.
+  Applies equally to `LLMClassifier`'s confidence (available now) and any future
+  `SystemOneClassifier` confidence — neither has been calibrated yet.
 - **A CI-enforceable accuracy floor for the semantic classifier** — not possible today
   because LLM answers vary run to run. If Laya's answers are stable enough, this
   becomes possible for the first time, pinned to a specific Laya model version.

@@ -6,6 +6,7 @@ Structural protocol that all classifiers must implement.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from triage.taxonomy import FailureType
@@ -29,3 +30,24 @@ class Classifier(Protocol):
     """
 
     def classify(self, trajectory: Trajectory, task: str) -> FailureType: ...
+
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    """A ``FailureType`` plus the classifier's confidence in it (0.0-1.0).
+
+    Returned by the optional, duck-typed ``classify_with_confidence()`` /
+    ``aclassify_with_confidence()`` methods a classifier may define — not part
+    of the ``Classifier`` protocol itself, same reasoning as ``aclassify()``:
+    ``RulesClassifier`` has no meaningful confidence to report (its answers are
+    100%-precision-by-construction or ``UNKNOWN``), so this isn't forced on
+    every classifier. ``HybridClassifier(confidence_threshold=...)`` checks for
+    these methods via ``getattr`` and, when present, only trusts a non-``UNKNOWN``
+    answer whose confidence meets the threshold — see
+    ``docs/known-limitations.md``'s "close the recall gap, but not the precision
+    gap" section for the measurement this exists to address, and
+    ``LLMClassifier.classify_with_confidence()`` for the reference implementation.
+    """
+
+    failure_type: FailureType
+    confidence: float

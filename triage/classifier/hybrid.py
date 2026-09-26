@@ -19,6 +19,11 @@ Usage::
     # Cap LLM calls within a single Agent.run() call (cost control):
     clf = HybridClassifier(llm=LLMClassifier(), max_llm_calls_per_run=2)
 
+    # Decline a low-confidence LLM guess instead of trusting it (see
+    # confidence_threshold's docstring below for why this exists and what
+    # it requires of the wrapped classifier):
+    clf = HybridClassifier(llm=LLMClassifier(), confidence_threshold=0.7)
+
 The LLM call is only made when rules cannot determine the failure type —
 typically < 20% of failures in practice.
 """
@@ -66,12 +71,44 @@ class HybridClassifier:
     another concurrent run was still counting against. Use a separate
     ``HybridClassifier`` (or ``agent.clone()``, which does not share this
     counter) per concurrent task if you need a precise, independent budget.
+
+    ``confidence_threshold`` (default ``None``) gates the LLM fallback on a
+    confidence score instead of trusting any non-``UNKNOWN`` answer outright.
+    ``None`` (the default) is the original, unconditional behavior — every
+    existing caller's behavior is unchanged unless this is explicitly set.
+    When set, the wrapped classifier's ``classify_with_confidence()`` /
+    ``aclassify_with_confidence()`` method (duck-typed — see
+    ``triage.classifier.base.ClassificationResult``) is used instead of
+    ``classify()`` / ``aclassify()``, and the fallback only returns a
+    non-``UNKNOWN`` answer whose confidence is ``>= confidence_threshold``;
+    otherwise it returns ``UNKNOWN``, same as a rules miss with no LLM fallback
+    at all. If the wrapped classifier doesn't define a ``*_with_confidence``
+    method, this silently falls back to the unconditional behavior — setting
+    ``confidence_threshold`` on a classifier that can't report confidence is a
+    no-op, not an error, since ``Classifier`` implementations aren't required
+    to support it.
+
+    This exists because prompt-level guidance alone, tried first, measurably
+    failed to reduce ``HybridClassifier``'s override rate on genuinely
+    out-of-taxonomy trajectories — see ``docs/known-limitations.md``'s "close
+    the recall gap, but not the precision gap" section for the measurement.
+    Pick ``confidence_threshold`` by calibrating against your own labeled
+    data, not a default guessed here — a wrapped classifier's self-reported
+    confidence has not been independently validated as calibrated for your
+    traffic distribution. ``scripts/hybrid_ambiguity_accuracy.py --confidence-
+    threshold`` scores this trade-off against the ambiguous corpus.
     """
 
-    def __init__(self, llm: Any, max_llm_calls_per_run: int | None = None) -> None:
+    def __init__(
+        self,
+        llm: Any,
+        max_llm_calls_per_run: int | None = None,
+        confidence_threshold: float | None = None,
+    ) -> None:
         self._rules = RulesClassifier()
         self._llm = llm
         self._max_llm_calls_per_run = max_llm_calls_per_run
+        self._confidence_threshold = confidence_threshold
         self._llm_call_count = 0
         self._count_lock = threading.Lock()
 
@@ -100,18 +137,34 @@ class HybridClassifier:
             return result
         if not self._consume_call_budget():
             return FailureType.UNKNOWN
+        if self._confidence_threshold is not None:
+            confidence_fn = getattr(self._llm, "classify_with_confidence", None)
+            if confidence_fn is not None:
+                gated = confidence_fn(trajectory, task)
+                if gated.confidence < self._confidence_threshold:
+                    return FailureType.UNKNOWN
+                return cast(FailureType, gated.failure_type)
         return cast(FailureType, self._llm.classify(trajectory, task))
 
     async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
         """Async counterpart to ``classify()``. Uses ``self._llm.aclassify()``
         when the configured LLM classifier defines one (e.g. ``LLMClassifier``),
-        avoiding the sync-client-in-a-thread hop on the failure path.
+        avoiding the sync-client-in-a-thread hop on the failure path. When
+        ``confidence_threshold`` is set, prefers ``aclassify_with_confidence()``
+        over ``aclassify()``/``classify()`` — see ``__init__``'s docstring.
         """
         result = self._rules.classify(trajectory, task)
         if result is not FailureType.UNKNOWN:
             return result
         if not self._consume_call_budget():
             return FailureType.UNKNOWN
+        if self._confidence_threshold is not None:
+            aconfidence_fn = getattr(self._llm, "aclassify_with_confidence", None)
+            if aconfidence_fn is not None:
+                gated = await aconfidence_fn(trajectory, task)
+                if gated.confidence < self._confidence_threshold:
+                    return FailureType.UNKNOWN
+                return cast(FailureType, gated.failure_type)
         aclassify = getattr(self._llm, "aclassify", None)
         if aclassify is not None:
             return cast(FailureType, await aclassify(trajectory, task))

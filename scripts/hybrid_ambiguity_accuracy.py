@@ -52,9 +52,17 @@ docstring and docs/concepts/classifiers.md's "Open by default" note.
     TRIAGE_LLM_API_KEY=... TRIAGE_LLM_MODEL=gpt-oss:120b-cloud TRIAGE_LLM_MAX_TOKENS=500 \\
     PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py
 
+Pass --confidence-threshold to score HybridClassifier's confidence-gated
+fallback (see HybridClassifier's docstring) instead of its original
+unconditional one — omit it to reproduce the original baseline exactly. Try
+a few values and compare the override rate / recall tradeoff; no default is
+given here because it needs calibrating against your own labeled data:
+
+    PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py --confidence-threshold 0.7
+
 Run:
     PYTHONPATH=. .venv/bin/python scripts/hybrid_ambiguity_accuracy.py \\
-        [--model MODEL] [--max-tokens N]
+        [--model MODEL] [--max-tokens N] [--confidence-threshold FLOAT]
 """
 
 from __future__ import annotations
@@ -159,6 +167,18 @@ def main() -> None:
         "hundred for reasoning models (default: TRIAGE_LLM_MAX_TOKENS env var, "
         "else 32).",
     )
+    parser.add_argument(
+        "--confidence-threshold",
+        type=float,
+        default=None,
+        help="Gate the LLM fallback on LLMClassifier.classify_with_confidence() "
+        "instead of trusting any non-UNKNOWN answer outright — see "
+        "HybridClassifier's confidence_threshold docstring. Default (unset) is "
+        "the original unconditional behavior, matching prior runs of this "
+        "script exactly. Pick a value by comparing override rate vs. recall "
+        "across a few runs at different thresholds — no default is provided "
+        "here because it needs calibrating against your own data, not guessed.",
+    )
     args = parser.parse_args()
 
     if not CORPUS_PATH.exists():
@@ -174,12 +194,18 @@ def main() -> None:
     print(f"Model: {model}")
     print(f"Max tokens: {llm._max_tokens}")
     print(f"Base URL: {base_url or '(Anthropic default client)'}")
+    print(
+        f"Confidence threshold: {args.confidence_threshold}"
+        if args.confidence_threshold is not None
+        else "Confidence threshold: (none — original unconditional fallback behavior)"
+    )
     print("Running sanity check...", end=" ", flush=True)
     _sanity_check(llm)
     print("ok\n")
 
     hybrid = HybridClassifier(
-        llm=LLMClassifier(model=model, base_url=base_url, max_tokens=args.max_tokens)
+        llm=LLMClassifier(model=model, base_url=base_url, max_tokens=args.max_tokens),
+        confidence_threshold=args.confidence_threshold,
     )
 
     print("=" * 65)

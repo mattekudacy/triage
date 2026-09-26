@@ -23,6 +23,10 @@ async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType: ...
 
 This is not part of the `Classifier` protocol itself — it's duck-typed. When present, `agent.py` awaits it directly instead of dispatching `classify()` to a thread, skipping that hop entirely. `LLMClassifier` and `HybridClassifier` both define `aclassify()` using the native async Anthropic/OpenAI client; `RulesClassifier` has no I/O and doesn't need one. You get this automatically — no configuration required, just use `LLMClassifier`/`HybridClassifier` as your `classifier=`.
 
+### Optional: classify_with_confidence() for confidence-gated fallback
+
+A classifier may also define `classify_with_confidence(trajectory, task) -> ClassificationResult` (and `aclassify_with_confidence`), returning a failure type *plus* a 0.0-1.0 confidence score instead of a bare `FailureType`. Also duck-typed, not part of the protocol. `LLMClassifier` defines both; `HybridClassifier(confidence_threshold=...)` is the primary consumer — see "Confidence scoring via classify_with_confidence()" and "Confidence-gated fallback" below for the full contract and why this exists.
+
 ---
 
 ## RulesClassifier
@@ -266,6 +270,25 @@ Keep this budget small — classification runs on the failure path, and every re
 
 `LLMClassifier` returns `FailureType.UNKNOWN` silently on any error — network failure, rate limit, parse error — once the retry budget (if any) is exhausted. This means a degraded LLM classifier degrades gracefully to your `UNKNOWN` strategy rather than crashing the recovery loop. Both `classify()` and `aclassify()` share this fallback and retry behavior.
 
+### Confidence scoring via classify_with_confidence()
+
+`classify_with_confidence(trajectory, task) -> ClassificationResult` (and its async counterpart `aclassify_with_confidence`) asks the model for both a category *and* a 0.0-1.0 confidence score, instead of just a category. It exists because a categorical answer alone gives a caller nothing to act on when the model is effectively guessing:
+
+```python
+from triage.classifier.base import ClassificationResult
+from triage.classifier.llm import LLMClassifier
+
+clf = LLMClassifier(base_url="https://ollama.com/v1", model="gpt-oss:120b", max_tokens=500)
+result: ClassificationResult = clf.classify_with_confidence(trajectory, "task")
+print(result.failure_type, result.confidence)
+```
+
+This was built in direct response to a measured negative result, not speculatively: `LLMClassifier`'s plain `_SYSTEM_PROMPT` was first changed to explicitly tell the model that `unknown` is a correct answer, not a fallback to avoid — re-measuring against `scripts/hybrid_ambiguity_accuracy.py` afterward found this made **no difference** (still a 100% override rate on genuinely out-of-taxonomy trajectories; see `docs/known-limitations.md`). Prompt wording alone didn't move this model off its bias toward a specific-sounding guess. A confidence score gives the caller (`HybridClassifier(confidence_threshold=...)`, most directly) a way to decline a low-confidence guess programmatically instead.
+
+Parsing is deliberately conservative: the category must exactly match one of the nine `FailureType` values on the first non-empty response line (same strictness as `classify()`'s own parsing), and any unparseable or missing confidence number defaults to `0.0` — "couldn't read this" is treated the same as "don't trust this," so a threshold-gated caller declines safely rather than trusting a response it couldn't actually parse. On any API error, this returns `ClassificationResult(FailureType.UNKNOWN, 0.0)`, mirroring `classify()`'s fallback to `FailureType.UNKNOWN`.
+
+**This model's self-reported confidence has not been independently validated as calibrated** — only as present and parseable. Calibrate any threshold you use against your own labeled data before trusting it in production; see `HybridClassifier`'s `confidence_threshold` below.
+
 ### Native async via aclassify()
 
 `LLMClassifier` defines `async def aclassify(trajectory, task) -> FailureType`, backed by `AsyncAnthropic`/`AsyncOpenAI` instead of the sync client. `agent.py` detects and awaits this directly, avoiding the `anyio.to_thread.run_sync()` hop that `classify()` still needs. The sync and async clients are built and cached independently — calling both `classify()` and `aclassify()` on the same `LLMClassifier` instance creates one of each, not a shared client.
@@ -339,6 +362,22 @@ agent = triage.Agent(
 )
 ```
 
+### Confidence-gated fallback (confidence_threshold)
+
+By default, `HybridClassifier` trusts *any* non-`UNKNOWN` answer the LLM fallback returns — this measurably overturns a correct, conservative rules `UNKNOWN` into a confident wrong guess (see `docs/known-limitations.md`'s "close the recall gap, but not the precision gap" section: a 100% override rate on genuinely out-of-taxonomy trajectories in one real measurement). `confidence_threshold` fixes this by gating the fallback on `LLMClassifier.classify_with_confidence()` instead of `classify()`:
+
+```python
+classifier = HybridClassifier(llm=LLMClassifier(), confidence_threshold=0.7)
+```
+
+`confidence_threshold=None` (the default) is the original, unconditional behavior — **every existing caller's behavior is unchanged unless you explicitly set this.** When set, a rules-`UNKNOWN` escalates to `classify_with_confidence()` (or `aclassify_with_confidence()` on the async path); the result is only trusted if its confidence is `>= confidence_threshold`, otherwise `HybridClassifier` returns `UNKNOWN` — same as if the LLM fallback had said `UNKNOWN` itself. If the wrapped classifier doesn't define a `*_with_confidence` method (e.g. a custom `Classifier` implementation without one), setting `confidence_threshold` is a silent no-op, not an error — it falls back to the unconditional `classify()`/`aclassify()` path.
+
+**Pick a threshold by measuring, not guessing.** `LLMClassifier`'s self-reported confidence has not been independently validated as calibrated for your traffic. `scripts/hybrid_ambiguity_accuracy.py --confidence-threshold FLOAT` scores the override-rate/recall tradeoff at a given threshold against the ambiguous corpus — try a few values and compare against the `--confidence-threshold`-unset baseline before choosing one:
+
+```bash
+PYTHONPATH=. python scripts/hybrid_ambiguity_accuracy.py --confidence-threshold 0.7
+```
+
 ### Accuracy on the synthetic suite
 
 `HybridClassifier` is tested against the same `CASES + SEMANTIC_CASES` (31 cases) as `LLMClassifier`:
@@ -398,3 +437,19 @@ class MyAsyncClassifier:
         # inspect trajectory.steps, task, await your async client, return a FailureType
         ...
 ```
+
+To make your custom classifier usable with `HybridClassifier(confidence_threshold=...)`, add an optional `classify_with_confidence()` method (and/or `aclassify_with_confidence()`) returning a `ClassificationResult`:
+
+```python
+from triage.classifier.base import ClassificationResult
+
+class MyConfidentClassifier:
+    def classify(self, trajectory: Trajectory, task: str) -> FailureType:
+        ...  # required — the plain fallback path
+
+    def classify_with_confidence(self, trajectory: Trajectory, task: str) -> ClassificationResult:
+        # same inspection as classify(), plus a 0.0-1.0 confidence in the answer
+        return ClassificationResult(failure_type=..., confidence=...)
+```
+
+Without this method, `confidence_threshold` on `HybridClassifier` is simply ignored for your classifier — not an error, just a no-op, since not every classifier has a meaningful confidence to report.
