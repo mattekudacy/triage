@@ -7,6 +7,10 @@ default; pass `classifier=` to swap it out.
 
 ::: triage.classifier.base.Classifier
 
+## ClassificationResult
+
+::: triage.classifier.base.ClassificationResult
+
 ## RulesClassifier
 
 ::: triage.classifier.rules.RulesClassifier
@@ -39,6 +43,8 @@ Rules fire in order; first match wins:
         - __init__
         - classify
         - aclassify
+        - classify_with_confidence
+        - aclassify_with_confidence
 
 ## HybridClassifier
 
@@ -76,4 +82,24 @@ class MyAsyncClassifier:
 
     async def aclassify(self, trajectory: Trajectory, task: str) -> FailureType:
         ...  # async path — used by Agent when present
+```
+
+A classifier may additionally define `classify_with_confidence(trajectory, task) ->
+ClassificationResult` (and/or its async counterpart `aclassify_with_confidence`) — also
+duck-typed, not part of the protocol. `HybridClassifier(llm=my_classifier,
+confidence_threshold=0.7)` checks for these methods and, when present, only trusts a
+non-`UNKNOWN` answer whose confidence meets the threshold; a classifier without them
+(like `RulesClassifier`, which has nothing meaningful to report beyond its
+100%-precision-by-construction rules) is unaffected — `confidence_threshold` on a
+classifier that can't report confidence is a no-op, not an error:
+
+```python
+from triage.classifier.base import ClassificationResult
+
+class MyConfidentClassifier:
+    def classify(self, trajectory: Trajectory, task: str) -> FailureType:
+        ...
+
+    def classify_with_confidence(self, trajectory: Trajectory, task: str) -> ClassificationResult:
+        ...  # e.g. ask the model for a confidence score alongside the category
 ```

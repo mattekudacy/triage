@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from triage.classifier.base import ClassificationResult
 from triage.classifier.hybrid import HybridClassifier
 from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
@@ -335,3 +336,128 @@ def test_cap_persists_across_calls_dispatched_via_to_thread():
         FailureType.UNKNOWN,
     ]
     assert llm.classify.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# confidence_threshold — gate the fallback on a confidence score
+# ---------------------------------------------------------------------------
+# Built in response to a measured negative result: a prompt-only fix (telling
+# LLMClassifier's plain classify() that "unknown" is a valid answer) did not
+# reduce the override rate on genuinely out-of-taxonomy trajectories — see
+# docs/known-limitations.md. confidence_threshold is the mechanism that can
+# actually decline a low-confidence guess instead of trusting it outright.
+
+
+def _mock_llm_with_confidence(result: ClassificationResult) -> MagicMock:
+    llm = MagicMock(spec=["classify", "aclassify", "classify_with_confidence"])
+    llm.classify_with_confidence.return_value = result
+    return llm
+
+
+def _mock_async_llm_with_confidence(result: ClassificationResult) -> MagicMock:
+    llm = MagicMock(spec=["classify", "aclassify", "aclassify_with_confidence"])
+    llm.aclassify_with_confidence = AsyncMock(return_value=result)
+    return llm
+
+
+def test_confidence_threshold_none_by_default_never_calls_confidence_method():
+    """Default behavior is completely unchanged: even when the wrapped
+    classifier defines classify_with_confidence, HybridClassifier must not
+    call it unless confidence_threshold is explicitly set."""
+    llm = _mock_llm_with_confidence(ClassificationResult(FailureType.EXTERNAL_FAULT, 0.99))
+    llm.classify.return_value = FailureType.TIMEOUT
+    clf = HybridClassifier(llm=llm)  # confidence_threshold defaults to None
+
+    result = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.TIMEOUT  # went through plain classify(), not confidence
+    llm.classify_with_confidence.assert_not_called()
+    llm.classify.assert_called_once()
+
+
+def test_confidence_above_threshold_is_trusted():
+    llm = _mock_llm_with_confidence(ClassificationResult(FailureType.EXTERNAL_FAULT, 0.9))
+    clf = HybridClassifier(llm=llm, confidence_threshold=0.7)
+
+    result = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.EXTERNAL_FAULT
+    llm.classify_with_confidence.assert_called_once()
+    llm.classify.assert_not_called()
+
+
+def test_confidence_below_threshold_returns_unknown():
+    llm = _mock_llm_with_confidence(ClassificationResult(FailureType.EXTERNAL_FAULT, 0.5))
+    clf = HybridClassifier(llm=llm, confidence_threshold=0.7)
+
+    result = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.UNKNOWN
+
+
+def test_confidence_exactly_at_threshold_is_trusted():
+    """Boundary: >= threshold, not > threshold."""
+    llm = _mock_llm_with_confidence(ClassificationResult(FailureType.EXTERNAL_FAULT, 0.7))
+    clf = HybridClassifier(llm=llm, confidence_threshold=0.7)
+
+    result = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.EXTERNAL_FAULT
+
+
+def test_confidence_threshold_set_but_llm_lacks_confidence_method_falls_back():
+    """confidence_threshold set on a classifier that can't report confidence
+    is a no-op, not an error — falls back to the unconditional classify()."""
+    llm = MagicMock(spec=["classify"])
+    llm.classify.return_value = FailureType.EXTERNAL_FAULT
+    clf = HybridClassifier(llm=llm, confidence_threshold=0.7)
+
+    result = clf.classify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.EXTERNAL_FAULT
+    llm.classify.assert_called_once()
+
+
+def test_confidence_gating_still_counts_against_call_budget():
+    llm = _mock_llm_with_confidence(ClassificationResult(FailureType.EXTERNAL_FAULT, 0.9))
+    clf = HybridClassifier(llm=llm, confidence_threshold=0.7, max_llm_calls_per_run=1)
+    t = traj(make_step(0, error="ambiguous"))
+
+    first = clf.classify(t, "task")
+    second = clf.classify(t, "task")
+
+    assert first == FailureType.EXTERNAL_FAULT
+    assert second == FailureType.UNKNOWN  # budget exhausted, never reaches the LLM
+    llm.classify_with_confidence.assert_called_once()
+
+
+async def test_aclassify_confidence_above_threshold_is_trusted():
+    llm = _mock_async_llm_with_confidence(ClassificationResult(FailureType.TIMEOUT, 0.8))
+    clf = HybridClassifier(llm=llm, confidence_threshold=0.7)
+
+    result = await clf.aclassify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.TIMEOUT
+    llm.aclassify_with_confidence.assert_called_once()
+
+
+async def test_aclassify_confidence_below_threshold_returns_unknown():
+    llm = _mock_async_llm_with_confidence(ClassificationResult(FailureType.TIMEOUT, 0.2))
+    clf = HybridClassifier(llm=llm, confidence_threshold=0.7)
+
+    result = await clf.aclassify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.UNKNOWN
+
+
+async def test_aclassify_confidence_threshold_set_but_llm_lacks_async_method_falls_back():
+    """Wrapped classifier has neither aclassify_with_confidence nor aclassify
+    — falls all the way back to the plain sync classify()."""
+    llm = MagicMock(spec=["classify"])
+    llm.classify.return_value = FailureType.EXTERNAL_FAULT
+    clf = HybridClassifier(llm=llm, confidence_threshold=0.7)
+
+    result = await clf.aclassify(traj(make_step(0, error="ambiguous")), "task")
+
+    assert result == FailureType.EXTERNAL_FAULT
+    llm.classify.assert_called_once()

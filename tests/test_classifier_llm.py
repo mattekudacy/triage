@@ -13,6 +13,7 @@ import pytest
 
 pytest.importorskip("anthropic")
 
+from triage.classifier.base import ClassificationResult
 from triage.classifier.llm import LLMClassifier
 from triage.taxonomy import FailureType, Step
 from triage.trajectory import Trajectory
@@ -650,3 +651,115 @@ def test_max_tokens_truncated_empty_content_returns_unknown():
         MockOpenAI.return_value = client
         result = clf.classify(traj(make_step(0)), "task")
     assert result == FailureType.UNKNOWN
+
+
+# ── classify_with_confidence() / aclassify_with_confidence() ─────────────────
+# Built in response to a measured negative result: telling LLMClassifier's
+# plain classify() prompt that "unknown" is a valid answer did not reduce
+# HybridClassifier's override rate on genuinely out-of-taxonomy trajectories
+# (see docs/known-limitations.md). These tests cover the confidence-scoring
+# path itself — HybridClassifier's gating on it is tested separately in
+# tests/test_classifier_hybrid.py.
+
+
+def test_confidence_parses_category_and_score():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client("external_fault\n0.85")
+        result = clf.classify_with_confidence(traj(make_step(0)), "task")
+    assert result == ClassificationResult(FailureType.EXTERNAL_FAULT, 0.85)
+
+
+def test_confidence_uses_confidence_prompt_not_plain_system_prompt():
+    from triage.classifier.llm import _CONFIDENCE_SYSTEM_PROMPT, _SYSTEM_PROMPT
+
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        client = _openai_client("external_fault\n0.85")
+        MockOpenAI.return_value = client
+        clf.classify_with_confidence(traj(make_step(0)), "task")
+    sent = client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert sent == _CONFIDENCE_SYSTEM_PROMPT
+    assert sent != _SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize(
+    "raw,expected_confidence",
+    [
+        ("external_fault\n1.5", 1.0),  # above range clamps to 1.0
+        ("external_fault\n-0.3", 0.0),  # below range clamps to 0.0
+        ("external_fault\nnot a number", 0.0),  # unparseable -> conservative 0.0
+        ("external_fault", 0.0),  # no second line at all -> conservative 0.0
+        ("external_fault\n\n0.6", 0.6),  # blank line between category and score
+    ],
+)
+def test_confidence_parsing_is_conservative_on_malformed_input(raw, expected_confidence):
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client(raw)
+        result = clf.classify_with_confidence(traj(make_step(0)), "task")
+    assert result.failure_type == FailureType.EXTERNAL_FAULT
+    assert result.confidence == expected_confidence
+
+
+def test_confidence_unmatched_category_returns_unknown():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        MockOpenAI.return_value = _openai_client("not_a_real_category\n0.9")
+        result = clf.classify_with_confidence(traj(make_step(0)), "task")
+    assert result.failure_type == FailureType.UNKNOWN
+
+
+def test_confidence_returns_unknown_zero_on_exception():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        client = MagicMock()
+        client.chat.completions.create.side_effect = Exception("network error")
+        MockOpenAI.return_value = client
+        result = clf.classify_with_confidence(traj(make_step(0)), "task")
+    assert result == ClassificationResult(FailureType.UNKNOWN, 0.0)
+
+
+def test_confidence_retries_once_on_rate_limit_then_succeeds():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI:
+        client = MagicMock()
+        rate_limit_exc = Exception("rate limited")
+        rate_limit_exc.status_code = 429  # type: ignore[attr-defined]
+        client.chat.completions.create.side_effect = [
+            rate_limit_exc,
+            _openai_response("timeout\n0.7"),
+        ]
+        MockOpenAI.return_value = client
+        with patch("triage.classifier.llm.time.sleep"):
+            result = clf.classify_with_confidence(traj(make_step(0)), "task")
+    assert result == ClassificationResult(FailureType.TIMEOUT, 0.7)
+
+
+async def test_aclassify_confidence_parses_category_and_score():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_ASYNC_OPENAI_PATCH) as MockAsyncOpenAI:
+        MockAsyncOpenAI.return_value = _openai_async_client("schema_mismatch\n0.42")
+        result = await clf.aclassify_with_confidence(traj(make_step(0)), "task")
+    assert result == ClassificationResult(FailureType.SCHEMA_MISMATCH, 0.42)
+
+
+async def test_aclassify_confidence_uses_async_client_not_sync():
+    clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
+    with patch(_OPENAI_PATCH) as MockOpenAI, patch(_ASYNC_OPENAI_PATCH) as MockAsyncOpenAI:
+        MockAsyncOpenAI.return_value = _openai_async_client("unknown\n0.1")
+        await clf.aclassify_with_confidence(traj(make_step(0)), "task")
+    MockOpenAI.assert_not_called()
+    MockAsyncOpenAI.assert_called_once()
+
+
+def test_confidence_anthropic_backend_uses_confidence_prompt():
+    from triage.classifier.llm import _CONFIDENCE_SYSTEM_PROMPT
+
+    clf = LLMClassifier(model=_MODEL)
+    with patch("triage.classifier.llm._anthropic.Anthropic") as MockAnthropic:
+        client = _anthropic_client("wrong_tool_called\n0.9")
+        MockAnthropic.return_value = client
+        result = clf.classify_with_confidence(traj(make_step(0)), "task")
+    assert result == ClassificationResult(FailureType.WRONG_TOOL_CALLED, 0.9)
+    assert client.messages.create.call_args[1]["system"] == _CONFIDENCE_SYSTEM_PROMPT

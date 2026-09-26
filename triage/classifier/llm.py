@@ -53,12 +53,14 @@ Install:
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from typing import Any
 
 import anyio
 
+from triage.classifier.base import ClassificationResult
 from triage.pricing import lookup_cost
 from triage.taxonomy import FailureType
 from triage.trajectory import Trajectory
@@ -111,9 +113,9 @@ _FAILURE_TYPE_VALUES = [ft.value for ft in FailureType]
 # gap, but not the precision gap" section for both measurements (before and
 # after), and re-run that script against any future prompt change here — this
 # is a real production prompt, not a one-off tuning target. The real fix this
-# points toward is a confidence signal the caller can gate on (see
-# ROADMAP.md's SystemOneClassifier section), not further prompt iteration.
-_SYSTEM_PROMPT = (
+# points toward is a confidence signal the caller can gate on — see
+# classify_with_confidence() below, not further prompt iteration on this one.
+_CATEGORY_GUIDANCE = (
     "You are a failure classifier for AI agents. "
     "Given a trajectory of steps and a task description, classify the failure "
     "into exactly one of these categories: "
@@ -122,14 +124,50 @@ _SYSTEM_PROMPT = (
     'respond "unknown" — this is the correct answer when the cause is genuinely '
     "unclear or not covered by the other categories, not a fallback to avoid. "
     'Do not guess a specific category just to avoid answering "unknown". '
-    'Respond with only the category name (e.g. "wrong_tool_called"), nothing else.'
 )
+
+_SYSTEM_PROMPT = (
+    _CATEGORY_GUIDANCE
+    + 'Respond with only the category name (e.g. "wrong_tool_called"), nothing else.'
+)
+
+# classify_with_confidence()'s prompt: same category guidance as _SYSTEM_PROMPT
+# (factored into _CATEGORY_GUIDANCE so the two can't silently drift apart), plus
+# a request for a confidence score. This exists specifically because the prompt
+# guidance above, tried alone, measurably failed to reduce HybridClassifier's
+# override rate on genuinely out-of-taxonomy trajectories (see the comment
+# above _SYSTEM_PROMPT) — a categorical answer gives the caller nothing to act
+# on when the model is guessing. A confidence score does: HybridClassifier
+# with confidence_threshold= set can decline to trust a low-confidence guess
+# instead of returning it as-is. Calibrate confidence_threshold against your
+# own labeled data (see ROADMAP.md's SystemOneClassifier section) — this
+# model's self-reported confidence has not been independently validated as
+# calibrated, only as present and parseable.
+_CONFIDENCE_SYSTEM_PROMPT = (
+    _CATEGORY_GUIDANCE + "Respond with exactly two lines and nothing else: the category name on "
+    "the first line, then a confidence score from 0.0 (pure guess) to 1.0 "
+    "(certain) on the second line, indicating how confident you are that the "
+    "category on the first line is correct. Example response:\n"
+    "external_fault\n"
+    "0.85"
+)
+
+# Leading "-?" matters: without it, "-0.3" matched as "0.3" (the sign simply
+# dropped, not rejected), so an out-of-range negative silently became a valid
+# in-range positive instead of being clamped to 0.0 downstream. Caught by
+# tests/test_classifier_llm.py::test_confidence_parsing_is_conservative_on_malformed_input.
+_CONFIDENCE_NUMBER_RE = re.compile(r"(-?\d*\.?\d+)")
 
 
 class LLMClassifier:
     """Semantic failure classifier backed by an LLM.
 
     Satisfies the ``Classifier`` protocol (synchronous ``classify`` method).
+    Also defines the optional, duck-typed ``classify_with_confidence()`` /
+    ``aclassify_with_confidence()`` methods, returning a ``ClassificationResult``
+    (failure type + a 0.0-1.0 self-reported confidence) instead of a bare
+    ``FailureType`` — see that method's docstring, and
+    ``HybridClassifier(confidence_threshold=...)`` for the primary consumer.
 
     When ``base_url`` is ``None`` (default), uses ``anthropic.Anthropic``
     (requires ``pip install triage-agent[anthropic]``).
@@ -310,14 +348,42 @@ class LLMClassifier:
                 return ft
         return FailureType.UNKNOWN
 
-    def _call_sync(self, prompt: str) -> str:
+    def _parse_confidence_response(self, raw: str) -> ClassificationResult:
+        """Parse a classify_with_confidence() response: category on the first
+        non-empty line (exact match, same strictness as _parse_response()),
+        a confidence number somewhere in the remaining lines. Conservative on
+        anything unparseable — an unmatched category or a missing/malformed
+        confidence number both resolve to UNKNOWN / 0.0 rather than raising,
+        so a caller gating on confidence_threshold safely declines rather than
+        crashes or silently trusts a response it couldn't actually read."""
+        lines = [ln.strip() for ln in raw.strip().splitlines() if ln.strip()]
+        failure_type = FailureType.UNKNOWN
+        if lines:
+            first = lines[0].lower()
+            for ft in FailureType:
+                if ft.value == first:
+                    failure_type = ft
+                    break
+        confidence = 0.0
+        for ln in lines[1:] or lines:
+            match = _CONFIDENCE_NUMBER_RE.search(ln)
+            if match:
+                try:
+                    confidence = float(match.group(1))
+                except ValueError:
+                    confidence = 0.0
+                break
+        confidence = max(0.0, min(1.0, confidence))
+        return ClassificationResult(failure_type=failure_type, confidence=confidence)
+
+    def _call_sync(self, prompt: str, system_prompt: str = _SYSTEM_PROMPT) -> str:
         client = self._get_client()
         if self._base_url is not None:
             response = client.chat.completions.create(
                 model=self._model,
                 max_tokens=self._max_tokens,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             )
@@ -326,20 +392,20 @@ class LLMClassifier:
         message = client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
-            system=_SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
         self._report_usage(message)
         return str(message.content[0].text)
 
-    async def _call_async(self, prompt: str) -> str:
+    async def _call_async(self, prompt: str, system_prompt: str = _SYSTEM_PROMPT) -> str:
         client = await self._get_async_client()
         if self._base_url is not None:
             response = await client.chat.completions.create(
                 model=self._model,
                 max_tokens=self._max_tokens,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             )
@@ -348,7 +414,7 @@ class LLMClassifier:
         message = await client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
-            system=_SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
         self._report_usage(message)
@@ -384,3 +450,49 @@ class LLMClassifier:
                     return FailureType.UNKNOWN
                 await anyio.sleep(self._retry_backoff_base * (2**attempt))
         return FailureType.UNKNOWN
+
+    def classify_with_confidence(self, trajectory: Trajectory, task: str) -> ClassificationResult:
+        """Like ``classify()``, but also asks the model to self-report a
+        confidence score (0.0-1.0) and returns both as a ``ClassificationResult``.
+
+        Not part of the ``Classifier`` protocol — duck-typed, same pattern as
+        ``aclassify()``. Exists specifically so a caller (``HybridClassifier``
+        with ``confidence_threshold=`` set, most directly) can decline to trust
+        a low-confidence guess instead of returning it as fact. See the comment
+        above ``_CONFIDENCE_SYSTEM_PROMPT`` for why this exists instead of more
+        prompt tuning on ``classify()`` itself, and note this model's confidence
+        has not been independently validated as calibrated — calibrate any
+        threshold against your own labeled data before trusting it in production.
+
+        Falls back to ``ClassificationResult(FailureType.UNKNOWN, 0.0)`` on any
+        error, same as ``classify()`` falls back to ``FailureType.UNKNOWN`` —
+        zero confidence signals "don't trust this" just as clearly as UNKNOWN
+        does, so a threshold-gated caller declines correctly either way.
+        """
+        prompt = self._build_prompt(trajectory, task)
+        for attempt in range(self._max_retries + 1):
+            try:
+                raw = self._call_sync(prompt, system_prompt=_CONFIDENCE_SYSTEM_PROMPT)
+                return self._parse_confidence_response(raw)
+            except Exception as exc:
+                if attempt >= self._max_retries or not _is_retryable(exc):
+                    return ClassificationResult(FailureType.UNKNOWN, 0.0)
+                time.sleep(self._retry_backoff_base * (2**attempt))
+        return ClassificationResult(FailureType.UNKNOWN, 0.0)
+
+    async def aclassify_with_confidence(
+        self, trajectory: Trajectory, task: str
+    ) -> ClassificationResult:
+        """Async counterpart to ``classify_with_confidence()`` — see that
+        method's docstring. Same native-async-client preference as
+        ``aclassify()`` over ``classify()``."""
+        prompt = self._build_prompt(trajectory, task)
+        for attempt in range(self._max_retries + 1):
+            try:
+                raw = await self._call_async(prompt, system_prompt=_CONFIDENCE_SYSTEM_PROMPT)
+                return self._parse_confidence_response(raw)
+            except Exception as exc:
+                if attempt >= self._max_retries or not _is_retryable(exc):
+                    return ClassificationResult(FailureType.UNKNOWN, 0.0)
+                await anyio.sleep(self._retry_backoff_base * (2**attempt))
+        return ClassificationResult(FailureType.UNKNOWN, 0.0)
