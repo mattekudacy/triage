@@ -3,18 +3,30 @@ triage.classifier.llm
 ~~~~~~~~~~~~~~~~~~~~~
 Semantic failure classifier using an LLM backend.
 
-Two backends are supported:
+Two backends are supported. Neither is "the default" in the sense of being
+assumed for you — ``LLMClassifier`` always requires an explicit ``model``
+(constructor arg or ``TRIAGE_LLM_MODEL`` env var) and raises ``ValueError``
+otherwise, precisely so it never silently guesses which vendor you meant.
+Ollama is listed first because it needs no account or key — pass ``base_url``
+to use it (or any other OpenAI-compatible endpoint); omit ``base_url``
+entirely for Anthropic. See ``docs/concepts/classifiers.md``'s "Open by
+default" note for why this ordering matters: ``RulesClassifier`` (triage's
+actual default classifier) already makes zero API calls to any vendor, and
+this class's own scripts (``scripts/*_accuracy.py``) default to local Ollama
+for the same reason — a paid key should never be the only way to try this
+out.
 
-  Anthropic (default)::
-
-      clf = LLMClassifier()
-      clf = LLMClassifier(api_key="sk-ant-...", model="claude-haiku-4-5-20251001")
-
-  OpenAI-compatible (Ollama, Groq, OpenAI, any base_url)::
+  OpenAI-compatible (Ollama, Groq, OpenAI, any base_url) — no account needed
+  for Ollama::
 
       clf = LLMClassifier(base_url="http://localhost:11434/v1", model="llama3.2")
       clf = LLMClassifier(base_url="https://api.groq.com/openai/v1",
                           api_key="gsk_...", model="llama-3.1-8b-instant")
+
+  Anthropic — omit base_url::
+
+      clf = LLMClassifier(model="claude-haiku-4-5-20251001")  # reads ANTHROPIC_API_KEY
+      clf = LLMClassifier(api_key="sk-ant-...", model="claude-haiku-4-5-20251001")
 
 Both paths use a synchronous client so they work inside a running async event
 loop without calling asyncio.run(). Called only on failure — not in the per-step
@@ -34,8 +46,8 @@ all. If you're pointing this at a reasoning model, pass a larger
                         model="gpt-oss:120b-cloud", max_tokens=500)
 
 Install:
+    pip install triage-agent[openai]             # OpenAI-compatible backend (Ollama, Groq, ...)
     pip install triage-agent[anthropic]          # Anthropic backend
-    pip install triage-agent[openai]             # OpenAI-compatible backend
 """
 
 from __future__ import annotations
@@ -136,10 +148,11 @@ class LLMClassifier:
             raise ValueError(
                 "LLMClassifier requires a model. Pass model= explicitly or set "
                 "the TRIAGE_LLM_MODEL environment variable.\n"
-                "  Anthropic: LLMClassifier(model='claude-haiku-4-5-20251001')\n"
+                "  Ollama:    LLMClassifier(base_url='http://localhost:11434/v1',\n"
+                "                           model='llama3.2')  # no account or key needed\n"
                 "  OpenAI:    LLMClassifier(base_url='https://api.openai.com/v1',\n"
                 "                           model='gpt-4o-mini')\n"
-                "  Ollama:    LLMClassifier(base_url='http://localhost:11434/v1', model='llama3.2')"
+                "  Anthropic: LLMClassifier(model='claude-haiku-4-5-20251001')"
             )
         self._model = resolved_model
         self._max_trajectory_steps = max_trajectory_steps

@@ -31,21 +31,31 @@ corpus discipline exists to prevent. This script runs a pre-flight sanity
 check (one unambiguous classification) before scoring anything, and refuses
 to print a report if the classifier can't get that one right.
 
-Requires an LLM backend. Anthropic (default — picks up ANTHROPIC_API_KEY the
-same way the Anthropic SDK always does; TRIAGE_LLM_API_KEY also works):
+Requires an LLM backend. Open by default, no key needed — with nothing
+configured, this talks to a local Ollama server (see
+docs/concepts/classifiers.md's "Open by default" note for why: triage's own
+default classifier, RulesClassifier, already makes zero API calls to any
+vendor, and these measurement scripts should be just as free to run):
+    ollama pull llama3.2   # once
+    PYTHONPATH=. python scripts/llm_classifier_accuracy.py
+
+Anthropic, if you set a key (picks up ANTHROPIC_API_KEY the same way the
+Anthropic SDK always does; TRIAGE_LLM_API_KEY also works):
     ANTHROPIC_API_KEY=sk-ant-... PYTHONPATH=. python scripts/llm_classifier_accuracy.py
 
-Any OpenAI-compatible endpoint (Groq, Ollama, OpenAI, ...):
+Any other OpenAI-compatible endpoint (Groq, OpenAI, ...):
     TRIAGE_LLM_BASE_URL=https://api.groq.com/openai/v1 \\
     TRIAGE_LLM_API_KEY=gsk_... TRIAGE_LLM_MODEL=llama-3.1-8b-instant \\
     PYTHONPATH=. python scripts/llm_classifier_accuracy.py
 
-Model defaults to claude-haiku-4-5-20251001 (the model used elsewhere in this
-repo's docs/examples) unless TRIAGE_LLM_MODEL or --model overrides it. Makes
-one classification call per corpus entry per classifier under test (up to
-~40 calls total against a 20-entry corpus) — cheap on a small model, but not
-free; this is why it's a separate opt-in script from classifier_accuracy.py,
-which makes zero API calls by design.
+Model defaults to llama3.2 (local Ollama) unless an Anthropic credential is
+present with no TRIAGE_LLM_BASE_URL set (then claude-haiku-4-5-20251001),
+or TRIAGE_LLM_MODEL/--model overrides either default — see
+_resolve_backend() below. Makes one classification call per corpus entry per
+classifier under test (up to ~40 calls total against a 20-entry corpus) —
+free against a local model, but not free against a paid API; this is why
+it's a separate opt-in script from classifier_accuracy.py, which makes zero
+API calls by design.
 
 Run:
     PYTHONPATH=. .venv/bin/python scripts/llm_classifier_accuracy.py [--model MODEL]
@@ -73,7 +83,29 @@ CORPUS_D_PATH = Path("tests/data/error_corpus_d.json")
 SELF_HEALING = ("external_fault", "timeout")
 ROUTING_SENSITIVE = ("wrong_tool_called", "schema_mismatch")
 
-_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
+_DEFAULT_OLLAMA_MODEL = "llama3.2"
+_DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+
+
+def _resolve_backend(cli_model: str | None) -> tuple[str | None, str]:
+    """Open-by-default backend resolution — see this script's module
+    docstring. An explicit TRIAGE_LLM_BASE_URL always wins (BYOK, unchanged).
+    Otherwise an explicit Anthropic credential with no base_url means the
+    caller clearly wants Anthropic — respected as before. With NOTHING
+    configured, this now defaults to local Ollama instead of Anthropic.
+    --model / TRIAGE_LLM_MODEL override the model name within whichever
+    backend gets chosen."""
+    base_url = os.environ.get("TRIAGE_LLM_BASE_URL")
+    env_model = os.environ.get("TRIAGE_LLM_MODEL")
+    has_anthropic_key = bool(
+        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("TRIAGE_LLM_API_KEY")
+    )
+    if base_url:
+        return base_url, cli_model or env_model or _DEFAULT_ANTHROPIC_MODEL
+    if has_anthropic_key:
+        return None, cli_model or env_model or _DEFAULT_ANTHROPIC_MODEL
+    return _DEFAULT_OLLAMA_BASE_URL, cli_model or env_model or _DEFAULT_OLLAMA_MODEL
 
 
 def _trajectory_for(entry: dict[str, Any]) -> Trajectory:
@@ -89,7 +121,7 @@ def _trajectory_for(entry: dict[str, Any]) -> Trajectory:
     return t
 
 
-def _check_backend_installed() -> None:
+def _check_backend_installed(base_url: str | None) -> None:
     """Check the optional dependency LLMClassifier needs is importable.
 
     classify() catches ImportError from a missing 'anthropic'/'openai' package
@@ -98,12 +130,11 @@ def _check_backend_installed() -> None:
     generic sanity-check failure as a bad API key, with no hint that the fix
     is `pip install`, not a credential. Check explicitly, upfront.
     """
-    base_url = os.environ.get("TRIAGE_LLM_BASE_URL")
     pkg, extra = ("openai", "openai") if base_url else ("anthropic", "anthropic")
     try:
         __import__(pkg)
     except ImportError:
-        reason = "TRIAGE_LLM_BASE_URL is set" if base_url else "no base_url set — Anthropic backend"
+        reason = f"base_url={base_url!r}" if base_url else "no base_url — Anthropic backend"
         raise SystemExit(
             f"Missing dependency: '{pkg}' is not installed ({reason}).\n"
             f"  pip install triage-agent[{extra}]"
@@ -135,11 +166,14 @@ def _sanity_check(clf: LLMClassifier) -> None:
             "...) if the default 32-token budget gets spent entirely on hidden "
             "reasoning before the answer. Refusing to score corpus D against a "
             "classifier that fails this trivially.\n\n"
-            "Check, in order: (1) API key set and valid, (2) --model / "
-            "TRIAGE_LLM_MODEL correct and TRIAGE_LLM_BASE_URL reachable, "
-            "(3) if this is a reasoning model, retry with --max-tokens 500 "
-            "(or higher) — a real gpt-oss:120b-cloud run needed >32 tokens to "
-            "get past its reasoning and actually answer.",
+            "Check, in order: (1) if using the local Ollama default, is "
+            "`ollama serve` running and is the model pulled (`ollama pull "
+            "llama3.2`)? (2) if using a paid backend, is the API key set and "
+            "valid? (3) --model / TRIAGE_LLM_MODEL correct and "
+            "TRIAGE_LLM_BASE_URL reachable? (4) if this is a reasoning model, "
+            "retry with --max-tokens 500 (or higher) — a real "
+            "gpt-oss:120b-cloud run needed >32 tokens to get past its "
+            "reasoning and actually answer.",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -199,8 +233,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        default=os.environ.get("TRIAGE_LLM_MODEL") or _DEFAULT_MODEL,
-        help=f"Model name (default: TRIAGE_LLM_MODEL env var, else {_DEFAULT_MODEL!r})",
+        default=None,
+        help=(
+            "Model name (default: TRIAGE_LLM_MODEL env var, else "
+            f"{_DEFAULT_OLLAMA_MODEL!r} on local Ollama unless an Anthropic "
+            f"credential is set with no base_url, then {_DEFAULT_ANTHROPIC_MODEL!r} "
+            "— see _resolve_backend())"
+        ),
     )
     parser.add_argument(
         "--max-tokens",
@@ -223,13 +262,13 @@ def main() -> None:
         raise SystemExit(f"Corpus D not found: {CORPUS_D_PATH} — run scripts/gen_error_corpus_d.py")
     entries = json.loads(CORPUS_D_PATH.read_text())
 
-    _check_backend_installed()
+    base_url, model = _resolve_backend(args.model)
+    _check_backend_installed(base_url)
 
-    llm = LLMClassifier(model=args.model, max_tokens=args.max_tokens)
-    print(f"Model: {args.model}")
+    llm = LLMClassifier(model=model, base_url=base_url, max_tokens=args.max_tokens)
+    print(f"Model: {model}")
     print(f"Max tokens: {llm._max_tokens}")
-    if os.environ.get("TRIAGE_LLM_BASE_URL"):
-        print(f"Base URL: {os.environ['TRIAGE_LLM_BASE_URL']}")
+    print(f"Base URL: {base_url or '(Anthropic default client)'}")
     print("Running sanity check...", end=" ", flush=True)
     _sanity_check(llm)
     print("ok\n")
@@ -245,9 +284,11 @@ def main() -> None:
     _print_report("RulesClassifier (v1.1 baseline)", rules_by_type)
 
     llm_by_type = _score(llm, entries)
-    _print_report(f"LLMClassifier alone ({args.model})", llm_by_type)
+    _print_report(f"LLMClassifier alone ({model})", llm_by_type)
 
-    hybrid = HybridClassifier(llm=LLMClassifier(model=args.model, max_tokens=args.max_tokens))
+    hybrid = HybridClassifier(
+        llm=LLMClassifier(model=model, base_url=base_url, max_tokens=args.max_tokens)
+    )
     hybrid_by_type = _score(hybrid, entries)
     _print_report("HybridClassifier (rules + LLM fallback — recommended config)", hybrid_by_type)
 

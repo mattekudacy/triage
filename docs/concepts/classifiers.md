@@ -153,31 +153,23 @@ Semantic classifier that asks an LLM to read the trajectory and name the failure
 from triage.classifier.llm import LLMClassifier
 ```
 
+### Open by default
+
+`LLMClassifier` is entirely opt-in, and it isn't tied to any one vendor: triage's actual default classifier (`RulesClassifier`) already makes zero API calls to anyone, and when you do reach for `LLMClassifier`, Ollama — free, local, no account — works exactly the same way a paid backend does, via the same `base_url`/`TRIAGE_LLM_*` mechanism. `LLMClassifier()` never silently assumes a vendor for you: it always requires an explicit `model` (constructor arg or `TRIAGE_LLM_MODEL`) and raises `ValueError` listing all three options otherwise, so nothing here defaults you into a paid key without your say-so. The measurement scripts under `scripts/` (`llm_classifier_accuracy.py`, `hybrid_ambiguity_accuracy.py`, `mast_mode_pilot_accuracy.py`) follow the same principle at the CLI level: with nothing configured, they talk to a local Ollama server by default — an Anthropic key only gets used if you've actually set one.
+
 ### Installation
 
 ```bash
-# Anthropic backend (Claude)
-pip install "triage-agent[anthropic]"
-
 # OpenAI-compatible backend (Ollama, Groq, OpenAI, HuggingFace, etc.)
 pip install openai
-```
 
-### Anthropic backend (default)
-
-```python
-clf = LLMClassifier()  # reads ANTHROPIC_API_KEY from env
-
-clf = LLMClassifier(
-    api_key="sk-ant-...",
-    model="claude-haiku-4-5-20251001",
-    max_trajectory_steps=10,
-)
+# Anthropic backend (Claude)
+pip install "triage-agent[anthropic]"
 ```
 
 ### OpenAI-compatible backend
 
-Pass `base_url` to switch to any OpenAI-compatible API:
+Pass `base_url` to use any OpenAI-compatible API — this is how Ollama, Groq, and OpenAI itself are all reached:
 
 ```python
 # Ollama — local, no key needed
@@ -195,6 +187,20 @@ clf = LLMClassifier(
     base_url="https://api.openai.com/v1",
     api_key="sk-...",
     model="gpt-4o-mini",
+)
+```
+
+### Anthropic backend
+
+Omit `base_url` to use Anthropic directly:
+
+```python
+clf = LLMClassifier(model="claude-haiku-4-5-20251001")  # reads ANTHROPIC_API_KEY from env
+
+clf = LLMClassifier(
+    api_key="sk-ant-...",
+    model="claude-haiku-4-5-20251001",
+    max_trajectory_steps=10,
 )
 ```
 

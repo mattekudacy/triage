@@ -111,6 +111,17 @@ python_version = "3.10"
 strict = true
 
 [[tool.mypy.overrides]]
+# follow_imports = "skip" here, not just ignore_missing_imports: triage/ only calls
+# these libraries' public APIs, and mypy fully parsing their internal implementation
+# files is both unnecessary and fragile — langchain_core/embeddings/fake.py (real,
+# non-stub source mypy otherwise parses in full) does `import numpy`, and a numpy
+# release can ship .pyi stubs using syntax newer than this project's python_version
+# target (PEP 695 `type` statements, 3.12+ only), which is a hard parse-time syntax
+# error, not a normal type error — it aborts the whole run, and ignore_missing_imports
+# alone does not stop mypy from parsing a stub/module it DOES find. skip treats the
+# whole package as opaque Any without recursing into its source at all, sidestepping
+# whatever transitive import chain happens to reach numpy/pandas/etc. this release.
+# opentelemetry is deliberately NOT in this list — see the next override block.
 module = [
     "anthropic",
     "anthropic.*",
@@ -125,10 +136,19 @@ module = [
     "langchain.*",
     "langchain_core",
     "langchain_core.*",
-    "opentelemetry",
-    "opentelemetry.*",
     "tomllib",
 ]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# opentelemetry stays on plain ignore_missing_imports (no follow_imports skip): unlike
+# the packages above, triage/observability/otel_ingest.py relies on mypy actually
+# resolving opentelemetry.trace.StatusCode's real type (e.g. _is_error_span's
+# `status_code == StatusCode.ERROR` comparison) — skip would turn that into Any and
+# trip warn_return_any under --strict. opentelemetry doesn't reach numpy, so it never
+# hit the parse-error problem the override above exists for.
+module = ["opentelemetry", "opentelemetry.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
