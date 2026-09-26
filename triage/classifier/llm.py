@@ -98,16 +98,21 @@ except ImportError:
 
 _FAILURE_TYPE_VALUES = [ft.value for ft in FailureType]
 
-# The explicit "unknown is correct, not a fallback to avoid" guidance below is
-# a direct response to a measured failure, not a guess: scripts/hybrid_ambiguity_
-# accuracy.py scored a 100% override rate on genuinely out-of-taxonomy entries
-# before this change — the model treated "unknown" as one option among nine
-# with no signal about when to prefer it, and defaulted to a specific-sounding
-# guess (overwhelmingly "external_fault") instead. See docs/known-limitations.md's
-# "LLMClassifier/HybridClassifier close the recall gap, but not the precision
-# gap" section for the measurement this responds to, and re-run that script
-# against any future prompt change here — this is a real production prompt,
-# not a one-off tuning target.
+# The explicit "unknown is correct, not a fallback to avoid" guidance below was
+# added in response to a measured failure — scripts/hybrid_ambiguity_accuracy.py
+# scored a 100% override rate on genuinely out-of-taxonomy entries beforehand —
+# but re-measuring AFTER this change found it made no difference: still 12/12
+# = 100% override rate. One entry's wrong guess moved from "external_fault" to
+# "constraint_ignored"; nothing moved to "unknown". Kept anyway (harmless, no
+# regression on corpus D's routing-sensitive recall either), but do NOT treat
+# this as the fix — it isn't one. Prompt wording alone does not appear to move
+# this model off its bias toward a specific-sounding guess. See
+# docs/known-limitations.md's "LLMClassifier/HybridClassifier close the recall
+# gap, but not the precision gap" section for both measurements (before and
+# after), and re-run that script against any future prompt change here — this
+# is a real production prompt, not a one-off tuning target. The real fix this
+# points toward is a confidence signal the caller can gate on (see
+# ROADMAP.md's SystemOneClassifier section), not further prompt iteration.
 _SYSTEM_PROMPT = (
     "You are a failure classifier for AI agents. "
     "Given a trajectory of steps and a task description, classify the failure "

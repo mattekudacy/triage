@@ -58,12 +58,23 @@ Items are grouped by urgency. Within each group, order is rough priority.
   clustering hard on `external_fault` as a catch-all. `tricky_but_classifiable` recall was
   100% (4/4) — the recall-gap side of the story holds up. See `docs/known-limitations.md`'s
   updated "close the recall gap, but not the precision gap" section.
+- ~~**Try a prompt-only fix: tell `LLMClassifier` explicitly that `unknown` is a correct
+  answer**~~ — tried, shipped, re-measured, negative result. `_SYSTEM_PROMPT` already
+  listed `unknown` as one of nine categories; the fix added explicit guidance that it's
+  the correct answer when the trajectory doesn't clearly support another category. The
+  override rate did not move (12/12 = 100%, before and after — one wrong guess shifted
+  label, none moved to `unknown`), and corpus D's routing-sensitive recall held steady
+  too (no regression, but no gain). Kept in the prompt — harmless — but do not read it
+  as a fix. See `docs/known-limitations.md`'s updated section for the full before/after.
+  Conclusion: this needs a confidence signal the caller can act on programmatically, not
+  more prompt wording — prompt-only nudging doesn't move this model off its bias toward
+  a specific-sounding guess.
 - **Fix `HybridClassifier` overriding a correct rules-`UNKNOWN` with a confident wrong
-  guess** — raised in priority by the measurement above: 100% override rate on this run
-  is not an edge case, it's the default behavior. Needs a confidence signal the fallback
-  can decline on; see the SystemOneClassifier section below for the most direct path to
-  one. Until that ships, `known-limitations.md` now says explicitly: treat any
-  `HybridClassifier` answer as guilty until proven innocent, not a safe default.
+  guess** — now the highest-priority item in this document. 100% override rate, and the
+  cheap fix (prompt wording) is a confirmed dead end. Needs a confidence signal the
+  fallback can decline on; see the SystemOneClassifier section below for the only
+  remaining direct path to one. Until that ships, `known-limitations.md` says explicitly:
+  treat any `HybridClassifier` answer as guilty until proven innocent, not a safe default.
 - **MCP JSON-RPC error-code extraction helper** — corpus E scoping step 3 (MCP half
   only): a small opt-in helper that reads `McpError.error.code` and populates
   `Step.metadata["json_rpc_code"]`, so `RulesClassifier`'s structured-code matching

@@ -146,14 +146,40 @@ scores `tests/data/error_corpus_ambiguous.json` (16 entries) specifically to ans
 
 Run against `gpt-oss:120b` (Ollama Cloud). Every single genuinely-unknown entry was overturned
 into a confident wrong guess — the corpus D `n=1` wasn't an outlier, it was the whole
-distribution. The wrong guesses cluster hard on one label: 11 of 12 overrides came back
-`external_fault` (the twelfth `constraint_ignored`) — the model appears to default to
-"external fault" as its catch-all answer for account-suspended / quota-exceeded /
-policy-blocked wording it can't otherwise place, rather than recognizing "I don't actually
-know" as a valid answer. The other half of the same run is the reason `HybridClassifier`
-exists at all: all 4 `tricky_but_classifiable` entries (real failures phrased obliquely enough
-that `RulesClassifier` also misses them) were correctly recovered — the recall gap really does
-close, at the same time the precision gap is this wide.
+distribution. The wrong guesses cluster hard on one label: **all 12 of 12** overrides came back
+`external_fault` — the model appears to default to "external fault" as its catch-all answer for
+account-suspended / quota-exceeded / policy-blocked wording it can't otherwise place, rather
+than recognizing "I don't actually know" as a valid answer. (Corrected from an earlier version
+of this doc, which misreported this breakdown as 11/12 — that number actually belongs to the
+*post-fix* re-measurement below, and got attached to the wrong run.) The other half of the same
+run is the reason `HybridClassifier` exists at all: all 4 `tricky_but_classifiable` entries (real
+failures phrased obliquely enough that `RulesClassifier` also misses them) were correctly
+recovered — the recall gap really does close, at the same time the precision gap is this wide.
+
+**Tried a prompt fix, re-measured, it didn't work.** `triage/classifier/llm.py`'s `_SYSTEM_PROMPT`
+was changed to explicitly tell the model that `unknown` is a correct answer, not a fallback to
+avoid, when the trajectory doesn't clearly support another category (see the comment above
+`_SYSTEM_PROMPT` in that file). Re-running `hybrid_ambiguity_accuracy.py` and
+`llm_classifier_accuracy.py` against the same corpora, same model, afterward:
+
+| Measurement | Before | After |
+|---|---|---|
+| `unknown_labeled` override rate | 12/12 = 100% | 12/12 = 100% — unchanged |
+| `tricky_but_classifiable` recall | 4/4 = 100% | 4/4 = 100% — unchanged |
+| Corpus D routing-sensitive recall | 10/12 = 83% | 10/12 = 83% — unchanged |
+
+The override rate did not move. One entry's specific wrong guess shifted — the EU-data-residency
+entry moved from `external_fault` to `constraint_ignored` — but that's a lateral change between
+two wrong answers, not progress toward the correct one (`unknown`). No regression either: recall
+on both the ambiguous corpus and corpus D held exactly steady. **Conclusion: telling this model
+in the system prompt that "unknown" is an acceptable answer does not change its behavior in any
+measurable way.** This reads as a real behavioral bias (toward a specific-sounding answer over
+admitted uncertainty), not a missing-instruction problem — the same class of finding as MAST
+phase 2's negative result elsewhere in this project, arrived at the same way: try the cheap fix,
+measure it honestly, report a negative result as a complete answer rather than iterate on wording
+indefinitely. The path forward is a confidence signal the caller can act on programmatically
+(gate `HybridClassifier`'s fallback on it) rather than a categorical answer alone — see
+`ROADMAP.md`'s SystemOneClassifier section.
 
 Results vary run to run (reasoning-model sampling) — this is a representative measurement,
 not a frozen benchmark the way `RulesClassifier`'s corpus D floor is; there's no CI-enforced
