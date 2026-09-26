@@ -132,18 +132,38 @@ there's a real answer" and "this genuinely has no answer" look identical to that
 D's one entry with true label `unknown` (a permission-denied string with no discriminating
 keyword) was correctly left as `UNKNOWN` by `RulesClassifier` — the safe, correct answer —
 and `HybridClassifier` overturned it into a confident wrong guess anyway, in every LLM-involving
-run in this measurement. `n=1` in corpus D, so this is a confirmed *mechanism*, not yet a
-measured rate: any rules-`UNKNOWN` gets escalated regardless of whether that `UNKNOWN` was
-already correct. The other 2 misroutes were both in `wrong_tool_called`, at a consistent 6/8
-across runs — not every tool-not-found phrasing reads unambiguously even to a model that
+run in this measurement. The other 2 misroutes were both in `wrong_tool_called`, at a consistent
+6/8 across runs — not every tool-not-found phrasing reads unambiguously even to a model that
 understands meaning.
+
+**This mechanism is now a measured rate, not just `n=1`.** `scripts/hybrid_ambiguity_accuracy.py`
+scores `tests/data/error_corpus_ambiguous.json` (16 entries) specifically to answer "how often":
+
+| Group | Result |
+|---|---|
+| `unknown_labeled` (12 entries, true label `unknown`) — override rate | **12/12 = 100%** |
+| `tricky_but_classifiable` (4 entries, real label, obliquely phrased) — recall | 4/4 = 100% |
+
+Run against `gpt-oss:120b` (Ollama Cloud). Every single genuinely-unknown entry was overturned
+into a confident wrong guess — the corpus D `n=1` wasn't an outlier, it was the whole
+distribution. The wrong guesses cluster hard on one label: 11 of 12 overrides came back
+`external_fault` (the twelfth `constraint_ignored`) — the model appears to default to
+"external fault" as its catch-all answer for account-suspended / quota-exceeded /
+policy-blocked wording it can't otherwise place, rather than recognizing "I don't actually
+know" as a valid answer. The other half of the same run is the reason `HybridClassifier`
+exists at all: all 4 `tricky_but_classifiable` entries (real failures phrased obliquely enough
+that `RulesClassifier` also misses them) were correctly recovered — the recall gap really does
+close, at the same time the precision gap is this wide.
 
 Results vary run to run (reasoning-model sampling) — this is a representative measurement,
 not a frozen benchmark the way `RulesClassifier`'s corpus D floor is; there's no CI-enforced
-floor for it, and there shouldn't be one without a fixed model, fixed sampling, and a much
-larger `unknown`-labeled sample than corpus D's single entry. If you adopt `HybridClassifier`
-for routing-sensitive types, plan for occasional confident misroutes, not just occasional
-`UNKNOWN`s — especially wherever a genuinely-ambiguous failure is plausible in your traffic.
+floor for it, and there shouldn't be one without a fixed model and fixed sampling — the
+`unknown_labeled` sample is 12 now, not corpus D's single entry, but this is still one run.
+If you adopt `HybridClassifier` for routing-sensitive types, plan for occasional confident
+misroutes, not just occasional `UNKNOWN`s — especially wherever a genuinely-ambiguous failure
+is plausible in your traffic. At a 100% override rate on this run, "occasional" undersells it:
+treat any `HybridClassifier` answer on a trajectory that might be genuinely out-of-taxonomy as
+guilty until proven innocent, not as a safe default.
 
 **What this means for where effort goes next.** Another round of "generate corpus E, tune
 `rules.py` against D's misses, score E" would very likely repeat this exact result — the
