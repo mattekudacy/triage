@@ -45,20 +45,25 @@ Items are grouped by urgency. Within each group, order is rough priority.
 - **OpenAI Agents SDK adapter** — `wrap_openai_agents()`; deprioritised until the SDK
   stabilises. Largest user pool currently unreachable; the adapter mapping is mostly
   mechanical once the SDK settles.
-- **Run `scripts/mast_mode_pilot_accuracy.py` against a real model** — built and
-  committed (pilot corpus: 6 entries, 3 of 12 semantic-only MAST modes), but never
-  actually run — was blocked on an LLM API key this environment didn't have. Now
-  unblocked via local Ollama. No accuracy number exists yet for MAST phase 3; this is
-  the first one.
-- **Run `scripts/hybrid_ambiguity_accuracy.py` against a real model** — same situation:
-  built, scores `HybridClassifier` against `tests/data/error_corpus_ambiguous.json`
-  (the `tricky_but_classifiable` / `unknown_labeled` split), never run. Same unblock.
+- ~~**Run `scripts/mast_mode_pilot_accuracy.py` against a real model**~~ — done, scored
+  once against `gpt-oss:120b`: 4/5 recall across the 3 piloted MAST modes (2.5: 2/2,
+  2.4: 1/1, 1.4: 1/2). See `docs/concepts/multi-agent-failures.md`'s "Pilot measurement
+  scored once". One run, n=5, no negative-example set yet — a first data point, not a
+  validated floor. Re-running for stability and building the negative half of the
+  corpus are the natural next steps, not yet started.
+- ~~**Run `scripts/hybrid_ambiguity_accuracy.py` against a real model**~~ — done, scored
+  once against `gpt-oss:120b`. Result is worse than expected: **100% override rate**
+  (12/12) on the `unknown_labeled` group — every genuinely-unknown entry `RulesClassifier`
+  correctly left as `UNKNOWN` got turned into a confident wrong guess by the LLM fallback,
+  clustering hard on `external_fault` as a catch-all. `tricky_but_classifiable` recall was
+  100% (4/4) — the recall-gap side of the story holds up. See `docs/known-limitations.md`'s
+  updated "close the recall gap, but not the precision gap" section.
 - **Fix `HybridClassifier` overriding a correct rules-`UNKNOWN` with a confident wrong
-  guess** — documented in `docs/known-limitations.md`: when `RulesClassifier` correctly
-  returns `UNKNOWN`, the LLM fallback always overrides it, even on the one corpus D case
-  where `UNKNOWN` was the true label. `n=1` today — a confirmed mechanism, not yet a
-  measured rate. Needs a confidence signal the fallback can decline on; see the
-  SystemOneClassifier section below for the most direct path to one.
+  guess** — raised in priority by the measurement above: 100% override rate on this run
+  is not an edge case, it's the default behavior. Needs a confidence signal the fallback
+  can decline on; see the SystemOneClassifier section below for the most direct path to
+  one. Until that ships, `known-limitations.md` now says explicitly: treat any
+  `HybridClassifier` answer as guilty until proven innocent, not a safe default.
 - **MCP JSON-RPC error-code extraction helper** — corpus E scoping step 3 (MCP half
   only): a small opt-in helper that reads `McpError.error.code` and populates
   `Step.metadata["json_rpc_code"]`, so `RulesClassifier`'s structured-code matching
@@ -79,9 +84,11 @@ API shape and needs no waitlist or key — same relationship Ollama has to Anthr
   Defaults to hosted Jev; `base_url=` points it at local `laya-serve` instead. Lazy
   import, new optional extra. Blocked on Jev's waitlist for the *default* path — the
   `base_url=` (Laya) path can be built and tested now.
-- **Confidence-gated `HybridClassifier` fallback** — direct fix for the item above:
-  when `SystemOneClassifier`'s confidence for its top answer is below a threshold,
-  return `UNKNOWN` instead of guessing.
+- **Confidence-gated `HybridClassifier` fallback** — direct fix for the item above, and
+  the highest-priority item in this section now that it's backed by data: a measured
+  100% override rate (see "Feature completeness" above), not the `n=1` this section was
+  originally scoped against. When `SystemOneClassifier`'s confidence for its top answer
+  is below a threshold, return `UNKNOWN` instead of guessing.
 - **Calibrate the threshold against our own corpora** — set it using corpora A/B/C +
   `error_corpus_ambiguous.json` (training data), then score held-out D and E exactly
   once. Scoring against D/E to *pick* the threshold burns them as held-out data — don't.
